@@ -14,7 +14,6 @@
             "browse": "Durchsuchen",
             "select_file": "Firmware-Datei",
             "update": "Hochladen",
-            "uploading": "Firmware wird hochgeladen...",
             "current_spiffs": "Konfigurationsversion",
             "factory_reset_desc": null,
             "factory_reset": "Zurücksetzen auf Werkszustand",
@@ -44,7 +43,8 @@
             "no_info_page": null,
             "info_page_corrupted": "Firmware-Datei ist beschädigt (Checksummenfehler)",
             "wrong_firmware_type": null,
-            "downgrade": "Firmware-Datei beinhaltet ein Downgrade auf Version %fw%. Installiert ist Version %installed%."
+            "downgrade": "Firmware-Datei beinhaltet ein Downgrade auf Version %fw%. Installiert ist Version %installed%.",
+            "build_time": " erstellt "
         }
     }
 }

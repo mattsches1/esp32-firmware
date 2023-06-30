@@ -20,19 +20,22 @@
 #pragma once
 
 #include "config.h"
+#include "module.h"
 
-class TutorialPhase3 {
+class TutorialPhase3 final : public IModule
+{
 public:
-    TutorialPhase3();
-    void setup();
-    void register_urls();
-    void loop();
+    TutorialPhase3(){}
+    void pre_setup() override;
+    void setup() override;
+    void register_urls() override;
+    void loop() override;
 
     bool initialized = false;
 
     // ConfigRoot object to represent the color to be send to the frontend module
-    ConfigRoot tutorial_config;
+    ConfigRoot config;
 
     // Extra ConfigRoot object to represent color updates received from the frontend module
-    ConfigRoot tutorial_config_update;
+    ConfigRoot config_update;
 };

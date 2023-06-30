@@ -5,6 +5,10 @@ interface Charge {
     energy_charged: number
 }
 
+export interface config {
+    electricity_price: number
+}
+
 export type last_charges = Charge[];
 
 export interface current_charge {
@@ -21,4 +25,13 @@ export interface state {
 
 export interface remove_all_charges {
     do_i_know_what_i_am_doing: boolean
+}
+
+export interface pdf {
+    api_not_final_acked: boolean
+    english: boolean
+    start_timestamp_min?: number
+    end_timestamp_min?: number
+    user_filter?: number
+    letterhead?: string
 }

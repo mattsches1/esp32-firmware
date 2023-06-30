@@ -32,38 +32,62 @@ def get_and_delete(d, keys):
     del last_d[k]
     return d
 
-def main():
-    ts_files = []
-    for root, dirs, files in os.walk("./src/ts"):
+def get_all_ts_files(folder):
+    result = []
+    for root, dirs, files in os.walk(folder):
         for name in files:
-            if not name.endswith(".ts"):
+            if not name.endswith(".ts") and not name.endswith(".tsx"):
                 continue
-            ts_files.append(os.path.join(root, name))
+            result.append(os.path.join(root, name))
+    return result
 
-    for root, dirs, files in os.walk("./src/typings"):
-        for name in files:
-            if not name.endswith(".ts"):
-                continue
-            ts_files.append(os.path.join(root, name))
-    ts_files.append(os.path.join("src", "main.ts"))
+def check_mismatch(translation_values, key, p):
+    last = None
+    mismatches = []
+
+    for translation_value in translation_values:
+        if isinstance(translation_value[key], dict):
+            for subkey in translation_value[key]:
+                mismatches += check_mismatch([translation_value[key] for translation_value in translation_values], subkey, p + key + '.')
+        elif last == None:
+            last = translation_value[key]
+        else:
+            a = last[:1]
+            b = translation_value[key][:1]
+
+            if a.isupper() != b.isupper() or a.isalpha() != b.isalpha():
+                mismatches.append((p + key, repr(last), repr(translation_value[key])))
+
+    return mismatches
+
+def main():
+    ts_files = [os.path.join("src", "main.ts")]
+
+    ts_files += get_all_ts_files("./src/ts")
+    ts_files += get_all_ts_files("./src/typings")
 
     for frontend_module in sys.argv[1:]:
-        folder = os.path.join("src", "modules", frontend_module)
+        ts_files += get_all_ts_files(os.path.join("src", "modules", frontend_module))
 
-        if os.path.exists(os.path.join(folder, "main.ts")):
-            ts_files.append(os.path.join(folder, "main.ts"))
+    used_placeholders, template_literals = util.parse_ts_files(ts_files)
 
-        if os.path.exists(os.path.join(folder, "translation_de.ts")):
-            ts_files.append(os.path.join(folder, "translation_de.ts"))
+    with open('./src/ts/translation.json', 'r', encoding='utf-8') as f:
+        translation = json.loads(f.read())
 
-        if os.path.exists(os.path.join(folder, "translation_en.ts")):
-            ts_files.append(os.path.join(folder, "translation_en.ts"))
+    mismatches = []
 
-    translation, used_placeholders, template_literals = util.parse_ts_files(ts_files)
+    for key in translation['en']:
+        mismatches += check_mismatch(translation.values(), key, '')
 
-    assert len(translation) > 0
+    if len(mismatches):
+        print("Case mismatches:")
+        reported_mismatches = []
+        for x in sorted(mismatches):
+            if x not in reported_mismatches:
+                print("\t", *[s.replace('\\xad', '') for s in x])
+                reported_mismatches.append(x)
 
-    with open("./src/index.html") as f:
+    with open('./src/index.html', 'r', encoding='utf-8') as f:
         content = f.read()
 
     used_placeholders += flatten([x.split(" ") for x in re.findall('data-i18n="([^"]*)"', content)])
@@ -81,7 +105,7 @@ def main():
     if len(used_but_missing):
         print(util.red("Missing placeholders:"))
         for x in sorted(used_but_missing):
-            print("\t" + x)
+            print("\t" + util.red(x))
 
     unused = util.get_nested_keys(translation)
     for k, v in template_literals.items():

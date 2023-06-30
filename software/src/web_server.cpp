@@ -25,11 +25,16 @@
 #include "task_scheduler.h"
 #include "digest_auth.h"
 
+#include "modules.h"
+
+#include "tools.h"
+
 #include <memory>
 
-extern TaskScheduler task_scheduler;
-
 #define MAX_URI_HANDLERS 128
+
+// Global definition here to match the declaration in web_server.h.
+WebServer server;
 
 void WebServer::start()
 {
@@ -42,6 +47,18 @@ void WebServer::start()
     config.stack_size = 8192;
     config.max_uri_handlers = MAX_URI_HANDLERS;
     config.global_user_ctx = this;
+    config.max_open_sockets = 10;
+
+    config.enable_so_linger = true;
+    config.linger_timeout = 0;
+#if MODULE_NETWORK_AVAILABLE()
+    config.server_port = network.config.get("web_server_port")->asUint();
+#endif
+
+#if MODULE_HTTP_AVAILABLE()
+    config.uri_match_fn = custom_uri_match;
+#endif
+
     /*config.task_priority = tskIDLE_PRIORITY+7;
     config.core_id = 1;*/
 
@@ -103,7 +120,6 @@ WebServerHandler *WebServer::on(const char *uri, httpd_method_t method, wshCallb
 }
 
 static const size_t SCRATCH_BUFSIZE = 2048;
-static uint8_t scratch_buf[SCRATCH_BUFSIZE] = {0};
 
 static esp_err_t low_level_upload_handler(httpd_req_t *req)
 {
@@ -121,8 +137,10 @@ static esp_err_t low_level_upload_handler(httpd_req_t *req)
     size_t remaining = req->content_len;
     size_t index = 0;
 
+    auto scratch_buf = heap_alloc_array<uint8_t>(SCRATCH_BUFSIZE);
+
     while (remaining > 0) {
-        int received = httpd_req_recv(req, (char *)scratch_buf, MIN(remaining, SCRATCH_BUFSIZE));
+        int received = httpd_req_recv(req, (char *)scratch_buf.get(), MIN(remaining, SCRATCH_BUFSIZE));
         // Retry if timeout occurred
         if (received == HTTPD_SOCK_ERR_TIMEOUT) {
             continue;
@@ -137,7 +155,7 @@ static esp_err_t low_level_upload_handler(httpd_req_t *req)
         }
 
         remaining -= received;
-        if (!ctx->handler->uploadCallback(request, "not implemented", index, scratch_buf, received, remaining == 0)) {
+        if (!ctx->handler->uploadCallback(request, "not implemented", index, scratch_buf.get(), received, remaining == 0)) {
             return ESP_FAIL;
         }
 
@@ -266,18 +284,18 @@ const char *httpStatusCodeToString(int code)
     }
 }
 
-void WebServerRequest::send(uint16_t code, const char *content_type, const char *content, size_t content_len)
+WebServerRequestReturnProtect WebServerRequest::send(uint16_t code, const char *content_type, const char *content, ssize_t content_len)
 {
     auto result = httpd_resp_set_type(req, content_type);
     if (result != ESP_OK) {
         printf("Failed to set response type: %d\n", result);
-        return;
+        return WebServerRequestReturnProtect{};
     }
 
     result = httpd_resp_set_status(req, httpStatusCodeToString(code));
     if (result != ESP_OK) {
         printf("Failed to set response status: %d\n", result);
-        return;
+        return WebServerRequestReturnProtect{};
     }
 
     struct httpd_req_aux *ra = (struct httpd_req_aux *)req->aux;
@@ -316,8 +334,8 @@ void WebServerRequest::send(uint16_t code, const char *content_type, const char 
 
     if (result != ESP_OK) {
         printf("Failed to send response: %d\n", result);
-        return;
     }
+    return WebServerRequestReturnProtect{};
 }
 
 void WebServerRequest::beginChunkedResponse(uint16_t code, const char *content_type)
@@ -335,22 +353,22 @@ void WebServerRequest::beginChunkedResponse(uint16_t code, const char *content_t
     }
 }
 
-void WebServerRequest::sendChunk(const char *chunk, size_t chunk_len)
+int WebServerRequest::sendChunk(const char *chunk, ssize_t chunk_len)
 {
     auto result = httpd_resp_send_chunk(req, chunk, chunk_len);
     if (result != ESP_OK) {
         printf("Failed to send response chunk: %d\n", result);
-        return;
     }
+    return result;
 }
 
-void WebServerRequest::endChunkedResponse()
+WebServerRequestReturnProtect WebServerRequest::endChunkedResponse()
 {
     auto result = httpd_resp_send_chunk(req, nullptr, 0);
     if (result != ESP_OK) {
         printf("Failed to end chunked response: %d\n", result);
-        return;
     }
+    return WebServerRequestReturnProtect{};
 }
 
 void WebServerRequest::addResponseHeader(const char *field, const char *value)
@@ -362,34 +380,26 @@ void WebServerRequest::addResponseHeader(const char *field, const char *value)
     }
 }
 
-void WebServerRequest::requestAuthentication()
+WebServerRequestReturnProtect WebServerRequest::requestAuthentication()
 {
     String payload = "Digest ";
     payload.concat(requestDigestAuthentication(nullptr));
     addResponseHeader("WWW-Authenticate", payload.c_str());
-    send(401);
+    return send(401);
 }
-
-class CustomString : public String {
-public:
-    void setLength(int len)
-    {
-        setLen(len);
-    }
-};
 
 String WebServerRequest::header(const char *header_name)
 {
     auto buf_len = httpd_req_get_hdr_value_len(req, header_name) + 1;
     if (buf_len == 1)
-        return String("");
+        return "";
 
-    CustomString result;
+    CoolString result;
     result.reserve(buf_len);
     char *buf = result.begin();
     /* Copy null terminated value string into buffer */
     if (httpd_req_get_hdr_value_str(req, header_name, buf, buf_len) != ESP_OK) {
-        return String("");
+        return "";
     }
     result.setLength(buf_len);
     return result;

@@ -27,6 +27,8 @@
 #include "esp_spiffs.h"
 #include "LittleFS.h"
 #include "esp_littlefs.h"
+#include "esp_system.h"
+#include "esp_timer.h"
 
 #include <soc/efuse_reg.h>
 #include "bindings/base58.h"
@@ -34,14 +36,72 @@
 #include "event_log.h"
 #include "esp_log.h"
 #include "build.h"
+#include "task_scheduler.h"
 
-extern EventLog logger;
+#include <arpa/inet.h>
+
+extern TF_HAL hal;
+
+const char *tf_reset_reason()
+{
+    esp_reset_reason_t reason = esp_reset_reason();
+
+    switch (reason) {
+        case ESP_RST_POWERON:
+            return "Reset due to power-on.";
+
+        case ESP_RST_EXT:
+            return "Reset by external pin.";
+
+        case ESP_RST_SW:
+            return "Software reset via esp_restart.";
+
+        case ESP_RST_PANIC:
+            return "Software reset due to exception/panic.";
+
+        case ESP_RST_INT_WDT:
+            return "Reset due to interrupt watchdog.";
+
+        case ESP_RST_TASK_WDT:
+            return "Reset due to task watchdog.";
+
+        case ESP_RST_WDT:
+            return "Reset due to some watchdog.";
+
+        case ESP_RST_DEEPSLEEP:
+            return "Reset after exiting deep sleep mode.";
+
+        case ESP_RST_BROWNOUT:
+            return "Brownout reset.";
+
+        case ESP_RST_SDIO:
+            return "Reset over SDIO.";
+
+        default:
+            return "Reset reason unknown.";
+    }
+}
+
+bool a_after_b(uint32_t a, uint32_t b)
+{
+    return ((uint32_t)(a - b)) < (UINT32_MAX / 2);
+}
 
 bool deadline_elapsed(uint32_t deadline_ms)
 {
-    uint32_t now = millis();
+    return a_after_b(millis(), deadline_ms);
+}
 
-    return ((uint32_t)(now - deadline_ms)) < (UINT32_MAX / 2);
+micros_t operator""_usec(unsigned long long int i) {
+    return micros_t{(int64_t)i};
+}
+
+micros_t now_us() {
+    return micros_t{esp_timer_get_time()};
+}
+
+bool deadline_elapsed(micros_t deadline_us) {
+    return deadline_us == 0_usec || deadline_us < now_us();
 }
 
 void read_efuses(uint32_t *ret_uid_num, char *ret_uid_str, char *ret_passphrase)
@@ -121,25 +181,23 @@ int check(int rc, const char *msg)
     return rc;
 }
 
-class LogSilencer {
-public:
-    LogSilencer(const char *tag) : tag(tag), level_to_restore(ESP_LOG_NONE)
-    {
-        level_to_restore = esp_log_level_get(tag);
-        esp_log_level_set(tag, ESP_LOG_NONE);
-    }
+int vprintf_dev_null(const char *format, va_list ap) {
+    return 0;
+}
 
-    ~LogSilencer()
-    {
-        esp_log_level_set(tag, level_to_restore);
-    }
-    const char *tag;
-    esp_log_level_t level_to_restore;
-};
+LogSilencer::LogSilencer() : old_fn(nullptr)
+{
+    old_fn = esp_log_set_vprintf(vprintf_dev_null);
+}
+
+LogSilencer::~LogSilencer()
+{
+    esp_log_set_vprintf(old_fn);
+}
 
 bool is_spiffs_available(const char *part_label, const char *base_path)
 {
-    LogSilencer ls{"SPIFFS"};
+    LogSilencer ls;
 
     esp_vfs_spiffs_conf_t conf = {
         .base_path = base_path,
@@ -163,7 +221,7 @@ bool is_spiffs_available(const char *part_label, const char *base_path)
 
 bool is_littlefs_available(const char *part_label, const char *base_path)
 {
-    LogSilencer ls{"esp_littlefs"};
+    LogSilencer ls;
 
     esp_vfs_littlefs_conf_t conf = {
         .base_path = base_path,
@@ -257,8 +315,7 @@ bool mount_or_format_spiffs(void)
 
         logger.printfln("Formatting core dump partition as LittleFS.");
         {
-            LogSilencer ls{"esp_littlefs"};
-            LogSilencer ls2{"ARDUINO"};
+            LogSilencer ls;
             LittleFS.begin(false, "/conf_backup", 10, "coredump");
         }
         LittleFS.format();
@@ -282,8 +339,7 @@ bool mount_or_format_spiffs(void)
 
         logger.printfln("Formatting data partition as LittleFS.");
         {
-            LogSilencer ls{"esp_littlefs"};
-            LogSilencer ls2{"ARDUINO"};
+            LogSilencer ls;
             LittleFS.begin(false, "/spiffs", 10, "spiffs");
         }
         LittleFS.format();
@@ -307,7 +363,7 @@ bool mount_or_format_spiffs(void)
     if (!is_littlefs_available("spiffs", "/spiffs")) {
         logger.printfln("Data partition is not mountable as LittleFS. Formatting now.");
         {
-            LogSilencer ls{"esp_littlefs"};
+            LogSilencer ls;
             LittleFS.begin(false, "/spiffs", 10, "spiffs");
         }
         LittleFS.format();
@@ -323,21 +379,6 @@ bool mount_or_format_spiffs(void)
     logger.printfln("Mounted data partition. %u of %u bytes (%3.1f %%) used", part_used, part_size, ((float)part_used / (float)part_size) * 100.0f);
 
     return true;
-}
-
-String read_config_version()
-{
-    if (LittleFS.exists("/config/version")) {
-        StaticJsonDocument<JSON_OBJECT_SIZE(1) + 60> doc;
-        File file = LittleFS.open("/config/version", "r");
-
-        deserializeJson(doc, file);
-        file.close();
-
-        return doc["spiffs"].as<const char *>();
-    }
-    logger.printfln("Failed to read config version!");
-    return BUILD_VERSION_STRING;
 }
 
 static bool wait_for_bootloader_mode(TF_Unknown *bricklet, int target_mode)
@@ -464,7 +505,7 @@ static bool flash_firmware(TF_Unknown *bricklet, const uint8_t *firmware, size_t
 
         logger->printfln("    Status is 5, retrying.");
 
-        if (!flash_plugin(bricklet, firmware, firmware_len, regular_plugin_upto, logger)) {
+        if (!flash_plugin(bricklet, firmware, firmware_len, firmware_len, logger)) {
             return false;
         }
 
@@ -495,38 +536,20 @@ static bool flash_firmware(TF_Unknown *bricklet, const uint8_t *firmware, size_t
 #define FIRMWARE_MINOR_OFFSET 11
 #define FIRMWARE_PATCH_OFFSET 12
 
-class TFPSwap {
-public:
-    TFPSwap(TF_TFP *tfp) :
-        tfp(tfp),
-        device(tfp->device),
-        cb_handler(tfp->cb_handler)
-    {
-        tfp->device = nullptr;
-        tfp->cb_handler = nullptr;
-    }
-
-    ~TFPSwap()
-    {
-        tfp->device = device;
-        tfp->cb_handler = cb_handler;
-    }
-
-private:
-    TF_TFP *tfp;
-    void *device;
-    TF_TFP_CallbackHandler cb_handler;
-};
-
 int ensure_matching_firmware(TF_TFP *tfp, const char *name, const char *purpose, const uint8_t *firmware, size_t firmware_len, EventLog *logger, bool force)
 {
     TFPSwap tfp_swap(tfp);
     TF_Unknown bricklet;
+    auto old_timeout = tf_hal_get_timeout(&hal);
+    defer {tf_hal_set_timeout(&hal, old_timeout);};
+    tf_hal_set_timeout(&hal, 2500 * 1000);
+
 
     int rc = tf_unknown_create(&bricklet, tfp);
+    defer {tf_unknown_destroy(&bricklet);};
 
     if (rc != TF_E_OK) {
-        logger->printfln("%s init failed (rc %d). Disabling %s support.", name, rc, purpose);
+        logger->printfln("%s init failed (rc %d).", name, rc);
         return -1;
     }
 
@@ -535,7 +558,7 @@ int ensure_matching_firmware(TF_TFP *tfp, const char *name, const char *purpose,
     rc = tf_unknown_get_identity(&bricklet, nullptr, nullptr, nullptr, nullptr, firmware_version, nullptr);
 
     if (rc != TF_E_OK) {
-        logger->printfln("%s get identity failed (rc %d). Disabling %s support.", name, rc, purpose);
+        logger->printfln("%s get identity failed (rc %d).", name, rc);
         return -1;
     }
 
@@ -553,6 +576,10 @@ int ensure_matching_firmware(TF_TFP *tfp, const char *name, const char *purpose,
         flash_required |= firmware_version[i] != embedded_firmware_version[i];
     }
 
+    uint8_t mode;
+    tf_unknown_get_bootloader_mode(&bricklet, &mode);
+    flash_required |= mode != TF_UNKNOWN_BOOTLOADER_MODE_FIRMWARE;
+
     if (flash_required) {
         if (force) {
             logger->printfln("Forcing %s firmware update to %d.%d.%d. Flashing firmware...",
@@ -566,12 +593,10 @@ int ensure_matching_firmware(TF_TFP *tfp, const char *name, const char *purpose,
         }
 
         if (!flash_firmware(&bricklet, firmware, firmware_len, logger)) {
-            logger->printfln("%s flashing failed. Disabling %s support.", name, purpose);
+            logger->printfln("%s flashing failed.", name);
             return -1;
         }
     }
-
-    tf_unknown_destroy(&bricklet);
 
     return 0;
 }
@@ -599,10 +624,28 @@ int compare_version(uint8_t left_major, uint8_t left_minor, uint8_t left_patch,
     return 0;
 }
 
+#define BUILD_YEAR \
+    ( \
+        (__DATE__[ 7] - '0') * 1000 + \
+        (__DATE__[ 8] - '0') *  100 + \
+        (__DATE__[ 9] - '0') *   10 + \
+        (__DATE__[10] - '0') \
+    )
+
 bool clock_synced(struct timeval *out_tv_now)
 {
     gettimeofday(out_tv_now, nullptr);
-    return out_tv_now->tv_sec > ((2016 - 1970) * 365 * 24 * 60 * 60);
+    return out_tv_now->tv_sec > ((BUILD_YEAR - 1970) * 365 * 24 * 60 * 60);
+}
+
+uint32_t timestamp_minutes()
+{
+    struct timeval tv_now;
+
+    if (!clock_synced(&tv_now))
+        return 0;
+
+    return tv_now.tv_sec / 60;
 }
 
 bool for_file_in(const char *dir, bool (*callback)(File *open_file), bool skip_directories)
@@ -621,6 +664,14 @@ bool for_file_in(const char *dir, bool (*callback)(File *open_file), bool skip_d
 
 void remove_directory(const char *path)
 {
+    String path_string;
+    if (*path != '/') {
+        logger.printfln("Remove directory called with path %s that does not start with a /.", path);
+        path_string = String("/") + path;
+    } else {
+        path_string = path;
+    }
+
     // This is more involved than expected:
     // rmdir only deletes empty directories, so remove all files first
     // Also LittleFS.rmdir will call the vfs_api.cpp implementation that
@@ -630,12 +681,221 @@ void remove_directory(const char *path)
     // is only called /spiffs for historical reasons, we use
     // LittleFS instead. Calling ::rmdir directly bypasses
     // this and other helpful checks.
-    for_file_in(path, [](File *f) {
-            String file_path = f->path();
+    for_file_in(path_string.c_str(), [](File *f) {
+            bool dir = f->isDirectory();
+            String file_path = String(f->path());
+            // F will be closed after the callback returns.
+            // However the recursive call below can potentially open
+            // many files in parallel.
+            // As we close the file before using the path, we have to
+            // copy the path into a String. close() frees the buffer that
+            // f->path() points to.
             f->close();
-            LittleFS.remove(file_path);
+            if (dir)
+                remove_directory(file_path.c_str());
+            else
+                LittleFS.remove(file_path.c_str());
             return true;
-        });
+        }, false);
 
-    ::rmdir((String("/spiffs/") + path).c_str());
+    ::rmdir(("/spiffs" + path_string).c_str());
+}
+
+
+bool is_in_subnet(IPAddress ip, IPAddress subnet, IPAddress to_check) {
+    return (((uint32_t)ip) & ((uint32_t)subnet)) == (((uint32_t)to_check) & ((uint32_t)subnet));
+}
+
+bool is_valid_subnet_mask(IPAddress subnet) {
+    bool zero_seen = false;
+    // IPAddress is in network byte order!
+    uint32_t addr = ntohl((uint32_t) subnet);
+    for (int i = 31; i >= 0; --i) {
+        bool bit_is_one = (addr & (1 << i));
+        if (zero_seen && bit_is_one) {
+            return false;
+        } else if (!zero_seen && !bit_is_one) {
+            zero_seen = true;
+        }
+    }
+    return true;
+}
+
+void led_blink(int8_t led_pin, int interval, int blinks_per_interval, int off_time_ms) {
+    int t_in_second = millis() % interval;
+    if (off_time_ms != 0 && (interval - t_in_second <= off_time_ms)) {
+        digitalWrite(led_pin, 1);
+        return;
+    }
+
+    // We want blinks_per_interval blinks and blinks_per_interval pauses between them. The off_time counts as pause.
+    int state_count = ((2 * blinks_per_interval) - (off_time_ms != 0 ? 1 : 0));
+    int state_interval = (interval - off_time_ms) / state_count;
+    bool led = (t_in_second / state_interval) % 2 != 0;
+
+    digitalWrite(led_pin, led);
+}
+
+uint16_t internet_checksum(const uint8_t* data, size_t length) {
+    uint32_t checksum=0xffff;
+
+    for (size_t i = 0; i < length - 1; i += 2) {
+        uint16_t buf;
+        memcpy(&buf, data + i, 2);
+        checksum += buf;
+    }
+
+    uint32_t carry = checksum >> 16;
+    checksum = (checksum & 0xFFFF) + carry;
+    checksum = ~checksum;
+    return checksum;
+}
+
+void trigger_reboot(const char *initiator)
+{
+    task_scheduler.scheduleOnce([initiator]() {
+        logger.printfln("Reboot requested by %s.", initiator);
+        delay(1500);
+        ESP.restart();
+    }, 0);
+}
+
+void list_dir(fs::FS &fs, const char * dirname, uint8_t max_depth, uint8_t current_depth) {
+    File root = fs.open(dirname);
+    if(!root) {
+        logger.printfln("%*c%s/ - failed to open directory", current_depth * 4, ' ', root.name());
+        return;
+    }
+    if(!root.isDirectory()) {
+        logger.printfln("%*c%s/ - not a directory", current_depth * 4, ' ', root.name());
+        return;
+    }
+    logger.printfln("%*c%s/", current_depth * 4, ' ', root.name());
+
+    File file = root.openNextFile();
+    while(file) {
+        if(file.isDirectory()) {
+            if(max_depth) {
+                list_dir(fs, file.path(), max_depth - 1, current_depth + 1);
+            }
+        } else {
+            size_t prefix_len = (current_depth + 1) * 4 + strlen(file.name());
+            time_t t = file.getLastWrite();
+            struct tm * tmstruct = localtime(&t);
+
+            logger.printfln("%*c%s%*c%d-%02d-%02d %02d:%02d:%02d    %u",
+                            (current_depth + 1) * 4,
+                            ' ',
+                            file.name(),
+                            prefix_len < 40 ? 40 - prefix_len : 4,
+                            ' ',
+                            tmstruct->tm_year+1900,
+                            tmstruct->tm_mon+1,
+                            tmstruct->tm_mday,
+                            tmstruct->tm_hour,
+                            tmstruct->tm_min,
+                            tmstruct->tm_sec,
+                            file.size());
+        }
+        file = root.openNextFile();
+    }
+}
+
+time_t ms_until_datetime(int *year, int *month, int *day, int *hour, int *minutes, int *seconds) {
+	struct timeval tv;
+	gettimeofday(&tv, NULL);
+
+	struct tm datetime;
+	localtime_r(&tv.tv_sec, &datetime);
+
+	if (year)    datetime.tm_year = *year    < 0 ? datetime.tm_year - *year    : *year  - 1900;
+	if (month)   datetime.tm_mon  = *month   < 0 ? datetime.tm_mon  - *month   : *month - 1;
+	if (day)     datetime.tm_mday = *day     < 0 ? datetime.tm_mday - *day     : *day;
+	if (hour)    datetime.tm_hour = *hour    < 0 ? datetime.tm_hour - *hour    : *hour;
+	if (minutes) datetime.tm_min  = *minutes < 0 ? datetime.tm_min  - *minutes : *minutes;
+	if (seconds) datetime.tm_sec  = *seconds < 0 ? datetime.tm_sec  - *seconds : *seconds;
+
+	time_t ts = mktime(&datetime);
+
+	return (ts - tv.tv_sec) * 1000 - tv.tv_usec / 1000;
+}
+
+time_t ms_until_time(int h, int m) {
+	int s = 0;
+	time_t delay = ms_until_datetime(NULL, NULL, NULL, &h, &m, &s);
+	if (delay <= 0) {
+		int d = -1;
+		delay = ms_until_datetime(NULL, NULL, &d, &h, &m, &s);
+	}
+	return delay;
+}
+
+bool Ownership::try_acquire(uint32_t owner_id)
+{
+    mutex.lock();
+
+    if (owner_id == current_owner_id) {
+        return true;
+    }
+
+    mutex.unlock();
+
+    return false;
+}
+
+void Ownership::release()
+{
+    mutex.unlock();
+}
+
+uint32_t Ownership::current()
+{
+    return current_owner_id;
+}
+
+uint32_t Ownership::next()
+{
+    mutex.lock();
+
+    uint32_t owner_id = ++current_owner_id;
+
+    mutex.unlock();
+
+    return owner_id;
+}
+
+OwnershipGuard::OwnershipGuard(Ownership *ownership, uint32_t owner_id): ownership(ownership)
+{
+    acquired = ownership->try_acquire(owner_id);
+}
+
+OwnershipGuard::~OwnershipGuard()
+{
+    if (acquired) {
+        ownership->release();
+    }
+}
+
+bool OwnershipGuard::have_ownership()
+{
+    return acquired;
+}
+
+void remove_separator(const char * const in, char *out) {
+    int written = 0;
+    size_t s = strlen(in);
+    for(int i = 0; i < s; ++i) {
+        if (in[i] == ':')
+            continue;
+        out[written] = in[i];
+        ++written;
+    }
+    out[written] = '\0';
+}
+
+int strncmp_with_same_len(const char *left, const char *right, size_t right_len) {
+    size_t left_len = strlen(left);
+    if (left_len != right_len)
+        return -1;
+    return strncmp(left, right, right_len);
 }

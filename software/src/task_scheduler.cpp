@@ -21,7 +21,8 @@
 
 #include "web_server.h"
 
-extern WebServer server;
+// Global definition here to match the declaration in task_scheduler.h.
+TaskScheduler task_scheduler;
 
 Task::Task(std::function<void(void)> fn, uint32_t first_run_delay_ms, uint32_t delay_ms, bool once) :
           fn(std::move(fn)),
@@ -31,9 +32,35 @@ Task::Task(std::function<void(void)> fn, uint32_t first_run_delay_ms, uint32_t d
 
 }
 
-bool compare(const Task &a, const Task &b)
+/*
+A Compare type providing a strict weak ordering.
+
+Note that the Compare parameter is defined such that it returns true
+if its first argument comes before its second argument in a weak ordering.
+But because the priority queue outputs largest elements first,
+the elements that "come before" are actually output last.
+That is, the front of the queue contains the "last" element
+according to the weak ordering imposed by Compare.
+(https://en.cppreference.com/w/cpp/container/priority_queue)
+*/
+bool compare(const Task *a, const Task *b)
 {
-    return a.next_deadline_ms >= b.next_deadline_ms;
+    if (millis() > 0x7FFFFFFF) {
+        // We are close to a timer overflow
+        if (a->next_deadline_ms <= 0x7FFFFFFF && b->next_deadline_ms > 0x7FFFFFFF)
+            // b is close to the overflow, a is behind the overflow
+            return true;
+        if (b->next_deadline_ms <= 0x7FFFFFFF && a->next_deadline_ms > 0x7FFFFFFF)
+            // b is behind to the overflow, a is close to the overflow
+            return false;
+    }
+
+    return a->next_deadline_ms >= b->next_deadline_ms;
+}
+
+void TaskScheduler::pre_setup()
+{
+
 }
 
 void TaskScheduler::setup()
@@ -47,47 +74,47 @@ void TaskScheduler::register_urls()
 
 void TaskScheduler::loop()
 {
-    this->task_mutex.lock();
+    std::unique_ptr<Task> task;
+
+    {
+        std::lock_guard<std::mutex> l{this->task_mutex};
         if(tasks.empty()) {
-            this->task_mutex.unlock();
-            return;
-        }
-        const auto &task_ref = tasks.top();
-
-        if(!deadline_elapsed(task_ref.next_deadline_ms)) {
-            this->task_mutex.unlock();
             return;
         }
 
-        Task task = task_ref;
+        if(!deadline_elapsed(tasks.top()->next_deadline_ms)) {
+            return;
+        }
+
+        task = std::unique_ptr<Task>(tasks.top());
         tasks.pop();
-    this->task_mutex.unlock();
-
-    if (!task.fn) {
-        logger.printfln("Invalid task");
-    } else {
-        task.fn();
     }
 
-    if (task.once) {
+    if (!task->fn) {
+        logger.printfln("Invalid task");
+    } else {
+        task->fn();
+    }
+
+    if (task->once) {
         return;
     }
 
-    task.next_deadline_ms = millis() + task.delay_ms;
+    task->next_deadline_ms = millis() + task->delay_ms;
     {
         std::lock_guard<std::mutex> l{this->task_mutex};
-        tasks.push(std::move(task));
+        tasks.push(task.release());
     }
 }
 
-void TaskScheduler::scheduleOnce(std::function<void(void)> &&fn, uint32_t delay)
+void TaskScheduler::scheduleOnce(std::function<void(void)> &&fn, uint32_t delay_ms)
 {
     std::lock_guard<std::mutex> l{this->task_mutex};
-    tasks.emplace(fn, delay, 0, true);
+    tasks.emplace(new Task(fn, delay_ms, 0, true));
 }
 
-void TaskScheduler::scheduleWithFixedDelay(std::function<void(void)> &&fn, uint32_t first_delay, uint32_t delay)
+void TaskScheduler::scheduleWithFixedDelay(std::function<void(void)> &&fn, uint32_t first_delay_ms, uint32_t delay_ms)
 {
     std::lock_guard<std::mutex> l{this->task_mutex};
-    tasks.emplace(fn, first_delay, delay, false);
+    tasks.emplace(new Task(fn, first_delay_ms, delay_ms, false));
 }

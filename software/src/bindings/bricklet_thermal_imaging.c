@@ -1,7 +1,7 @@
 /* ***********************************************************
- * This file was automatically generated on 2021-12-03.      *
+ * This file was automatically generated on 2023-04-25.      *
  *                                                           *
- * C/C++ for Microcontrollers Bindings Version 2.0.0         *
+ * C/C++ for Microcontrollers Bindings Version 2.0.3         *
  *                                                           *
  * If you have a bugfix for this file and want to commit it, *
  * please fix the bug in the generator. You can find a link  *
@@ -143,24 +143,34 @@ int tf_thermal_imaging_get_response_expected(TF_ThermalImaging *thermal_imaging,
                 *ret_response_expected = (thermal_imaging->response_expected[0] & (1 << 4)) != 0;
             }
             break;
-        case TF_THERMAL_IMAGING_FUNCTION_SET_WRITE_FIRMWARE_POINTER:
+        case TF_THERMAL_IMAGING_FUNCTION_SET_FFC_SHUTTER_MODE:
             if (ret_response_expected != NULL) {
                 *ret_response_expected = (thermal_imaging->response_expected[0] & (1 << 5)) != 0;
             }
             break;
-        case TF_THERMAL_IMAGING_FUNCTION_SET_STATUS_LED_CONFIG:
+        case TF_THERMAL_IMAGING_FUNCTION_RUN_FFC_NORMALIZATION:
             if (ret_response_expected != NULL) {
                 *ret_response_expected = (thermal_imaging->response_expected[0] & (1 << 6)) != 0;
             }
             break;
-        case TF_THERMAL_IMAGING_FUNCTION_RESET:
+        case TF_THERMAL_IMAGING_FUNCTION_SET_WRITE_FIRMWARE_POINTER:
             if (ret_response_expected != NULL) {
                 *ret_response_expected = (thermal_imaging->response_expected[0] & (1 << 7)) != 0;
             }
             break;
-        case TF_THERMAL_IMAGING_FUNCTION_WRITE_UID:
+        case TF_THERMAL_IMAGING_FUNCTION_SET_STATUS_LED_CONFIG:
             if (ret_response_expected != NULL) {
                 *ret_response_expected = (thermal_imaging->response_expected[1] & (1 << 0)) != 0;
+            }
+            break;
+        case TF_THERMAL_IMAGING_FUNCTION_RESET:
+            if (ret_response_expected != NULL) {
+                *ret_response_expected = (thermal_imaging->response_expected[1] & (1 << 1)) != 0;
+            }
+            break;
+        case TF_THERMAL_IMAGING_FUNCTION_WRITE_UID:
+            if (ret_response_expected != NULL) {
+                *ret_response_expected = (thermal_imaging->response_expected[1] & (1 << 2)) != 0;
             }
             break;
         default:
@@ -215,32 +225,46 @@ int tf_thermal_imaging_set_response_expected(TF_ThermalImaging *thermal_imaging,
                 thermal_imaging->response_expected[0] &= ~(1 << 4);
             }
             break;
-        case TF_THERMAL_IMAGING_FUNCTION_SET_WRITE_FIRMWARE_POINTER:
+        case TF_THERMAL_IMAGING_FUNCTION_SET_FFC_SHUTTER_MODE:
             if (response_expected) {
                 thermal_imaging->response_expected[0] |= (1 << 5);
             } else {
                 thermal_imaging->response_expected[0] &= ~(1 << 5);
             }
             break;
-        case TF_THERMAL_IMAGING_FUNCTION_SET_STATUS_LED_CONFIG:
+        case TF_THERMAL_IMAGING_FUNCTION_RUN_FFC_NORMALIZATION:
             if (response_expected) {
                 thermal_imaging->response_expected[0] |= (1 << 6);
             } else {
                 thermal_imaging->response_expected[0] &= ~(1 << 6);
             }
             break;
-        case TF_THERMAL_IMAGING_FUNCTION_RESET:
+        case TF_THERMAL_IMAGING_FUNCTION_SET_WRITE_FIRMWARE_POINTER:
             if (response_expected) {
                 thermal_imaging->response_expected[0] |= (1 << 7);
             } else {
                 thermal_imaging->response_expected[0] &= ~(1 << 7);
             }
             break;
-        case TF_THERMAL_IMAGING_FUNCTION_WRITE_UID:
+        case TF_THERMAL_IMAGING_FUNCTION_SET_STATUS_LED_CONFIG:
             if (response_expected) {
                 thermal_imaging->response_expected[1] |= (1 << 0);
             } else {
                 thermal_imaging->response_expected[1] &= ~(1 << 0);
+            }
+            break;
+        case TF_THERMAL_IMAGING_FUNCTION_RESET:
+            if (response_expected) {
+                thermal_imaging->response_expected[1] |= (1 << 1);
+            } else {
+                thermal_imaging->response_expected[1] &= ~(1 << 1);
+            }
+            break;
+        case TF_THERMAL_IMAGING_FUNCTION_WRITE_UID:
+            if (response_expected) {
+                thermal_imaging->response_expected[1] |= (1 << 2);
+            } else {
+                thermal_imaging->response_expected[1] &= ~(1 << 2);
             }
             break;
         default:
@@ -287,15 +311,12 @@ int tf_thermal_imaging_get_high_contrast_image_low_level(TF_ThermalImaging *ther
 
     uint8_t _error_code = 0;
     uint8_t _length = 0;
-    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length);
+    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length, TF_NEW_PACKET);
 
     if (_result < 0) {
         return _result;
     }
 
-    if (_result & TF_TICK_TIMEOUT) {
-        return TF_E_TIMEOUT;
-    }
 
     if (_result & TF_TICK_PACKET_RECEIVED) {
         TF_PacketBuffer *_recv_buf = tf_tfp_get_receive_buffer(thermal_imaging->tfp);
@@ -306,6 +327,13 @@ int tf_thermal_imaging_get_high_contrast_image_low_level(TF_ThermalImaging *ther
             if (ret_image_chunk_data != NULL) { for (_i = 0; _i < 62; ++_i) ret_image_chunk_data[_i] = tf_packet_buffer_read_uint8_t(_recv_buf);} else { tf_packet_buffer_remove(_recv_buf, 62); }
         }
         tf_tfp_packet_processed(thermal_imaging->tfp);
+    }
+
+
+    if (_result & TF_TICK_TIMEOUT) {
+        _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
+        (void) _result;
+        return TF_E_TIMEOUT;
     }
 
     _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
@@ -344,15 +372,12 @@ int tf_thermal_imaging_get_temperature_image_low_level(TF_ThermalImaging *therma
 
     uint8_t _error_code = 0;
     uint8_t _length = 0;
-    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length);
+    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length, TF_NEW_PACKET);
 
     if (_result < 0) {
         return _result;
     }
 
-    if (_result & TF_TICK_TIMEOUT) {
-        return TF_E_TIMEOUT;
-    }
 
     if (_result & TF_TICK_PACKET_RECEIVED) {
         TF_PacketBuffer *_recv_buf = tf_tfp_get_receive_buffer(thermal_imaging->tfp);
@@ -363,6 +388,13 @@ int tf_thermal_imaging_get_temperature_image_low_level(TF_ThermalImaging *therma
             if (ret_image_chunk_data != NULL) { for (_i = 0; _i < 31; ++_i) ret_image_chunk_data[_i] = tf_packet_buffer_read_uint16_t(_recv_buf);} else { tf_packet_buffer_remove(_recv_buf, 62); }
         }
         tf_tfp_packet_processed(thermal_imaging->tfp);
+    }
+
+
+    if (_result & TF_TICK_TIMEOUT) {
+        _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
+        (void) _result;
+        return TF_E_TIMEOUT;
     }
 
     _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
@@ -401,15 +433,12 @@ int tf_thermal_imaging_get_statistics(TF_ThermalImaging *thermal_imaging, uint16
 
     uint8_t _error_code = 0;
     uint8_t _length = 0;
-    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length);
+    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length, TF_NEW_PACKET);
 
     if (_result < 0) {
         return _result;
     }
 
-    if (_result & TF_TICK_TIMEOUT) {
-        return TF_E_TIMEOUT;
-    }
 
     if (_result & TF_TICK_PACKET_RECEIVED) {
         TF_PacketBuffer *_recv_buf = tf_tfp_get_receive_buffer(thermal_imaging->tfp);
@@ -423,6 +452,13 @@ int tf_thermal_imaging_get_statistics(TF_ThermalImaging *thermal_imaging, uint16
             if (ret_temperature_warning != NULL) { tf_packet_buffer_read_bool_array(_recv_buf, ret_temperature_warning, 2);} else { tf_packet_buffer_remove(_recv_buf, 1); }
         }
         tf_tfp_packet_processed(thermal_imaging->tfp);
+    }
+
+
+    if (_result & TF_TICK_TIMEOUT) {
+        _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
+        (void) _result;
+        return TF_E_TIMEOUT;
     }
 
     _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
@@ -465,13 +501,21 @@ int tf_thermal_imaging_set_resolution(TF_ThermalImaging *thermal_imaging, uint8_
 
     uint8_t _error_code = 0;
     uint8_t _length = 0;
-    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length);
+    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length, TF_NEW_PACKET);
 
     if (_result < 0) {
         return _result;
     }
 
+
+    if (_result & TF_TICK_PACKET_RECEIVED) {
+        tf_tfp_packet_processed(thermal_imaging->tfp);
+    }
+
+
     if (_result & TF_TICK_TIMEOUT) {
+        _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
+        (void) _result;
         return TF_E_TIMEOUT;
     }
 
@@ -510,15 +554,12 @@ int tf_thermal_imaging_get_resolution(TF_ThermalImaging *thermal_imaging, uint8_
 
     uint8_t _error_code = 0;
     uint8_t _length = 0;
-    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length);
+    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length, TF_NEW_PACKET);
 
     if (_result < 0) {
         return _result;
     }
 
-    if (_result & TF_TICK_TIMEOUT) {
-        return TF_E_TIMEOUT;
-    }
 
     if (_result & TF_TICK_PACKET_RECEIVED) {
         TF_PacketBuffer *_recv_buf = tf_tfp_get_receive_buffer(thermal_imaging->tfp);
@@ -528,6 +569,13 @@ int tf_thermal_imaging_get_resolution(TF_ThermalImaging *thermal_imaging, uint8_
             if (ret_resolution != NULL) { *ret_resolution = tf_packet_buffer_read_uint8_t(_recv_buf); } else { tf_packet_buffer_remove(_recv_buf, 1); }
         }
         tf_tfp_packet_processed(thermal_imaging->tfp);
+    }
+
+
+    if (_result & TF_TICK_TIMEOUT) {
+        _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
+        (void) _result;
+        return TF_E_TIMEOUT;
     }
 
     _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
@@ -570,13 +618,21 @@ int tf_thermal_imaging_set_spotmeter_config(TF_ThermalImaging *thermal_imaging, 
 
     uint8_t _error_code = 0;
     uint8_t _length = 0;
-    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length);
+    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length, TF_NEW_PACKET);
 
     if (_result < 0) {
         return _result;
     }
 
+
+    if (_result & TF_TICK_PACKET_RECEIVED) {
+        tf_tfp_packet_processed(thermal_imaging->tfp);
+    }
+
+
     if (_result & TF_TICK_TIMEOUT) {
+        _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
+        (void) _result;
         return TF_E_TIMEOUT;
     }
 
@@ -616,15 +672,12 @@ int tf_thermal_imaging_get_spotmeter_config(TF_ThermalImaging *thermal_imaging, 
 
     uint8_t _error_code = 0;
     uint8_t _length = 0;
-    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length);
+    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length, TF_NEW_PACKET);
 
     if (_result < 0) {
         return _result;
     }
 
-    if (_result & TF_TICK_TIMEOUT) {
-        return TF_E_TIMEOUT;
-    }
 
     if (_result & TF_TICK_PACKET_RECEIVED) {
         TF_PacketBuffer *_recv_buf = tf_tfp_get_receive_buffer(thermal_imaging->tfp);
@@ -634,6 +687,13 @@ int tf_thermal_imaging_get_spotmeter_config(TF_ThermalImaging *thermal_imaging, 
             if (ret_region_of_interest != NULL) { for (_i = 0; _i < 4; ++_i) ret_region_of_interest[_i] = tf_packet_buffer_read_uint8_t(_recv_buf);} else { tf_packet_buffer_remove(_recv_buf, 4); }
         }
         tf_tfp_packet_processed(thermal_imaging->tfp);
+    }
+
+
+    if (_result & TF_TICK_TIMEOUT) {
+        _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
+        (void) _result;
+        return TF_E_TIMEOUT;
     }
 
     _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
@@ -680,13 +740,21 @@ int tf_thermal_imaging_set_high_contrast_config(TF_ThermalImaging *thermal_imagi
 
     uint8_t _error_code = 0;
     uint8_t _length = 0;
-    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length);
+    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length, TF_NEW_PACKET);
 
     if (_result < 0) {
         return _result;
     }
 
+
+    if (_result & TF_TICK_PACKET_RECEIVED) {
+        tf_tfp_packet_processed(thermal_imaging->tfp);
+    }
+
+
     if (_result & TF_TICK_TIMEOUT) {
+        _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
+        (void) _result;
         return TF_E_TIMEOUT;
     }
 
@@ -726,15 +794,12 @@ int tf_thermal_imaging_get_high_contrast_config(TF_ThermalImaging *thermal_imagi
 
     uint8_t _error_code = 0;
     uint8_t _length = 0;
-    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length);
+    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length, TF_NEW_PACKET);
 
     if (_result < 0) {
         return _result;
     }
 
-    if (_result & TF_TICK_TIMEOUT) {
-        return TF_E_TIMEOUT;
-    }
 
     if (_result & TF_TICK_PACKET_RECEIVED) {
         TF_PacketBuffer *_recv_buf = tf_tfp_get_receive_buffer(thermal_imaging->tfp);
@@ -747,6 +812,13 @@ int tf_thermal_imaging_get_high_contrast_config(TF_ThermalImaging *thermal_imagi
             if (ret_empty_counts != NULL) { *ret_empty_counts = tf_packet_buffer_read_uint16_t(_recv_buf); } else { tf_packet_buffer_remove(_recv_buf, 2); }
         }
         tf_tfp_packet_processed(thermal_imaging->tfp);
+    }
+
+
+    if (_result & TF_TICK_TIMEOUT) {
+        _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
+        (void) _result;
+        return TF_E_TIMEOUT;
     }
 
     _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
@@ -789,13 +861,21 @@ int tf_thermal_imaging_set_image_transfer_config(TF_ThermalImaging *thermal_imag
 
     uint8_t _error_code = 0;
     uint8_t _length = 0;
-    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length);
+    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length, TF_NEW_PACKET);
 
     if (_result < 0) {
         return _result;
     }
 
+
+    if (_result & TF_TICK_PACKET_RECEIVED) {
+        tf_tfp_packet_processed(thermal_imaging->tfp);
+    }
+
+
     if (_result & TF_TICK_TIMEOUT) {
+        _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
+        (void) _result;
         return TF_E_TIMEOUT;
     }
 
@@ -834,15 +914,12 @@ int tf_thermal_imaging_get_image_transfer_config(TF_ThermalImaging *thermal_imag
 
     uint8_t _error_code = 0;
     uint8_t _length = 0;
-    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length);
+    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length, TF_NEW_PACKET);
 
     if (_result < 0) {
         return _result;
     }
 
-    if (_result & TF_TICK_TIMEOUT) {
-        return TF_E_TIMEOUT;
-    }
 
     if (_result & TF_TICK_PACKET_RECEIVED) {
         TF_PacketBuffer *_recv_buf = tf_tfp_get_receive_buffer(thermal_imaging->tfp);
@@ -852,6 +929,13 @@ int tf_thermal_imaging_get_image_transfer_config(TF_ThermalImaging *thermal_imag
             if (ret_config != NULL) { *ret_config = tf_packet_buffer_read_uint8_t(_recv_buf); } else { tf_packet_buffer_remove(_recv_buf, 1); }
         }
         tf_tfp_packet_processed(thermal_imaging->tfp);
+    }
+
+
+    if (_result & TF_TICK_TIMEOUT) {
+        _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
+        (void) _result;
+        return TF_E_TIMEOUT;
     }
 
     _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
@@ -901,13 +985,21 @@ int tf_thermal_imaging_set_flux_linear_parameters(TF_ThermalImaging *thermal_ima
 
     uint8_t _error_code = 0;
     uint8_t _length = 0;
-    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length);
+    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length, TF_NEW_PACKET);
 
     if (_result < 0) {
         return _result;
     }
 
+
+    if (_result & TF_TICK_PACKET_RECEIVED) {
+        tf_tfp_packet_processed(thermal_imaging->tfp);
+    }
+
+
     if (_result & TF_TICK_TIMEOUT) {
+        _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
+        (void) _result;
         return TF_E_TIMEOUT;
     }
 
@@ -946,15 +1038,12 @@ int tf_thermal_imaging_get_flux_linear_parameters(TF_ThermalImaging *thermal_ima
 
     uint8_t _error_code = 0;
     uint8_t _length = 0;
-    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length);
+    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length, TF_NEW_PACKET);
 
     if (_result < 0) {
         return _result;
     }
 
-    if (_result & TF_TICK_TIMEOUT) {
-        return TF_E_TIMEOUT;
-    }
 
     if (_result & TF_TICK_PACKET_RECEIVED) {
         TF_PacketBuffer *_recv_buf = tf_tfp_get_receive_buffer(thermal_imaging->tfp);
@@ -973,9 +1062,203 @@ int tf_thermal_imaging_get_flux_linear_parameters(TF_ThermalImaging *thermal_ima
         tf_tfp_packet_processed(thermal_imaging->tfp);
     }
 
+
+    if (_result & TF_TICK_TIMEOUT) {
+        _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
+        (void) _result;
+        return TF_E_TIMEOUT;
+    }
+
     _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
 
     if (_error_code == 0 && _length != 16) {
+        return TF_E_WRONG_RESPONSE_LENGTH;
+    }
+
+    if (_result < 0) {
+        return _result;
+    }
+
+    return tf_tfp_get_error(_error_code);
+}
+
+int tf_thermal_imaging_set_ffc_shutter_mode(TF_ThermalImaging *thermal_imaging, uint8_t shutter_mode, uint8_t temp_lockout_state, bool video_freeze_during_ffc, bool ffc_desired, uint32_t elapsed_time_since_last_ffc, uint32_t desired_ffc_period, bool explicit_cmd_to_open, uint16_t desired_ffc_temp_delta, uint16_t imminent_delay) {
+    if (thermal_imaging == NULL) {
+        return TF_E_NULL;
+    }
+
+    if (thermal_imaging->magic != 0x5446 || thermal_imaging->tfp == NULL) {
+        return TF_E_NOT_INITIALIZED;
+    }
+
+    TF_HAL *_hal = thermal_imaging->tfp->spitfp->hal;
+
+    if (tf_hal_get_common(_hal)->locked) {
+        return TF_E_LOCKED;
+    }
+
+    bool _response_expected = true;
+    tf_thermal_imaging_get_response_expected(thermal_imaging, TF_THERMAL_IMAGING_FUNCTION_SET_FFC_SHUTTER_MODE, &_response_expected);
+    tf_tfp_prepare_send(thermal_imaging->tfp, TF_THERMAL_IMAGING_FUNCTION_SET_FFC_SHUTTER_MODE, 17, _response_expected);
+
+    uint8_t *_send_buf = tf_tfp_get_send_payload_buffer(thermal_imaging->tfp);
+
+    _send_buf[0] = (uint8_t)shutter_mode;
+    _send_buf[1] = (uint8_t)temp_lockout_state;
+    _send_buf[2] = video_freeze_during_ffc ? 1 : 0;
+    _send_buf[3] = ffc_desired ? 1 : 0;
+    elapsed_time_since_last_ffc = tf_leconvert_uint32_to(elapsed_time_since_last_ffc); memcpy(_send_buf + 4, &elapsed_time_since_last_ffc, 4);
+    desired_ffc_period = tf_leconvert_uint32_to(desired_ffc_period); memcpy(_send_buf + 8, &desired_ffc_period, 4);
+    _send_buf[12] = explicit_cmd_to_open ? 1 : 0;
+    desired_ffc_temp_delta = tf_leconvert_uint16_to(desired_ffc_temp_delta); memcpy(_send_buf + 13, &desired_ffc_temp_delta, 2);
+    imminent_delay = tf_leconvert_uint16_to(imminent_delay); memcpy(_send_buf + 15, &imminent_delay, 2);
+
+    uint32_t _deadline = tf_hal_current_time_us(_hal) + tf_hal_get_common(_hal)->timeout;
+
+    uint8_t _error_code = 0;
+    uint8_t _length = 0;
+    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length, TF_NEW_PACKET);
+
+    if (_result < 0) {
+        return _result;
+    }
+
+
+    if (_result & TF_TICK_PACKET_RECEIVED) {
+        tf_tfp_packet_processed(thermal_imaging->tfp);
+    }
+
+
+    if (_result & TF_TICK_TIMEOUT) {
+        _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
+        (void) _result;
+        return TF_E_TIMEOUT;
+    }
+
+    _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
+
+    if (_error_code == 0 && _length != 0) {
+        return TF_E_WRONG_RESPONSE_LENGTH;
+    }
+
+    if (_result < 0) {
+        return _result;
+    }
+
+    return tf_tfp_get_error(_error_code);
+}
+
+int tf_thermal_imaging_get_ffc_shutter_mode(TF_ThermalImaging *thermal_imaging, uint8_t *ret_shutter_mode, uint8_t *ret_temp_lockout_state, bool *ret_video_freeze_during_ffc, bool *ret_ffc_desired, uint32_t *ret_elapsed_time_since_last_ffc, uint32_t *ret_desired_ffc_period, bool *ret_explicit_cmd_to_open, uint16_t *ret_desired_ffc_temp_delta, uint16_t *ret_imminent_delay) {
+    if (thermal_imaging == NULL) {
+        return TF_E_NULL;
+    }
+
+    if (thermal_imaging->magic != 0x5446 || thermal_imaging->tfp == NULL) {
+        return TF_E_NOT_INITIALIZED;
+    }
+
+    TF_HAL *_hal = thermal_imaging->tfp->spitfp->hal;
+
+    if (tf_hal_get_common(_hal)->locked) {
+        return TF_E_LOCKED;
+    }
+
+    bool _response_expected = true;
+    tf_tfp_prepare_send(thermal_imaging->tfp, TF_THERMAL_IMAGING_FUNCTION_GET_FFC_SHUTTER_MODE, 0, _response_expected);
+
+    uint32_t _deadline = tf_hal_current_time_us(_hal) + tf_hal_get_common(_hal)->timeout;
+
+    uint8_t _error_code = 0;
+    uint8_t _length = 0;
+    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length, TF_NEW_PACKET);
+
+    if (_result < 0) {
+        return _result;
+    }
+
+
+    if (_result & TF_TICK_PACKET_RECEIVED) {
+        TF_PacketBuffer *_recv_buf = tf_tfp_get_receive_buffer(thermal_imaging->tfp);
+        if (_error_code != 0 || _length != 17) {
+            tf_packet_buffer_remove(_recv_buf, _length);
+        } else {
+            if (ret_shutter_mode != NULL) { *ret_shutter_mode = tf_packet_buffer_read_uint8_t(_recv_buf); } else { tf_packet_buffer_remove(_recv_buf, 1); }
+            if (ret_temp_lockout_state != NULL) { *ret_temp_lockout_state = tf_packet_buffer_read_uint8_t(_recv_buf); } else { tf_packet_buffer_remove(_recv_buf, 1); }
+            if (ret_video_freeze_during_ffc != NULL) { *ret_video_freeze_during_ffc = tf_packet_buffer_read_bool(_recv_buf); } else { tf_packet_buffer_remove(_recv_buf, 1); }
+            if (ret_ffc_desired != NULL) { *ret_ffc_desired = tf_packet_buffer_read_bool(_recv_buf); } else { tf_packet_buffer_remove(_recv_buf, 1); }
+            if (ret_elapsed_time_since_last_ffc != NULL) { *ret_elapsed_time_since_last_ffc = tf_packet_buffer_read_uint32_t(_recv_buf); } else { tf_packet_buffer_remove(_recv_buf, 4); }
+            if (ret_desired_ffc_period != NULL) { *ret_desired_ffc_period = tf_packet_buffer_read_uint32_t(_recv_buf); } else { tf_packet_buffer_remove(_recv_buf, 4); }
+            if (ret_explicit_cmd_to_open != NULL) { *ret_explicit_cmd_to_open = tf_packet_buffer_read_bool(_recv_buf); } else { tf_packet_buffer_remove(_recv_buf, 1); }
+            if (ret_desired_ffc_temp_delta != NULL) { *ret_desired_ffc_temp_delta = tf_packet_buffer_read_uint16_t(_recv_buf); } else { tf_packet_buffer_remove(_recv_buf, 2); }
+            if (ret_imminent_delay != NULL) { *ret_imminent_delay = tf_packet_buffer_read_uint16_t(_recv_buf); } else { tf_packet_buffer_remove(_recv_buf, 2); }
+        }
+        tf_tfp_packet_processed(thermal_imaging->tfp);
+    }
+
+
+    if (_result & TF_TICK_TIMEOUT) {
+        _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
+        (void) _result;
+        return TF_E_TIMEOUT;
+    }
+
+    _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
+
+    if (_error_code == 0 && _length != 17) {
+        return TF_E_WRONG_RESPONSE_LENGTH;
+    }
+
+    if (_result < 0) {
+        return _result;
+    }
+
+    return tf_tfp_get_error(_error_code);
+}
+
+int tf_thermal_imaging_run_ffc_normalization(TF_ThermalImaging *thermal_imaging) {
+    if (thermal_imaging == NULL) {
+        return TF_E_NULL;
+    }
+
+    if (thermal_imaging->magic != 0x5446 || thermal_imaging->tfp == NULL) {
+        return TF_E_NOT_INITIALIZED;
+    }
+
+    TF_HAL *_hal = thermal_imaging->tfp->spitfp->hal;
+
+    if (tf_hal_get_common(_hal)->locked) {
+        return TF_E_LOCKED;
+    }
+
+    bool _response_expected = true;
+    tf_thermal_imaging_get_response_expected(thermal_imaging, TF_THERMAL_IMAGING_FUNCTION_RUN_FFC_NORMALIZATION, &_response_expected);
+    tf_tfp_prepare_send(thermal_imaging->tfp, TF_THERMAL_IMAGING_FUNCTION_RUN_FFC_NORMALIZATION, 0, _response_expected);
+
+    uint32_t _deadline = tf_hal_current_time_us(_hal) + tf_hal_get_common(_hal)->timeout;
+
+    uint8_t _error_code = 0;
+    uint8_t _length = 0;
+    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length, TF_NEW_PACKET);
+
+    if (_result < 0) {
+        return _result;
+    }
+
+
+    if (_result & TF_TICK_PACKET_RECEIVED) {
+        tf_tfp_packet_processed(thermal_imaging->tfp);
+    }
+
+
+    if (_result & TF_TICK_TIMEOUT) {
+        _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
+        (void) _result;
+        return TF_E_TIMEOUT;
+    }
+
+    _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
+
+    if (_error_code == 0 && _length != 0) {
         return TF_E_WRONG_RESPONSE_LENGTH;
     }
 
@@ -1008,15 +1291,12 @@ int tf_thermal_imaging_get_spitfp_error_count(TF_ThermalImaging *thermal_imaging
 
     uint8_t _error_code = 0;
     uint8_t _length = 0;
-    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length);
+    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length, TF_NEW_PACKET);
 
     if (_result < 0) {
         return _result;
     }
 
-    if (_result & TF_TICK_TIMEOUT) {
-        return TF_E_TIMEOUT;
-    }
 
     if (_result & TF_TICK_PACKET_RECEIVED) {
         TF_PacketBuffer *_recv_buf = tf_tfp_get_receive_buffer(thermal_imaging->tfp);
@@ -1029,6 +1309,13 @@ int tf_thermal_imaging_get_spitfp_error_count(TF_ThermalImaging *thermal_imaging
             if (ret_error_count_overflow != NULL) { *ret_error_count_overflow = tf_packet_buffer_read_uint32_t(_recv_buf); } else { tf_packet_buffer_remove(_recv_buf, 4); }
         }
         tf_tfp_packet_processed(thermal_imaging->tfp);
+    }
+
+
+    if (_result & TF_TICK_TIMEOUT) {
+        _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
+        (void) _result;
+        return TF_E_TIMEOUT;
     }
 
     _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
@@ -1070,15 +1357,12 @@ int tf_thermal_imaging_set_bootloader_mode(TF_ThermalImaging *thermal_imaging, u
 
     uint8_t _error_code = 0;
     uint8_t _length = 0;
-    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length);
+    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length, TF_NEW_PACKET);
 
     if (_result < 0) {
         return _result;
     }
 
-    if (_result & TF_TICK_TIMEOUT) {
-        return TF_E_TIMEOUT;
-    }
 
     if (_result & TF_TICK_PACKET_RECEIVED) {
         TF_PacketBuffer *_recv_buf = tf_tfp_get_receive_buffer(thermal_imaging->tfp);
@@ -1088,6 +1372,13 @@ int tf_thermal_imaging_set_bootloader_mode(TF_ThermalImaging *thermal_imaging, u
             if (ret_status != NULL) { *ret_status = tf_packet_buffer_read_uint8_t(_recv_buf); } else { tf_packet_buffer_remove(_recv_buf, 1); }
         }
         tf_tfp_packet_processed(thermal_imaging->tfp);
+    }
+
+
+    if (_result & TF_TICK_TIMEOUT) {
+        _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
+        (void) _result;
+        return TF_E_TIMEOUT;
     }
 
     _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
@@ -1125,15 +1416,12 @@ int tf_thermal_imaging_get_bootloader_mode(TF_ThermalImaging *thermal_imaging, u
 
     uint8_t _error_code = 0;
     uint8_t _length = 0;
-    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length);
+    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length, TF_NEW_PACKET);
 
     if (_result < 0) {
         return _result;
     }
 
-    if (_result & TF_TICK_TIMEOUT) {
-        return TF_E_TIMEOUT;
-    }
 
     if (_result & TF_TICK_PACKET_RECEIVED) {
         TF_PacketBuffer *_recv_buf = tf_tfp_get_receive_buffer(thermal_imaging->tfp);
@@ -1143,6 +1431,13 @@ int tf_thermal_imaging_get_bootloader_mode(TF_ThermalImaging *thermal_imaging, u
             if (ret_mode != NULL) { *ret_mode = tf_packet_buffer_read_uint8_t(_recv_buf); } else { tf_packet_buffer_remove(_recv_buf, 1); }
         }
         tf_tfp_packet_processed(thermal_imaging->tfp);
+    }
+
+
+    if (_result & TF_TICK_TIMEOUT) {
+        _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
+        (void) _result;
+        return TF_E_TIMEOUT;
     }
 
     _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
@@ -1185,13 +1480,21 @@ int tf_thermal_imaging_set_write_firmware_pointer(TF_ThermalImaging *thermal_ima
 
     uint8_t _error_code = 0;
     uint8_t _length = 0;
-    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length);
+    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length, TF_NEW_PACKET);
 
     if (_result < 0) {
         return _result;
     }
 
+
+    if (_result & TF_TICK_PACKET_RECEIVED) {
+        tf_tfp_packet_processed(thermal_imaging->tfp);
+    }
+
+
     if (_result & TF_TICK_TIMEOUT) {
+        _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
+        (void) _result;
         return TF_E_TIMEOUT;
     }
 
@@ -1234,15 +1537,12 @@ int tf_thermal_imaging_write_firmware(TF_ThermalImaging *thermal_imaging, const 
 
     uint8_t _error_code = 0;
     uint8_t _length = 0;
-    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length);
+    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length, TF_NEW_PACKET);
 
     if (_result < 0) {
         return _result;
     }
 
-    if (_result & TF_TICK_TIMEOUT) {
-        return TF_E_TIMEOUT;
-    }
 
     if (_result & TF_TICK_PACKET_RECEIVED) {
         TF_PacketBuffer *_recv_buf = tf_tfp_get_receive_buffer(thermal_imaging->tfp);
@@ -1252,6 +1552,13 @@ int tf_thermal_imaging_write_firmware(TF_ThermalImaging *thermal_imaging, const 
             if (ret_status != NULL) { *ret_status = tf_packet_buffer_read_uint8_t(_recv_buf); } else { tf_packet_buffer_remove(_recv_buf, 1); }
         }
         tf_tfp_packet_processed(thermal_imaging->tfp);
+    }
+
+
+    if (_result & TF_TICK_TIMEOUT) {
+        _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
+        (void) _result;
+        return TF_E_TIMEOUT;
     }
 
     _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
@@ -1294,13 +1601,21 @@ int tf_thermal_imaging_set_status_led_config(TF_ThermalImaging *thermal_imaging,
 
     uint8_t _error_code = 0;
     uint8_t _length = 0;
-    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length);
+    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length, TF_NEW_PACKET);
 
     if (_result < 0) {
         return _result;
     }
 
+
+    if (_result & TF_TICK_PACKET_RECEIVED) {
+        tf_tfp_packet_processed(thermal_imaging->tfp);
+    }
+
+
     if (_result & TF_TICK_TIMEOUT) {
+        _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
+        (void) _result;
         return TF_E_TIMEOUT;
     }
 
@@ -1339,15 +1654,12 @@ int tf_thermal_imaging_get_status_led_config(TF_ThermalImaging *thermal_imaging,
 
     uint8_t _error_code = 0;
     uint8_t _length = 0;
-    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length);
+    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length, TF_NEW_PACKET);
 
     if (_result < 0) {
         return _result;
     }
 
-    if (_result & TF_TICK_TIMEOUT) {
-        return TF_E_TIMEOUT;
-    }
 
     if (_result & TF_TICK_PACKET_RECEIVED) {
         TF_PacketBuffer *_recv_buf = tf_tfp_get_receive_buffer(thermal_imaging->tfp);
@@ -1357,6 +1669,13 @@ int tf_thermal_imaging_get_status_led_config(TF_ThermalImaging *thermal_imaging,
             if (ret_config != NULL) { *ret_config = tf_packet_buffer_read_uint8_t(_recv_buf); } else { tf_packet_buffer_remove(_recv_buf, 1); }
         }
         tf_tfp_packet_processed(thermal_imaging->tfp);
+    }
+
+
+    if (_result & TF_TICK_TIMEOUT) {
+        _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
+        (void) _result;
+        return TF_E_TIMEOUT;
     }
 
     _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
@@ -1394,15 +1713,12 @@ int tf_thermal_imaging_get_chip_temperature(TF_ThermalImaging *thermal_imaging, 
 
     uint8_t _error_code = 0;
     uint8_t _length = 0;
-    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length);
+    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length, TF_NEW_PACKET);
 
     if (_result < 0) {
         return _result;
     }
 
-    if (_result & TF_TICK_TIMEOUT) {
-        return TF_E_TIMEOUT;
-    }
 
     if (_result & TF_TICK_PACKET_RECEIVED) {
         TF_PacketBuffer *_recv_buf = tf_tfp_get_receive_buffer(thermal_imaging->tfp);
@@ -1412,6 +1728,13 @@ int tf_thermal_imaging_get_chip_temperature(TF_ThermalImaging *thermal_imaging, 
             if (ret_temperature != NULL) { *ret_temperature = tf_packet_buffer_read_int16_t(_recv_buf); } else { tf_packet_buffer_remove(_recv_buf, 2); }
         }
         tf_tfp_packet_processed(thermal_imaging->tfp);
+    }
+
+
+    if (_result & TF_TICK_TIMEOUT) {
+        _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
+        (void) _result;
+        return TF_E_TIMEOUT;
     }
 
     _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
@@ -1450,13 +1773,21 @@ int tf_thermal_imaging_reset(TF_ThermalImaging *thermal_imaging) {
 
     uint8_t _error_code = 0;
     uint8_t _length = 0;
-    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length);
+    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length, TF_NEW_PACKET);
 
     if (_result < 0) {
         return _result;
     }
 
+
+    if (_result & TF_TICK_PACKET_RECEIVED) {
+        tf_tfp_packet_processed(thermal_imaging->tfp);
+    }
+
+
     if (_result & TF_TICK_TIMEOUT) {
+        _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
+        (void) _result;
         return TF_E_TIMEOUT;
     }
 
@@ -1500,13 +1831,21 @@ int tf_thermal_imaging_write_uid(TF_ThermalImaging *thermal_imaging, uint32_t ui
 
     uint8_t _error_code = 0;
     uint8_t _length = 0;
-    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length);
+    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length, TF_NEW_PACKET);
 
     if (_result < 0) {
         return _result;
     }
 
+
+    if (_result & TF_TICK_PACKET_RECEIVED) {
+        tf_tfp_packet_processed(thermal_imaging->tfp);
+    }
+
+
     if (_result & TF_TICK_TIMEOUT) {
+        _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
+        (void) _result;
         return TF_E_TIMEOUT;
     }
 
@@ -1545,15 +1884,12 @@ int tf_thermal_imaging_read_uid(TF_ThermalImaging *thermal_imaging, uint32_t *re
 
     uint8_t _error_code = 0;
     uint8_t _length = 0;
-    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length);
+    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length, TF_NEW_PACKET);
 
     if (_result < 0) {
         return _result;
     }
 
-    if (_result & TF_TICK_TIMEOUT) {
-        return TF_E_TIMEOUT;
-    }
 
     if (_result & TF_TICK_PACKET_RECEIVED) {
         TF_PacketBuffer *_recv_buf = tf_tfp_get_receive_buffer(thermal_imaging->tfp);
@@ -1563,6 +1899,13 @@ int tf_thermal_imaging_read_uid(TF_ThermalImaging *thermal_imaging, uint32_t *re
             if (ret_uid != NULL) { *ret_uid = tf_packet_buffer_read_uint32_t(_recv_buf); } else { tf_packet_buffer_remove(_recv_buf, 4); }
         }
         tf_tfp_packet_processed(thermal_imaging->tfp);
+    }
+
+
+    if (_result & TF_TICK_TIMEOUT) {
+        _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
+        (void) _result;
+        return TF_E_TIMEOUT;
     }
 
     _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
@@ -1601,15 +1944,12 @@ int tf_thermal_imaging_get_identity(TF_ThermalImaging *thermal_imaging, char ret
 
     uint8_t _error_code = 0;
     uint8_t _length = 0;
-    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length);
+    int _result = tf_tfp_send_packet(thermal_imaging->tfp, _response_expected, _deadline, &_error_code, &_length, TF_NEW_PACKET);
 
     if (_result < 0) {
         return _result;
     }
 
-    if (_result & TF_TICK_TIMEOUT) {
-        return TF_E_TIMEOUT;
-    }
 
     if (_result & TF_TICK_PACKET_RECEIVED) {
         TF_PacketBuffer *_recv_buf = tf_tfp_get_receive_buffer(thermal_imaging->tfp);
@@ -1624,6 +1964,13 @@ int tf_thermal_imaging_get_identity(TF_ThermalImaging *thermal_imaging, char ret
             if (ret_device_identifier != NULL) { *ret_device_identifier = tf_packet_buffer_read_uint16_t(_recv_buf); } else { tf_packet_buffer_remove(_recv_buf, 2); }
         }
         tf_tfp_packet_processed(thermal_imaging->tfp);
+    }
+
+
+    if (_result & TF_TICK_TIMEOUT) {
+        _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
+        (void) _result;
+        return TF_E_TIMEOUT;
     }
 
     _result = tf_tfp_finish_send(thermal_imaging->tfp, _result, _deadline);
@@ -1663,7 +2010,7 @@ int tf_thermal_imaging_get_high_contrast_image(TF_ThermalImaging *thermal_imagin
     if (thermal_imaging->magic != 0x5446 || thermal_imaging->tfp == NULL) {
         return TF_E_NOT_INITIALIZED;
     }
-    
+
     uint32_t _image_length = 0;
     uint8_t _image_chunk_data[62];
 
@@ -1699,7 +2046,7 @@ int tf_thermal_imaging_get_temperature_image(TF_ThermalImaging *thermal_imaging,
     if (thermal_imaging->magic != 0x5446 || thermal_imaging->tfp == NULL) {
         return TF_E_NOT_INITIALIZED;
     }
-    
+
     uint32_t _image_length = 0;
     uint16_t _image_chunk_data[31];
 

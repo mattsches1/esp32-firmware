@@ -19,19 +19,18 @@
 
 #pragma once
 
-#include "ArduinoJson.h"
-
 #include "config.h"
 
-class Debug {
-public:
-    Debug();
-    void setup();
-    void register_urls();
-    void loop();
+#include "module.h"
 
-    bool initialized = false;
+class Debug final : public IModule
+{
+public:
+    Debug(){}
+    void pre_setup() override;
+    void setup() override;
+    void register_urls() override;
 
 private:
-    ConfigRoot debug_state;
+    ConfigRoot state;
 };

@@ -20,19 +20,23 @@
 #pragma once
 
 #include "net_arduino_esp32/net_arduino_esp32.h"
+
 #include "config.h"
 
-class Proxy {
-public:
-    Proxy();
-    void setup();
-    void register_urls();
-    void loop();
+#include "module.h"
 
-    bool initialized = false;
+class Proxy final : public IModule
+{
+public:
+    Proxy(){}
+    void pre_setup() override;
+    void setup() override;
+    void register_urls() override;
 
 private:
     TF_Net net;
     ConfigRoot devices;
     ConfigRoot error_counters;
+    ConfigRoot config;
+    String auth_secret;
 };

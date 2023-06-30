@@ -23,25 +23,28 @@
 
 #include "config.h"
 
+#include "module.h"
+
 #define CHARGE_TRACKER_AUTH_TYPE_NONE 0
 #define CHARGE_TRACKER_AUTH_TYPE_LOST 1
 #define CHARGE_TRACKER_AUTH_TYPE_NFC 2
 #define CHARGE_TRACKER_AUTH_TYPE_NFC_INJECTION 3
 
-class ChargeTracker {
-public:
-    ChargeTracker();
-    void setup();
-    void register_urls();
-    void loop();
+#define CHARGE_TRACKER_MAX_REPAIR 200
 
-    bool initialized = false;
+class ChargeTracker final : public IModule
+{
+public:
+    ChargeTracker(){}
+    void pre_setup() override;
+    void setup() override;
+    void register_urls() override;
 
     uint32_t first_charge_record;
     uint32_t last_charge_record;
 
     String chargeRecordFilename(uint32_t i);
-    void startCharge(uint32_t timestamp_minutes, float meter_start, uint8_t user_id, uint32_t evse_uptime, uint8_t auth_type, Config::ConfVariant auth_info);
+    bool startCharge(uint32_t timestamp_minutes, float meter_start, uint8_t user_id, uint32_t evse_uptime, uint8_t auth_type, Config::ConfVariant auth_info);
     void endCharge(uint32_t charge_duration_seconds, float meter_end);
     void removeOldRecords();
     bool setupRecords();
@@ -57,5 +60,11 @@ public:
     ConfigRoot current_charge;
     ConfigRoot state;
 
+    ConfigRoot config;
+
     std::mutex records_mutex;
+    std::mutex pdf_mutex;
+private:
+    bool repair_last(float);
+    void repair_charges();
 };

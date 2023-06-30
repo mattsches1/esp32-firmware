@@ -19,22 +19,31 @@
 
 #pragma once
 
-#include "api.h"
+#include "config.h"
 
-class Http : public IAPIBackend {
+#include "module.h"
+#include "api.h"
+#include "tools.h"
+
+bool custom_uri_match(const char *ref_uri, const char *in_uri, size_t len);
+
+class Http final : public IAPIBackend
+{
 public:
-    Http();
-    void setup();
-    void register_urls();
-    void loop();
+    Http(){}
+    void pre_setup() override;
+    void setup() override;
+    void register_urls() override;
 
     // IAPIBackend implementation
     void addCommand(size_t commandIdx, const CommandRegistration &reg) override;
     void addState(size_t stateIdx, const StateRegistration &reg) override;
     void addRawCommand(size_t rawCommandIdx, const RawCommandRegistration &reg) override;
-    bool pushStateUpdate(size_t stateIdx, String payload, String path) override;
-    void pushRawStateUpdate(String payload, String path) override;
-    void wifiAvailable() override;
+    void addResponse(size_t responseIdx, const ResponseRegistration &reg) override;
+    bool pushStateUpdate(size_t stateIdx, const String &payload, const String &path) override;
+    void pushRawStateUpdate(const String &payload, const String &path) override;
+    WebServerRequestReturnProtect api_handler_get(WebServerRequest req);
+    WebServerRequestReturnProtect api_handler_put(WebServerRequest req);
 
-    bool initialized = false;
+    Ownership response_ownership;
 };

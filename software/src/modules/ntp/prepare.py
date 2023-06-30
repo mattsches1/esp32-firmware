@@ -5,46 +5,41 @@ import argparse
 import json
 import os
 import datetime
+from collections import OrderedDict
+
+import sys
+import importlib.util
+import importlib.machinery
+
+software_dir = os.path.realpath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+
+def create_software_module():
+    software_spec = importlib.util.spec_from_file_location('software', os.path.join(software_dir, '__init__.py'))
+    software_module = importlib.util.module_from_spec(software_spec)
+
+    software_spec.loader.exec_module(software_module)
+
+    sys.modules['software'] = software_module
+
+if 'software' not in sys.modules:
+    create_software_module()
+
+from software import util
 
 ZONES_DIR = "/usr/share/zoneinfo/"
 
 AREAS = ["Africa", "America", "Antarctica", "Arctic", "Asia", "Atlantic", "Australia", "Etc", "Europe", "Indian", "Pacific"]
-
-def specialize_template(template_filename, destination_filename, replacements, check_completeness=True, remove_template=False):
-    lines = []
-    replaced = set()
-
-    with open(template_filename, 'r', encoding='utf-8') as f:
-        for line in f.readlines():
-            for key in replacements:
-                replaced_line = line.replace(key, replacements[key])
-
-                if replaced_line != line:
-                    replaced.add(key)
-
-                line = replaced_line
-
-            lines.append(line)
-
-    if check_completeness and replaced != set(replacements.keys()):
-        raise Exception('Not all replacements for {0} have been applied. Missing are {1}'.format(template_filename, ', '.join(set(replacements.keys() - replaced))))
-
-    with open(destination_filename, 'w', encoding='utf-8') as f:
-        f.writelines(lines)
-
-    if remove_template:
-        os.remove(template_filename)
 
 def get_tz_string(timezone):
     data = open(ZONES_DIR + timezone, "rb").read().split(b"\n")[-2]
     return data.decode("utf-8")
 
 def make_timezones_dict():
-    result = {}
+    result = OrderedDict()
 
     for area in AREAS:
-        for root, dirs, files in sorted(os.walk(os.path.join(ZONES_DIR, area), topdown=True)):
-            for name in files:
+        for root, dirs, files in os.walk(os.path.join(ZONES_DIR, area), topdown=True):
+            for name in sorted(files):
                 if not name[0].isupper():
                     continue
 
@@ -99,38 +94,42 @@ with open("timezones.c", "r") as f:
     f.readline()
     generated_db_version = f.readline().split(';')[0].strip()
 
-with open(os.path.join(ZONES_DIR, "tzdata.zi"), "r") as f:
-    installed_db_version = f.readline().split("version")[1].strip()
+try:
+    with open(os.path.join(ZONES_DIR, "tzdata.zi"), "r") as f:
+        installed_db_version = f.readline().split("version")[1].strip()
+except FileNotFoundError:
+    print("Skipping timezone database generation. No timezone information available")
+    sys.exit(0)
 
 if generated_db_version >= installed_db_version:
     print("Skipping timezone database generation. Installed version {} is not newer than last generated version {}".format(installed_db_version, generated_db_version))
     sys.exit(0)
 
-timezones = make_timezones_dict()
+timezones = OrderedDict(sorted(make_timezones_dict().items(), key=lambda x: x[0]))
 
-nested_dict = {}
-empty_nested_dict = {}
+nested_dict = OrderedDict()
+empty_nested_dict = OrderedDict()
 
 for name, tz in timezones.items():
     splt = name.split("/")
     d = nested_dict
     d2 = empty_nested_dict
     for entry in splt[:-1]:
-        d = d.setdefault(entry, {})
-        d2 = d2.setdefault(entry, {})
+        d = d.setdefault(entry, OrderedDict())
+        d2 = d2.setdefault(entry, OrderedDict())
 
     d[splt[-1]] = tz
     d2[splt[-1]] = None
 
 generate("global", nested_dict)
 
-specialize_template("timezones.c.template", "timezones.c", {
+util.specialize_template("timezones.c.template", "timezones.c", {
     '{{{generated_comment}}}': "/*\n{};{}\n*/".format(installed_db_version, datetime.datetime.utcnow().isoformat()),
     '{{{table_inits}}}': "\n\n".join(inits)
 })
 
 
-specialize_template("../../../web/src/modules/ntp/timezones.ts.template", "../../../web/src/modules/ntp/timezones.ts", {
+util.specialize_template("../../../web/src/modules/ntp/timezones.ts.template", "../../../web/src/modules/ntp/timezones.ts", {
     '{{{generated_comment}}}': "/*\n{};{}\n*/".format(installed_db_version, datetime.datetime.utcnow().isoformat()),
     '{{{json}}}': json.dumps(empty_nested_dict, indent=4)
 })

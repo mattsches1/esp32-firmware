@@ -36,19 +36,10 @@
 
 #include <string.h>
 
-extern EventLog logger;
-
 extern TF_HAL hal;
-extern TaskScheduler task_scheduler;
-
-extern API api;
 
 TF_RotaryPotiV2 poti;
 TF_RGBLEDV2 led;
-
-PowerCycleTester::PowerCycleTester()
-{
-}
 
 void PowerCycleTester::setup()
 {
@@ -69,14 +60,8 @@ void PowerCycleTester::setup()
 
     tf_rotary_poti_v2_set_status_led_config(&poti, 0);
     tf_rgb_led_v2_set_status_led_config(&led, 0);
-}
 
-void PowerCycleTester::register_urls()
-{
-}
-
-void PowerCycleTester::loop()
-{
+    initialized = true;
 }
 
 void PowerCycleTester::led_green()

@@ -23,6 +23,8 @@
 
 #include "tools.h"
 #include "hal_arduino_esp32_brick/hal_arduino_esp32_brick.h"
+#include "event_log.h"
+#include "modules.h"
 #include "task_scheduler.h"
 
 #if TF_LOCAL_ENABLE != 0
@@ -35,31 +37,23 @@
 
 #endif
 
-extern TaskScheduler task_scheduler;
-
 #define GREEN_LED 4
 #define BLUE_LED 32
 #define BUTTON 0
 
 TF_HAL hal;
-extern EventLog logger;
 extern uint32_t local_uid_num;
-extern char local_uid_str[7];
+extern char local_uid_str[32];
 extern char passphrase[20];
 extern int8_t blue_led_pin;
 extern int8_t green_led_pin;
 extern int8_t button_pin;
-extern bool factory_reset_requested;
 
 #if TF_LOCAL_ENABLE != 0
 
 static TF_Local local;
 
 #endif
-
-ESP32Brick::ESP32Brick()
-{
-}
 
 void ESP32Brick::setup()
 {
@@ -87,14 +81,14 @@ void ESP32Brick::setup()
     button_pin = BUTTON;
 
     task_scheduler.scheduleWithFixedDelay([](){
-        static bool led_blink_state = false;
-        led_blink_state = !led_blink_state;
-        digitalWrite(BLUE_LED, led_blink_state ? HIGH : LOW);
-    }, 0, 1000);
-}
+#if MODULE_WATCHDOG_AVAILABLE()
+    static int watchdog_handle = watchdog.add("esp_led_blink", "Main thread blocked");
+    watchdog.reset(watchdog_handle);
+#endif
+        led_blink(BLUE_LED, 2000, 1, 0);
+    }, 0, 100);
 
-void ESP32Brick::register_urls()
-{
+    initialized = true;
 }
 
 void ESP32Brick::loop()
@@ -103,8 +97,7 @@ void ESP32Brick::loop()
     static uint32_t last_btn_change = 0;
 
     bool btn = digitalRead(BUTTON);
-    if (!factory_reset_requested)
-        digitalWrite(GREEN_LED, btn);
+    digitalWrite(GREEN_LED, btn);
 
     if (btn != last_btn_value) {
         last_btn_change = millis();
@@ -115,6 +108,6 @@ void ESP32Brick::loop()
     if (!btn && deadline_elapsed(last_btn_change + 10000)) {
         logger.printfln("IO0 button was pressed for 10 seconds. Resetting to factory defaults.");
         last_btn_change = millis();
-        factory_reset_requested = true;
+        factory_reset();
     }
 }

@@ -19,14 +19,13 @@
 
 #include "charge_tracker.h"
 
+#include <memory>
+
 #include "modules.h"
-
-#include <esp_random.h>
-
 #include "task_scheduler.h"
 #include "tools.h"
 
-extern TaskScheduler task_scheduler;
+#include "pdf_charge_log.h"
 
 struct ChargeStart {
     uint32_t timestamp_minutes = 0;
@@ -41,6 +40,13 @@ struct ChargeEnd {
     float meter_end = 0.0f;
 } __attribute__((packed));
 
+struct Charge {
+    ChargeStart cs;
+    ChargeEnd ce;
+} __attribute__((packed));
+
+static bool repair_logic(Charge *);
+
 static_assert(sizeof(ChargeEnd) == 7, "Unexpected size of ChargeEnd");
 
 #define CHARGE_RECORD_SIZE (sizeof(ChargeStart) + sizeof(ChargeEnd))
@@ -54,7 +60,7 @@ static_assert(CHARGE_RECORD_SIZE == 16, "Unexpected size of ChargeStart + Charge
 
 #define CHARGE_RECORD_LAST_CHARGES_SIZE 30
 
-ChargeTracker::ChargeTracker()
+void ChargeTracker::pre_setup()
 {
     last_charges = Config::Array({},
         new Config{Config::Object({
@@ -70,12 +76,16 @@ ChargeTracker::ChargeTracker()
         {"evse_uptime_start", Config::Uint32(0)},
         {"timestamp_minutes", Config::Uint32(0)},
         {"authorization_type", Config::Uint8(0)},
-        {"authorization_info", Config::Null()}
+        {"authorization_info", Config{Config::ConfVariant()}}
     });
 
     state = Config::Object({
         {"tracked_charges", Config::Uint16(0)},
         {"first_charge_timestamp", Config::Uint32(0)}
+    });
+
+    config = Config::Object({
+        {"electricity_price", Config::Uint16(0)}
     });
 }
 
@@ -84,8 +94,56 @@ String ChargeTracker::chargeRecordFilename(uint32_t i)
     return String(CHARGE_RECORD_FOLDER) + "/charge-record-" + i + ".bin";
 }
 
-void ChargeTracker::startCharge(uint32_t timestamp_minutes, float meter_start, uint8_t user_id, uint32_t evse_uptime, uint8_t auth_type, Config::ConfVariant auth_info) {
+bool ChargeTracker::repair_last(float meter_start) {
+    Charge charges[3];
+    charges[0].ce.meter_end = NAN;
+    charges[2].cs.meter_start = meter_start;
+
+    if (!LittleFS.exists(chargeRecordFilename(last_charge_record)))
+        return true;
+
+    File r_file = LittleFS.open(chargeRecordFilename(last_charge_record), "r+");
+    if (r_file.size() % CHARGE_RECORD_SIZE != 0) {
+        logger.printfln("Can't track start of charge: Last charge end was not tracked or file is damaged! Offset is %u bytes. Expected 0", r_file.size() % CHARGE_RECORD_SIZE);
+        // TODO: for robustness we would have to write the last end here? Yes, but only if % == 9. Also write duration 0, so we know this is a "faked" end. Still write the correct meter state.
+        return false;
+    }
+
+    if (r_file.size() > sizeof(Charge)) {
+        r_file.seek(r_file.size() - sizeof(Charge) * 2);
+        r_file.read(reinterpret_cast<uint8_t *>(&charges), sizeof(Charge) * 2);
+    }
+    else if (r_file.size() == sizeof(Charge)) {
+        if (last_charge_record > 1) {
+            File tmp = LittleFS.open(chargeRecordFilename(last_charge_record - 1));
+            tmp.seek(tmp.size() - sizeof(Charge) * 2);
+            tmp.read(reinterpret_cast<uint8_t *>(&charges), sizeof(Charge));
+        }
+        r_file.seek(r_file.size() - sizeof(Charge));
+        r_file.read(reinterpret_cast<uint8_t *>(&charges[1]), sizeof(Charge));
+    }
+
+    if (repair_logic(&charges[1])) {
+        r_file.seek(r_file.size() - sizeof(Charge));
+        r_file.write(reinterpret_cast<uint8_t *>(&charges[1]), sizeof(Charge));
+        logger.printfln("Repaired previous broken charge.");
+        last_charges.get(last_charges.count() - 1)->get("energy_charged")->updateFloat(charges[1].ce.meter_end - charges[1].cs.meter_start);
+    }
+    return true;
+}
+
+bool ChargeTracker::startCharge(uint32_t timestamp_minutes, float meter_start, uint8_t user_id, uint32_t evse_uptime, uint8_t auth_type, Config::ConfVariant auth_info) {
+#if MODULE_REQUIRE_METER_AVAILABLE()
+    if (!require_meter.allow_charging(meter_start))
+        return false;
+#endif
+
     std::lock_guard<std::mutex> lock{records_mutex};
+
+    if (!repair_last(meter_start)) {
+        return false;
+    }
+
     ChargeStart cs;
     File file = LittleFS.open(chargeRecordFilename(this->last_charge_record), "a", true);
 
@@ -99,12 +157,6 @@ void ChargeTracker::startCharge(uint32_t timestamp_minutes, float meter_start, u
         updateState();
 
         file = LittleFS.open(new_file_name, "w", true);
-    }
-
-    if ((file.size() % CHARGE_RECORD_SIZE) != 0) {
-        logger.printfln("Can't track start of charge: Last charge end was not tracked or file is damaged! Offset is %u bytes. Expected 0", file.size() % CHARGE_RECORD_SIZE);
-        // TODO: for robustness we would have to write the last end here? Yes, but only if % == 9. Also write duration 0, so we know this is a "faked" end. Still write the correct meter state.
-        return;
     }
 
     cs.timestamp_minutes = timestamp_minutes;
@@ -123,7 +175,8 @@ void ChargeTracker::startCharge(uint32_t timestamp_minutes, float meter_start, u
     current_charge.get("timestamp_minutes")->updateUint(timestamp_minutes);
     current_charge.get("authorization_type")->updateUint(auth_type);
     current_charge.get("authorization_info")->value = auth_info;
-    current_charge.get("authorization_info")->updated = 0xFF;
+    current_charge.get("authorization_info")->value.updated = 0xFF;
+    return true;
 }
 
 void ChargeTracker::endCharge(uint32_t charge_duration_seconds, float meter_end)
@@ -164,7 +217,7 @@ void ChargeTracker::endCharge(uint32_t charge_duration_seconds, float meter_end)
     current_charge.get("evse_uptime_start")->updateUint(0);
     current_charge.get("timestamp_minutes")->updateUint(0);
     current_charge.get("authorization_type")->updateUint(0);
-    current_charge.get("authorization_info")->value = nullptr;
+    current_charge.get("authorization_info")->value = Config::ConfVariant{};
 
     updateState();
 }
@@ -230,7 +283,7 @@ void ChargeTracker::removeOldRecords()
         }
     }
 
-    // Now only users that are save to remove remain.
+    // Now only users that are safe to remove remain.
     for (int user_id = 0; user_id < 256; ++user_id) {
         if ((users_to_delete[user_id / 32] & (1 << (user_id % 32))) != 0) {
             users.remove_from_username_file(user_id);
@@ -333,6 +386,10 @@ bool ChargeTracker::currentlyCharging()
     return (file.size() % CHARGE_RECORD_SIZE) == sizeof(ChargeStart);
 }
 
+bool charged_invalid(ChargeStart cs, ChargeEnd ce) {
+    return isnan(cs.meter_start) || isnan(ce.meter_end) || ce.meter_end < cs.meter_start;
+}
+
 void ChargeTracker::readNRecords(File *f, size_t records_to_read)
 {
     uint8_t buf[CHARGE_RECORD_SIZE];
@@ -350,7 +407,7 @@ void ChargeTracker::readNRecords(File *f, size_t records_to_read)
         last_charges.get(last_charges.count() - 1)->get("timestamp_minutes")->updateUint(cs.timestamp_minutes);
         last_charges.get(last_charges.count() - 1)->get("charge_duration")->updateUint(ce.charge_duration);
         last_charges.get(last_charges.count() - 1)->get("user_id")->updateUint(cs.user_id);
-        last_charges.get(last_charges.count() - 1)->get("energy_charged")->updateFloat((cs.meter_start == NAN || ce.meter_end == NAN) ? NAN : ce.meter_end - cs.meter_start);
+        last_charges.get(last_charges.count() - 1)->get("energy_charged")->updateFloat(charged_invalid(cs, ce) ? NAN : ce.meter_end - cs.meter_start);
     }
 }
 
@@ -379,6 +436,10 @@ void ChargeTracker::setup()
         return;
     }
 
+    repair_charges();
+
+    api.restorePersistentConfig("charge_tracker/config", &config);
+
     // Fill charge_tracker/last_charges
     bool charging = currentlyCharging();
     size_t records_in_last_file = completeRecordsInLastFile();
@@ -401,31 +462,227 @@ void ChargeTracker::setup()
     updateState();
 }
 
+bool user_configured(uint8_t user_id) {
+    for(int i = 0; i < users.config.get("users")->count(); ++i) {
+        if (users.config.get("users")->get(i)->get("id")->asUint() == user_id) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static size_t timestamp_min_to_date_time_string(char buf[17], uint32_t timestamp_min, bool english) {
+    const char * const unknown = english ? "unknown" : "unbekannt";
+    size_t unknown_len =  english ? ARRAY_SIZE("unknown") : ARRAY_SIZE("unbekannt");
+
+    if (timestamp_min == 0) {
+        memcpy(buf, unknown, unknown_len);
+        return unknown_len - 1; // exclude null terminator
+    }
+    time_t timestamp = ((int64_t)timestamp_min) * 60;
+    struct tm t;
+    localtime_r(&timestamp, &t);
+
+    if (english)
+        return sprintf(buf, "%4.4i-%2.2i-%2.2i %2.2i:%2.2i", t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min);
+
+    return sprintf(buf, "%2.2i.%2.2i.%4.4i %2.2i:%2.2i", t.tm_mday, t.tm_mon + 1, t.tm_year + 1900, t.tm_hour, t.tm_min);
+}
+
+static char *tracked_charge_to_string(char *buf, ChargeStart cs, ChargeEnd ce, bool english, uint32_t electricity_price) {
+    buf += 1 + timestamp_min_to_date_time_string(buf, cs.timestamp_minutes, english);
+
+    users.get_display_name(cs.user_id, buf);
+    buf += 1 + strnlen(buf, DISPLAY_NAME_LENGTH);
+
+    if (charged_invalid(cs, ce)) {
+        memcpy(buf, "N/A", ARRAY_SIZE("N/A"));
+        buf += ARRAY_SIZE("N/A");
+    } else {
+        float charged = ce.meter_end - cs.meter_start;
+        if (charged <= 999.999f) {
+            int written = sprintf(buf, "%.3f", charged);
+            if (!english)
+                for(int i = 0; i < written; ++i)
+                    if (buf[i] == '.')
+                        buf[i] = ',';
+            buf += 1 + written;
+        }
+        else {
+            memcpy(buf, ">=1000", ARRAY_SIZE(">=1000"));
+            buf += ARRAY_SIZE(">=1000");
+        }
+    }
+
+    // charge duration is a bitfield value of 24 bits.
+    // This results in a maximum duration of 2^24/3600 ~ 4660 hours.
+    // We handle up to 9999 hours here -> No need for a fallback.
+    int hours = ce.charge_duration / 3600;
+    ce.charge_duration = ce.charge_duration % 3600;
+    int minutes = ce.charge_duration / 60;
+    ce.charge_duration = ce.charge_duration % 60;
+    int seconds = ce.charge_duration;
+
+    buf += 1 + sprintf(buf, "%i:%2.2i:%2.2i", hours, minutes, seconds);
+
+    if (isnan(cs.meter_start)) {
+        memcpy(buf, "N/A", ARRAY_SIZE("N/A"));
+        buf += ARRAY_SIZE("N/A");
+    } else {
+        int written = sprintf(buf, "%.3f", cs.meter_start);
+        if (!english)
+            for(int i = 0; i < written; ++i)
+                if (buf[i] == '.')
+                    buf[i] = ',';
+        buf += 1 + written;
+    }
+
+    if (electricity_price == 0) {
+        memcpy(buf, "---", ARRAY_SIZE("---"));
+        buf += ARRAY_SIZE("---");
+    } else if (charged_invalid(cs, ce)) {
+        memcpy(buf, "N/A", ARRAY_SIZE("N/A"));
+        buf += ARRAY_SIZE("N/A");
+    } else {
+        double charged = ce.meter_end - cs.meter_start;
+        uint32_t cost = round(charged * electricity_price / 100.0f);
+        if (cost > 999999) {
+            memcpy(buf, ">=10000", ARRAY_SIZE(">=10000"));
+            buf += ARRAY_SIZE(">=10000");
+        } else {
+            buf += 1 + sprintf(buf, "%d%c%02d", cost / 100, english ? '.' : ',', cost % 100);
+        }
+    }
+    return buf;
+}
+
+static bool repair_logic(Charge *buf) {
+    bool repaired = false;
+    uint8_t state = 0;
+
+    // There are only known issues with broken charges with a meter end of 0.
+    // We can add the same logic for the start too if needed.
+    state |= !isnan(buf[-1].ce.meter_end) << 3;
+    state |= (!isnan(buf[0].cs.meter_start) && buf[0].cs.meter_start != 0) << 2;
+    state |= (!isnan(buf[0].ce.meter_end) && buf[0].ce.meter_end != 0) << 1;
+    state |= !isnan(buf[1].cs.meter_start);
+
+    // We have five cases that can be repaired/ have to be repaired. state is a bitmap.
+    switch (state)
+    {
+    // The end of a charge is missing but we got the beginning and the beginning of the next charge.
+    case 10:
+    case 11:
+        if (buf[-1].ce.meter_end <= buf[0].ce.meter_end
+                && buf[0].ce.meter_end - buf[-1].ce.meter_end < CHARGE_TRACKER_MAX_REPAIR) {
+            if (buf[0].cs.meter_start == 0 && buf[-1].ce.meter_end < CHARGE_TRACKER_MAX_REPAIR)
+                break;
+
+            buf[0].cs.meter_start = buf[-1].ce.meter_end;
+            repaired = true;
+        }
+        break;
+
+    // The start of a charge is missing but we got the end of it and the end of the previous charge.
+    case 5:
+    case 13:
+        if (buf[0].cs.meter_start <= buf[1].cs.meter_start
+                && buf[1].cs.meter_start - buf[0].cs.meter_start < CHARGE_TRACKER_MAX_REPAIR) {
+            // If the Meter is new and somehow meter start and meter end is 0 this is not a broken charge.
+            if (buf[0].ce.meter_end == 0 && buf[0].cs.meter_start == 0)
+                break;
+
+            buf[0].ce.meter_end = buf[1].cs.meter_start;
+            repaired = true;
+        }
+        break;
+
+    // We got no meter values of the charge but we got the end of the previous and the start of the next.
+    case 9:
+        if (buf[-1].ce.meter_end <= buf[1].cs.meter_start
+                && buf[1].cs.meter_start - buf[-1].ce.meter_end < CHARGE_TRACKER_MAX_REPAIR) {
+            buf[0].cs.meter_start = buf[-1].ce.meter_end;
+            buf[0].ce.meter_end = buf[1].cs.meter_start;
+            repaired = true;
+        }
+        break;
+
+    default:
+        break;
+    }
+    return repaired;
+}
+
+void ChargeTracker::repair_charges() {
+    auto buf = heap_alloc_array<Charge>(258);
+    uint32_t num_repaired = 0;
+    Charge transfer;
+    transfer.ce.meter_end = NAN;
+
+    for (int i = this->first_charge_record; i <= this->last_charge_record; ++i) {
+        bool file_needs_repair = false;
+        memset(reinterpret_cast<uint8_t *>(&buf[1]), 0, sizeof(Charge) * 257);
+
+        File f = LittleFS.open(chargeRecordFilename(i));
+        if (i < this->last_charge_record) {
+            File next_f = LittleFS.open(chargeRecordFilename(i + 1));
+            int read = next_f.read(reinterpret_cast<uint8_t *>(&buf[257]), sizeof(Charge));
+            if (read != sizeof(Charge))
+                buf[257].cs.meter_start = NAN;
+        }
+        else
+            buf[257].cs.meter_start = NAN;
+
+        int read = f.read(reinterpret_cast<uint8_t *>(&buf[1]), sizeof(Charge) * 257);
+        if (read == -1 || read == 0) {
+            break;
+        }
+
+        for (int a = 1; a < read / sizeof(Charge); a++) {
+            if (repair_logic(&buf[a])) {
+                file_needs_repair = true;
+                num_repaired++;
+            }
+        }
+        if (file_needs_repair) {
+            File write_f = LittleFS.open(chargeRecordFilename(i), "w");
+            write_f.write(reinterpret_cast<uint8_t *>(&buf[1]), read);
+        }
+        buf[0] = buf[256];
+    }
+    if (num_repaired != 0) {
+        logger.printfln("Repaired %u charge-entries.", num_repaired);
+    }
+}
+
 void ChargeTracker::register_urls()
 {
+    api.addPersistentConfig("charge_tracker/config", &config, {}, 1000);
+
     server.on("/charge_tracker/charge_log", HTTP_GET, [this](WebServerRequest request) {
         std::lock_guard<std::mutex> lock{records_mutex};
 
-        char *url_buf = (char *)malloc(CHARGE_RECORD_MAX_FILE_SIZE);
+        auto url_buf = heap_alloc_array<char>(CHARGE_RECORD_MAX_FILE_SIZE);
         if (url_buf == nullptr) {
-            request.send(507);
-            return;
+            return request.send(507);
         }
 
         File file = LittleFS.open(chargeRecordFilename(this->last_charge_record));
         size_t file_size = (this->last_charge_record - this->first_charge_record) * CHARGE_RECORD_MAX_FILE_SIZE + file.size();
-        String file_size_string = String(file_size);
-        request.addResponseHeader("Content-Length", file_size_string.c_str());
+
+        // Don't do a chunked response without any chunk. The webserver does strange things in this case
+        if (file_size == 0) {
+            return request.send(200, "application/octet-stream", "", 0);
+        }
 
         request.beginChunkedResponse(200, "application/octet-stream");
         for (int i = this->first_charge_record; i <= this->last_charge_record; ++i) {
             File f = LittleFS.open(chargeRecordFilename(i));
-            int read = f.read((uint8_t *)url_buf, CHARGE_RECORD_MAX_FILE_SIZE);
+            int read = f.read((uint8_t *)url_buf.get(), CHARGE_RECORD_MAX_FILE_SIZE);
             int trunc = read - (read % CHARGE_RECORD_SIZE);
-            request.sendChunk(url_buf, trunc);
+            request.sendChunk(url_buf.get(), trunc);
         }
-        request.endChunkedResponse();
-        free(url_buf);
+        return request.endChunkedResponse();
     });
 
     api.addState("charge_tracker/last_charges", &last_charges, {}, 1000);
@@ -437,7 +694,7 @@ void ChargeTracker::register_urls()
         DeserializationError error = deserializeJson(doc, c, s);
 
         if (error) {
-            return String("Failed to deserialize string: ") + String(error.c_str());
+            return "Failed to deserialize string: " + String(error.c_str());
         }
 
         if (!doc["do_i_know_what_i_am_doing"].is<bool>()) {
@@ -456,8 +713,310 @@ void ChargeTracker::register_urls()
         }, 3000);
         return "";
     }, true);
-}
 
-void ChargeTracker::loop()
-{
+    server.on("/charge_tracker/pdf", HTTP_PUT, [this](WebServerRequest request) {
+        logger.printfln("Beginning PDF generation. Please ignore timeout errors (rc -1 etc.) for the next minute!");
+        #define USER_FILTER_ALL_USERS -2
+        #define USER_FILTER_DELETED_USERS -1
+        int user_filter = USER_FILTER_ALL_USERS;
+        uint32_t start_timestamp_min = 0;
+        uint32_t end_timestamp_min = 0;
+        uint32_t current_timestamp_min = timestamp_minutes();
+
+        bool english = false;
+        #define LETTERHEAD_SIZE 512
+        auto letterhead = heap_alloc_array<char>(LETTERHEAD_SIZE);
+        int letterhead_lines = 0;
+
+        {
+            StaticJsonDocument<192> doc;
+            auto buf = heap_alloc_array<char>(1024);
+            if (request.contentLength() > 1024)
+                return request.send(413);
+            request.receive(buf.get(), 1024);
+
+            DeserializationError error = deserializeJson(doc, buf.get(), 1024);
+            if (error) {
+                String errorString = String("Failed to deserialize string: ") + error.c_str();
+                return request.send(400, "text/plain", errorString.c_str());
+            }
+            if (!bool(doc["api_not_final_acked"]))
+                return request.send(400, "text/plain", "Please acknowledge that this API is subject to change!");
+
+            user_filter = doc["user_filter"] | USER_FILTER_ALL_USERS;
+            start_timestamp_min = doc["start_timestamp_min"] | 0l;
+            end_timestamp_min = doc["end_timestamp_min"] | 0l;
+            english = doc["english"] | false;
+            if (current_timestamp_min == 0)
+                current_timestamp_min = doc["current_timestamp_min"] | 0l;
+            if (doc.containsKey("letterhead")){
+                const char *lh = doc["letterhead"];
+                letterhead_lines = 1;
+                for(size_t i = 0; i < LETTERHEAD_SIZE; ++i) {
+                    if (lh[i] == '\0')
+                        break;
+                    if (lh[i] == '\n') {
+                        letterhead[i] = '\0';
+                        if (letterhead_lines == 6)
+                            break;
+                        ++letterhead_lines;
+                    }
+                    else
+                        letterhead[i] = lh[i];
+                }
+            }
+        }
+
+        char stats_buf[384];//42  9 "Wallbox: " + 32 display name + \0
+                            //31  13 "Exportiert am " + 17 (date time + \0)
+                            //55  22  "Exportierte Benutzer: " + 32 display name + \0
+                            //63  "Exportierter Zeitraum: Aufzeichnungsbeginn - Aufzeichnungsende" + \0
+                            //60  41 "Gesamtenergie exportierter Ladevorgänge: " + 19 "999.999.999,999kWh" + \0
+                            //50 "Gesamtbetrag 99999.99€ (Strompreis 123.45 ct/kWh)" + \0
+                            //= 301
+
+
+        double charged_sum = 0;
+        uint32_t charged_cost_sum = 0;
+        bool seen_charges_without_meter = false;
+
+        int charge_records = 0;
+        int first_file = -1;
+        int first_charge = -1;
+        int last_file = -1;
+        int last_charge = -1;
+
+        std::lock_guard<std::mutex> lock{records_mutex};
+
+        uint32_t electricity_price = charge_tracker.config.get("electricity_price")->asUint();
+
+        {
+            char charge_buf[sizeof(ChargeStart) + sizeof(ChargeEnd)];
+            ChargeStart cs;
+            ChargeEnd ce;
+
+            for (int i = this->first_charge_record; i <= this->last_charge_record; ++i) {
+                File f = LittleFS.open(chargeRecordFilename(i));
+
+                for (int j = 0; j < (CHARGE_RECORD_MAX_FILE_SIZE / CHARGE_RECORD_SIZE); ++j) {
+                    if (f.read((uint8_t *)charge_buf, CHARGE_RECORD_SIZE) != CHARGE_RECORD_SIZE)
+                        // This file is not "full". We don't have any tracked charges left.
+                        goto search_done;
+
+                    memcpy(&cs, charge_buf, sizeof(ChargeStart));
+                    memcpy(&ce, charge_buf + sizeof(ChargeStart), sizeof(ChargeEnd));
+
+                    if (cs.timestamp_minutes != 0 && start_timestamp_min != 0 && cs.timestamp_minutes < start_timestamp_min) {
+                        // We know when this charge started and it was before the requested start date.
+                        // This means that all charges before and including this one can't be relevant.
+                        charge_records = 0;
+                        first_file = -1;
+                        first_charge = -1;
+                        charged_sum = 0;
+                        charged_cost_sum = 0;
+                        continue;
+                    }
+
+                    if (cs.timestamp_minutes != 0 && end_timestamp_min != 0 && cs.timestamp_minutes > end_timestamp_min) {
+                        // This charge started after the requested end date. We are done searching.
+                        last_file = i;
+                        last_charge = j;
+                        goto search_done;
+                    }
+
+                    bool include_user = user_filter == USER_FILTER_ALL_USERS || (user_filter == USER_FILTER_DELETED_USERS && !user_configured(cs.user_id)) || cs.user_id == user_filter;
+                    if (!include_user)
+                        continue;
+
+                    if (first_file == -1)
+                        first_file = i;
+
+                    if (first_charge == -1)
+                        first_charge = j;
+
+                    last_file = i;
+                    last_charge = j;
+                    ++charge_records;
+
+                    if (charged_invalid(cs, ce))
+                        seen_charges_without_meter = true;
+                    else {
+                        double charged = ce.meter_end - cs.meter_start;
+                        charged_sum += charged;
+                        if (electricity_price != 0)
+                            charged_cost_sum += round(charged * electricity_price / 100.0f);
+                    }
+                }
+            }
+        }
+search_done:
+
+        char *stats_head = stats_buf;
+        stats_head += 1 + sprintf(stats_head, "%s: %s", english ? "Charger" : "Wallbox", device_name.display_name.get("display_name")->asEphemeralCStr());
+
+        stats_head += sprintf(stats_head, "%s: ", english ? "Exported on" : "Exportiert an");
+        stats_head += 1 + timestamp_min_to_date_time_string(stats_head, current_timestamp_min, english);
+
+        stats_head += sprintf(stats_head, "%s: ", english ? "Exported users" : "Exportierte Benutzer");
+        if (user_filter == -2)
+            stats_head += sprintf(stats_head, "%s", english ? "all users" : "Alle Benutzer");
+        else if (user_filter == -1)
+            stats_head += sprintf(stats_head, "%s", english ? "deleted users" : "Gelöschte Benutzer");
+        else
+            stats_head += users.get_display_name(user_filter, stats_head);
+        ++stats_head;
+
+        stats_head += sprintf(stats_head, "%s: ", english ? "Exported period" : "Exportierter Zeitraum");
+        if (start_timestamp_min == 0)
+            stats_head += sprintf(stats_head, "%s", english ? "record start" : "Aufzeichnungsbeginn");
+        else
+            stats_head += timestamp_min_to_date_time_string(stats_head, start_timestamp_min, english);
+
+        stats_head += sprintf(stats_head, "%s", english ? " to " : " bis ");
+
+        if (end_timestamp_min == 0)
+            stats_head += sprintf(stats_head, "%s", english ? "record end" : (start_timestamp_min == 0 ? "-ende" : "Aufzeichnungsende"));
+        else
+            stats_head += timestamp_min_to_date_time_string(stats_head, end_timestamp_min, english);
+        ++stats_head;
+
+        int written = sprintf(stats_head, "%s: %9.3f kWh", english ? "Total energy of exported charges" : "Gesamtenergie exportierter Ladevorgänge", charged_sum);
+        if (!english)
+            for(int i = 0; i < written; ++i)
+                if (stats_head[i] == '.')
+                    stats_head[i] = ',';
+        stats_head += 1 + written;
+
+        if (electricity_price != 0) {
+            written = sprintf(stats_head, "%s: %d.%02d€ (%.2f ct/kWh)%s",
+                            english ? "Total cost" : "Gesamtkosten",
+                            charged_cost_sum / 100, charged_cost_sum % 100,
+                            electricity_price / 100.0f,
+                            seen_charges_without_meter ? (english ? " Incomplete!" : " Unvollständig!") : "");
+            if (!english)
+                for(int i = 0; i < written; ++i)
+                    if (stats_head[i] == '.')
+                        stats_head[i] = ',';
+            stats_head += 1 + written;
+        }
+
+        // TODO: this is currently unnecessary, however if we support other ways of requesting a PDF
+        // we have to lock the pdf generator.
+        std::lock_guard<std::mutex> lock2{pdf_mutex};
+
+        int current_file = (first_file > -1 ? first_file : this->first_charge_record);
+        int current_charge = (first_charge > -1 ? first_charge : 0);
+        last_file = (last_file >= 0) ? last_file : this->last_charge_record;
+
+#define TABLE_LINE_LEN (17 /*start date: 01.02.3456 12:34\0 or 3456-02-01 12:34\0*/ \
+                      + 33 /*display name: max 32 chars + \0*/ \
+                      + 8  /*charged: (assumed max) "999.999\0" kWh else truncated to "> 1000\0"*/ \
+                      + 11 /* charge duration max "9999:59:59\0"*/ \
+                      + 16 /* meter start max 99'999'999.999\0*/ \
+                      + 8) /* cost max 9999.99\0 else truncated to >10000*/
+
+        char table_lines_buffer[8 * TABLE_LINE_LEN];
+
+        File f;
+
+        request.beginChunkedResponse(200, "application/pdf");
+
+
+        const char * table_header_de = "Startzeit\0"
+                                       "Benutzer\0"
+                                       "geladen (kWh)\0"
+                                       "Ladedauer\0"
+                                       "Zählerstand Start\0"
+                                       "Kosten (€)";
+
+        const char * table_header_en = "Start time\0"
+                                       "User\0"
+                                       "Charged (kWh)\0"
+                                       "Duration\0"
+                                       "Meter start\0"
+                                       "Cost (€)";
+
+
+        init_pdf_generator(&request,
+                           "Title",
+                           stats_buf, (electricity_price == 0) ? 5 : 6,
+                           letterhead.get(), letterhead_lines,
+                           english ? table_header_en : table_header_de,
+                           charge_records,
+                           [this,
+                            user_filter,
+                            &table_lines_buffer,
+                            &f,
+                            first_file,
+                            first_charge,
+                            last_file,
+                            last_charge,
+                            &current_file,
+                            &current_charge,
+                            electricity_price,
+                            english]
+                           (const char * * table_lines) {
+            memset(table_lines_buffer, 0, ARRAY_SIZE(table_lines_buffer));
+
+            int lines_generated = 0;
+            char *table_lines_head = table_lines_buffer;
+
+            char charge_buf[CHARGE_RECORD_SIZE];
+            ChargeStart cs;
+            ChargeEnd ce;
+
+            while (current_file <= last_file) {
+                if (current_charge >= (CHARGE_RECORD_MAX_FILE_SIZE / CHARGE_RECORD_SIZE)) {
+                    current_charge = 0;
+                }
+
+                if (!f) {
+                    f =  LittleFS.open(chargeRecordFilename(current_file));
+                    f.seek(CHARGE_RECORD_SIZE * current_charge);
+                }
+
+                for (; current_charge < (CHARGE_RECORD_MAX_FILE_SIZE / CHARGE_RECORD_SIZE); ++current_charge) {
+                    if ((lines_generated == 8) || (current_file == last_file && current_charge > last_charge))
+                        break;
+                    if (f.read((uint8_t *)charge_buf, CHARGE_RECORD_SIZE) != CHARGE_RECORD_SIZE)
+                        break;
+
+                    memcpy(&cs, charge_buf, sizeof(ChargeStart));
+                    memcpy(&ce, charge_buf + sizeof(ChargeStart), sizeof(ChargeEnd));
+
+                    // No need to filter via start/end: we already know the first and last charge to be shown.
+                    bool include_user = user_filter == USER_FILTER_ALL_USERS || (user_filter == USER_FILTER_DELETED_USERS && !user_configured(cs.user_id)) || cs.user_id == user_filter;
+                    if (!include_user)
+                        continue;
+
+
+                    table_lines_head = tracked_charge_to_string(table_lines_head, cs, ce, english, electricity_price);
+                    ++lines_generated;
+                }
+
+                f.close();
+                if (current_charge >= (CHARGE_RECORD_MAX_FILE_SIZE / CHARGE_RECORD_SIZE)) {
+                    ++current_file;
+                    current_charge = 0;
+                }
+
+                // >= last_charge is intentionally here: we already have this charge
+                if ((lines_generated == 8))
+                    break;
+
+                if (current_file == last_file && current_charge >= last_charge) {
+                    break;
+                }
+            }
+            if (!f)
+                f.close();
+
+
+
+            *table_lines = table_lines_buffer;
+            return lines_generated;
+        });
+        logger.printfln("PDF generation done.");
+        return request.endChunkedResponse();
+    });
 }

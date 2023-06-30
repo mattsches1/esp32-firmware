@@ -1,46 +1,85 @@
+#!/usr/bin/python3 -u
+
 import socket
 import struct
 import sys
 import time
+import ipaddress
 
 """
-struct packet_header {
-    uint8_t seq_num;
+struct cm_packet_header {
+    uint16_t magic;
+    uint16_t length;
+    uint16_t seq_num;
     uint8_t version;
-    uint16_t padding;
-} __attribute__ ((packed));
+    uint8_t padding;
+} __attribute__((packed));
 
-struct request_packet {
-    packet_header header;
-
+struct cm_command_v1 {
     uint16_t allocated_current;
-} __attribute__ ((packed));
+    /* command_flags
+    bit 6 - control pilot permanently disconnected
+    Other bits must be sent unset and ignored on reception.
+    */
+    uint8_t command_flags;
+    uint8_t padding;
+} __attribute__((packed));
 
-struct response_packet {
-    packet_header header;
+struct cm_command_packet {
+    cm_packet_header header;
+    cm_command_v1 v1;
+} __attribute__((packed));
 
-    uint8_t iec61851_state;
-    uint8_t vehicle_state;
-    uint8_t error_state;
-    uint8_t charge_release;
-    uint32_t uptime;
+struct cm_state_v1 {
+    uint32_t feature_flags; /* unused */
+    uint32_t esp32_uid;
+    uint32_t evse_uptime;
     uint32_t charging_time;
     uint16_t allowed_charging_current;
     uint16_t supported_current;
-    bool managed;
-} __attribute__ ((packed));
+
+    uint8_t iec61851_state;
+    uint8_t charger_state;
+    uint8_t error_state;
+    /* state_flags
+    bit 7 - managed
+    bit 6 - control_pilot_permanently_disconnected
+    bit 5 - L1_connected
+    bit 4 - L2_connected
+    bit 3 - L3_connected
+    bit 2 - L1_active
+    bit 1 - L2_active
+    bit 0 - L3_active
+    */
+    uint8_t state_flags;
+    float line_voltages[3];
+    float line_currents[3];
+    float line_power_factors[3];
+    float power_total;
+    float energy_rel;
+    float energy_abs;
+} __attribute__((packed));
+
+struct cm_state_v2 {
+    uint32_t time_since_state_change;
+} __attribute__((packed));
+
+struct cm_state_packet {
+    cm_packet_header header;
+    cm_state_v1 v1;
+    cm_state_v2 v2;
+} __attribute__((packed));
 """
 
-header_format = "<BBH"
-request_format = header_format + "H"
-response_format = header_format + "BBBIIHH?"
+header_format = "<HHHBx"
+command_format = header_format + "HBx"
+state_format = header_format + "IIIIHHBBBBffffffffffff" + "I"
 
-request_len = struct.calcsize(request_format)
-response_len = struct.calcsize(response_format)
-print(response_len)
-
+command_len = struct.calcsize(command_format)
+state_len = struct.calcsize(state_format)
 
 listen_addr = sys.argv[1]
+uid = struct.unpack('>I', ipaddress.ip_address(listen_addr).packed)[0]
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind((listen_addr, 34128))
@@ -55,7 +94,10 @@ app = QApplication([])
 window = QWidget()
 window.setWindowTitle(sys.argv[1])
 layout = QFormLayout()
-layout.addRow(QLabel("Request"))
+
+req_title = QLabel("Request")
+req_title.setStyleSheet("font-weight: bold;")
+layout.addRow(req_title)
 
 req_seq_num = QLabel("no packet received yet")
 layout.addRow("Sequence number", req_seq_num)
@@ -66,7 +108,12 @@ layout.addRow("Protocol version", req_version)
 req_allocated_current = QLabel("no packet received yet")
 layout.addRow("Allocated current", req_allocated_current)
 
-layout.addRow(QLabel("Response"))
+req_cp_disconnect = QLabel("no packet received yet")
+layout.addRow("CP disconnect", req_cp_disconnect)
+
+resp_title = QLabel("Response")
+resp_title.setStyleSheet("font-weight: bold;")
+layout.addRow(resp_title)
 
 resp_seq_num = QLabel("no packet sent yet")
 layout.addRow("Sequence number", resp_seq_num)
@@ -86,20 +133,25 @@ resp_iec61851_state.addItem("1: B - Connected")
 resp_iec61851_state.addItem("2: C - Charging")
 resp_iec61851_state.addItem("3: D - Not supported")
 resp_iec61851_state.addItem("4: E/F - Error")
-layout.addRow("IEC State", resp_iec61851_state)
+layout.addRow("IEC state", resp_iec61851_state)
 
+time_since_state_change = time.time()
 resp_charger_state = QComboBox()
 resp_charger_state.addItem("0: Not connected")
 resp_charger_state.addItem("1: Waiting for release")
 resp_charger_state.addItem("2: Ready")
 resp_charger_state.addItem("3: Charging")
 resp_charger_state.addItem("4: Error")
-layout.addRow("Vehicle State", resp_charger_state)
+def lalala():
+    global time_since_state_change
+    time_since_state_change = time.time()
+resp_charger_state.currentIndexChanged.connect(lalala)
+layout.addRow("Vehicle state", resp_charger_state)
 
 resp_error_state = QSpinBox()
 resp_error_state.setMinimum(0)
-resp_error_state.setMaximum(4)
-layout.addRow("Error State", resp_error_state)
+resp_error_state.setMaximum(5)
+layout.addRow("Error state", resp_error_state)
 
 resp_uptime = QLabel("no packet sent yet")
 layout.addRow("Uptime", resp_uptime)
@@ -117,18 +169,27 @@ resp_allowed_charging_current.setSuffix(" A")
 layout.addRow("Allowed charging current", resp_allowed_charging_current)
 
 resp_supported_current = QSpinBox()
-resp_supported_current.setMinimum(6)
+resp_supported_current.setMinimum(0)
 resp_supported_current.setMaximum(32)
 resp_supported_current.setSuffix(" A")
 layout.addRow("Supported current", resp_supported_current)
+
+resp_max_line_current = QSpinBox()
+resp_max_line_current.setMinimum(0)
+resp_max_line_current.setMaximum(32)
+resp_max_line_current.setSuffix(" A")
+layout.addRow("Max line current", resp_max_line_current)
 
 resp_managed = QCheckBox("")
 resp_managed.setChecked(True)
 layout.addRow("Managed", resp_managed)
 
+resp_cp_disconnect = QCheckBox("CP disconnected")
+layout.addRow("CP disconnect state", resp_cp_disconnect)
 
 next_seq_num = 0
-protocol_version = 3
+command_version = 1
+state_version = 2
 start = time.time()
 charging_time_start = 0
 
@@ -136,17 +197,18 @@ def recieve():
     global addr
     global charging_time_start
     try:
-        data, addr = sock.recvfrom(request_len)
+        data, addr = sock.recvfrom(command_len)
     except BlockingIOError:
         return
-    if len(data) != request_len:
+    if len(data) != command_len:
         return
 
-    seq_num, version, _, allocated_current = struct.unpack(request_format, data)
+    magic, length, seq_num, version, allocated_current, command_flags = struct.unpack(command_format, data)
 
     req_seq_num.setText(str(seq_num))
     req_version.setText(str(version))
     req_allocated_current.setText("{:2.3f} A".format(allocated_current / 1000.0))
+    req_cp_disconnect.setText(str((command_flags & 0x40) >> 6))
     if allocated_current == 0 and resp_iec61851_state.currentIndex() == 2:
         charging_time_start = 0
         resp_iec61851_state.setCurrentIndex(1)
@@ -162,7 +224,7 @@ def send():
         return
 
     resp_seq_num.setText(str(next_seq_num))
-    resp_version.setText(str(protocol_version))
+    resp_version.setText(str(state_version))
 
     if resp_block_uptime.isChecked():
         uptime = int(resp_uptime.text().split(" ")[0])
@@ -179,22 +241,42 @@ def send():
     charging_time = 0 if charging_time_start == 0 else int((time.time() - charging_time_start) * 1000)
     resp_charging_time.setText("{} ms".format(charging_time))
 
-    b = struct.pack(response_format,
+    flags = 0
+    flags |= 0x80 if resp_managed.isChecked() else 0
+    flags |= 0x40 if resp_cp_disconnect.isChecked() else 0
+
+    b = struct.pack(state_format,
+                    34127,                                      # magic
+                    state_len,                                  # length
                     next_seq_num,
-                    protocol_version if not resp_wrong_proto_version.isChecked() else 234,
-                    0,
-                    resp_iec61851_state.currentIndex(),
-                    resp_charger_state.currentIndex(),
-                    resp_error_state.value(),
+                    state_version if not resp_wrong_proto_version.isChecked() else 0,
+                    0x7F,                                          # features
+                    uid,
                     uptime,
                     charging_time,
                     resp_allowed_charging_current.value() * 1000,
                     resp_supported_current.value() * 1000,
-                    resp_managed.isChecked())
-
+                    resp_iec61851_state.currentIndex(),
+                    resp_charger_state.currentIndex(),
+                    resp_error_state.value(),
+                    flags,
+                    230,  # LV0
+                    0,  # LV1
+                    0,  # LV2
+                    resp_max_line_current.value(),  # LC0
+                    0,  # LC1
+                    0,  # LC2
+                    1,  # LPF0
+                    0,  # LPF1
+                    0,  # LPF2
+                    230 * resp_max_line_current.value(),  # power_total
+                    0,  # energy_rel
+                    0,  # energy_abs
+                    int(1000 * (time.time() - time_since_state_change))
+    )
     if not resp_block_seq_num.isChecked():
         next_seq_num += 1
-        next_seq_num %= 256
+        next_seq_num %= 65536
 
     sock.sendto(b, addr)
 

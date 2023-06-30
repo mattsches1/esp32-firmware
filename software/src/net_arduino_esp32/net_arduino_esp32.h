@@ -13,6 +13,11 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include "lwip/sockets.h"
+// Clashes with esp32/IPAddress.h
+#undef INADDR_NONE
+
+
 #include "../bindings/net_common.h"
 #include "../bindings/tfp_header.h"
 
@@ -58,17 +63,21 @@ typedef struct TF_Request {
 } TF_Request;
 
 typedef struct TF_Net {
-    TF_NetClient clients[TF_MAX_CLIENT_COUNT];
+    TF_NetClient clients[TF_NET_MAX_CLIENT_COUNT];
     uint8_t clients_used;
     int server_fd;
 
-    TF_Request open_requests[TF_MAX_OPEN_REQUEST_COUNT];
+    TF_Request open_requests[TF_NET_MAX_OPEN_REQUEST_COUNT];
     uint8_t open_request_count;
     uint16_t send_buf_timeout_us;
     uint32_t recv_timeout_ms;
     const char* auth_secret;
     uint32_t next_auth_nonce;
+
+    struct sockaddr_in listen_addr;
 } TF_Net;
+
+#define TF_E_INVALID_ADDRESS -200
 
 int tf_net_create(TF_Net *net, const char* listen_addr, uint16_t port, const char* auth_secret);
 int tf_net_destroy(TF_Net *net);

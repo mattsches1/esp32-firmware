@@ -21,43 +21,50 @@
 
 #include <esp_http_server.h>
 
-#include "keep_alive.h"
+#include "api.h"
 #include "task_scheduler.h"
 #include "web_server.h"
+#include "tools.h"
 
-extern TaskScheduler task_scheduler;
-extern WebServer server;
-extern API api;
-
-WS::WS() : web_sockets()
+void WS::pre_setup()
 {
     api.registerBackend(this);
+    web_sockets.pre_setup();
 }
 
 void WS::setup()
 {
+    initialized = true;
 }
 
 void WS::register_urls()
 {
     web_sockets.onConnect([this](WebSocketsClient client) {
-        String to_send = "";
+        CoolString to_send;
         for (auto &reg : api.states) {
-            to_send += String("{\"topic\":\"") + reg.path + String("\",\"payload\":") + reg.config->to_string_except(reg.keys_to_censor) + String("}\n");
+            to_send += "{\"topic\":\"" + reg.path + "\",\"payload\":" + reg.config->to_string_except(reg.keys_to_censor) + "}\n";
         }
-        client.send(to_send.c_str(), to_send.length());
+        size_t len;
+        char *p = to_send.releaseOwnership(&len);
+        client.sendOwned(p, len);
+        for (auto &callback : on_connect_callbacks) {
+            callback(client);
+        }
     });
 
     web_sockets.start("/ws");
 
     task_scheduler.scheduleWithFixedDelay([this](){
-        const char *payload = "{\"topic\": \"keep-alive\", \"payload\": \"null\"}\n";
-        web_sockets.sendToAll(payload, strlen(payload));
+        char *payload;
+        int len = asprintf(&payload, "{\"topic\": \"info/keep_alive\", \"payload\": {\"uptime\": %lu}}\n", millis());
+        if (len > 0)
+            web_sockets.sendToAllOwned(payload, len);
     }, 1000, 1000);
 }
 
-void WS::loop()
+void WS::addOnConnectCallback(std::function<void(WebSocketsClient)> callback)
 {
+    on_connect_callbacks.push_back(callback);
 }
 
 void WS::addCommand(size_t commandIdx, const CommandRegistration &reg)
@@ -72,6 +79,10 @@ void WS::addRawCommand(size_t rawCommandIdx, const RawCommandRegistration &reg)
 {
 }
 
+void WS::addResponse(size_t responseIdx, const ResponseRegistration &reg)
+{
+}
+
 static const char *prefix = "{\"topic\":\"";
 static const char *infix = "\",\"payload\":";
 static const char *suffix = "}\n";
@@ -79,7 +90,7 @@ static size_t prefix_len = strlen(prefix);
 static size_t infix_len = strlen(infix);
 static size_t suffix_len = strlen(suffix);
 
-bool WS::pushStateUpdate(size_t stateIdx, String payload, String path)
+bool WS::pushStateUpdate(size_t stateIdx, const String &payload, const String &path)
 {
     if (!web_sockets.haveActiveClient())
         return true;
@@ -113,11 +124,7 @@ bool WS::pushStateUpdate(size_t stateIdx, String payload, String path)
     return true;
 }
 
-void WS::pushRawStateUpdate(String payload, String path)
+void WS::pushRawStateUpdate(const String &payload, const String &path)
 {
     pushStateUpdate(0, payload, path);
-}
-
-void WS::wifiAvailable()
-{
 }

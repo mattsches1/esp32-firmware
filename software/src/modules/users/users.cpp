@@ -22,43 +22,38 @@
 
 #include "task_scheduler.h"
 
+#include "api.h"
 #include "modules.h"
+#include "task_scheduler.h"
+#include "tools.h"
 
 #include "digest_auth.h"
 #include <cmath>
 
-#define USERNAME_LENGTH 32
-#define DISPLAY_NAME_LENGTH 32
-#define USERNAME_ENTRY_LENGTH (USERNAME_LENGTH + DISPLAY_NAME_LENGTH)
-#define MAX_PASSIVE_USERS 256
+#include <memory>
+
 #define USERNAME_FILE "/users/all_usernames"
 
-#if defined(MODULE_ESP32_ETHERNET_BRICK_AVAILABLE)
-#define MAX_ACTIVE_USERS 16
-#else
-#define MAX_ACTIVE_USERS 10
-#endif
-
-extern TaskScheduler task_scheduler;
+#define MAX_ACTIVE_USERS 17
 
 // We have to do access the evse/evse_v2 configs manually
 // because a lot of the code runs in setup(), i.e. before APIs
 // are registered.
 void set_data_storage(uint8_t *buf)
 {
-#if defined(MODULE_EVSE_AVAILABLE)
-    tf_evse_set_data_storage(&evse.device, 0, buf);
-#elif defined(MODULE_EVSE_V2_AVAILABLE)
-    tf_evse_v2_set_data_storage(&evse_v2.device, 0, buf);
+#if MODULE_EVSE_AVAILABLE()
+    evse.set_data_storage(DATA_STORE_PAGE_CHARGE_TRACKER, buf);
+#elif MODULE_EVSE_V2_AVAILABLE()
+    evse_v2.set_data_storage(DATA_STORE_PAGE_CHARGE_TRACKER, buf);
 #endif
 }
 
 void get_data_storage(uint8_t *buf)
 {
-#if defined(MODULE_EVSE_AVAILABLE)
-    tf_evse_get_data_storage(&evse.device, 0, buf);
-#elif defined(MODULE_EVSE_V2_AVAILABLE)
-    tf_evse_v2_get_data_storage(&evse_v2.device, 0, buf);
+#if MODULE_EVSE_AVAILABLE()
+    evse.get_data_storage(DATA_STORE_PAGE_CHARGE_TRACKER, buf);
+#elif MODULE_EVSE_V2_AVAILABLE()
+    evse_v2.get_data_storage(DATA_STORE_PAGE_CHARGE_TRACKER, buf);
 #endif
 }
 
@@ -70,63 +65,58 @@ void zero_user_slot_info()
 
 uint8_t get_iec_state()
 {
-#if defined(MODULE_EVSE_AVAILABLE)
-    return evse.evse_state.get("iec61851_state")->asUint();
-#elif defined(MODULE_EVSE_V2_AVAILABLE)
-    return evse_v2.evse_state.get("iec61851_state")->asUint();
+#if MODULE_EVSE_AVAILABLE()
+    return evse.state.get("iec61851_state")->asUint();
+#elif MODULE_EVSE_V2_AVAILABLE()
+    return evse_v2.state.get("iec61851_state")->asUint();
 #endif
     return 0;
 }
 
 uint8_t get_charger_state()
 {
-#if defined(MODULE_EVSE_AVAILABLE)
-    return evse.evse_state.get("charger_state")->asUint();
-#elif defined(MODULE_EVSE_V2_AVAILABLE)
-    return evse_v2.evse_state.get("charger_state")->asUint();
+#if MODULE_EVSE_AVAILABLE()
+    return evse.state.get("charger_state")->asUint();
+#elif MODULE_EVSE_V2_AVAILABLE()
+    return evse_v2.state.get("charger_state")->asUint();
 #endif
     return 0;
 }
 
 Config *get_user_slot()
 {
-#if defined(MODULE_EVSE_AVAILABLE)
-    return evse.evse_slots.get(CHARGING_SLOT_USER);
-#elif defined(MODULE_EVSE_V2_AVAILABLE)
-    return evse_v2.evse_slots.get(CHARGING_SLOT_USER);
+#if MODULE_EVSE_AVAILABLE()
+    return (Config *)evse.slots.get(CHARGING_SLOT_USER);
+#elif MODULE_EVSE_V2_AVAILABLE()
+    return (Config *)evse_v2.slots.get(CHARGING_SLOT_USER);
 #endif
     return nullptr;
 }
 
 Config *get_low_level_state()
 {
-#if defined(MODULE_EVSE_AVAILABLE)
-    return &evse.evse_low_level_state;
-#elif defined(MODULE_EVSE_V2_AVAILABLE)
-    return &evse_v2.evse_low_level_state;
+#if MODULE_EVSE_AVAILABLE()
+    return &evse.low_level_state;
+#elif MODULE_EVSE_V2_AVAILABLE()
+    return &evse_v2.low_level_state;
 #endif
     return nullptr;
 }
 
 void set_user_current(uint16_t current)
 {
-#if defined(MODULE_EVSE_AVAILABLE)
+#if MODULE_EVSE_AVAILABLE()
     evse.set_user_current(current);
-#elif defined(MODULE_EVSE_V2_AVAILABLE)
+#elif MODULE_EVSE_V2_AVAILABLE()
     evse_v2.set_user_current(current);
 #endif
 }
 
 float get_energy()
 {
-#if defined(MODULE_EVSE_AVAILABLE)
-    bool meter_avail = sdm72dm.state.get("state")->asUint() == 2;
-    return !meter_avail ? NAN : sdm72dm.values.get("energy_abs")->asFloat();
-#elif defined(MODULE_EVSE_V2_AVAILABLE)
-    bool meter_avail = evse_v2_meter.state.get("state")->asUint() == 2;
-    return !meter_avail ? NAN : evse_v2_meter.values.get("energy_abs")->asFloat();
-#endif
-    return NAN;
+    bool meter_avail = meter.state.get("state")->asUint() == 2;
+    // If for some reason we decide to use energy_rel here, also update the energy_this_charge calculation in modbus_tcp.cpp
+    return !meter_avail ? NAN : meter.values.get("energy_abs")->asFloat();
 }
 
 #define USER_SLOT_INFO_VERSION 1
@@ -139,7 +129,7 @@ struct UserSlotInfo {
     float meter_start;
 };
 
-uint16_t calc_checksum(UserSlotInfo info)
+uint16_t calc_checksum(const UserSlotInfo &info)
 {
     uint32_t float_buf = 0;
     memcpy(&float_buf, &info.meter_start, sizeof(float_buf));
@@ -193,11 +183,40 @@ bool read_user_slot_info(UserSlotInfo *result)
     return result->version == USER_SLOT_INFO_VERSION;
 }
 
-volatile bool user_api_blocked = false;
 
-Users::Users()
+volatile bool user_api_blocked = false;
+class RAIIUserApiUnblocker {
+public:
+    RAIIUserApiUnblocker(bool assume_blocked) : released(!assume_blocked) {}
+
+    ~RAIIUserApiUnblocker() {
+        if (!released)
+            user_api_blocked = false;
+
+    }
+
+    bool try_block() {
+        for(int i = 0; i < 50; ++i) {
+            if (!user_api_blocked) {
+                user_api_blocked = true;
+                released = false;
+                return true;
+            }
+            vTaskDelay(100 / portTICK_PERIOD_MS);
+        }
+        return false;
+    }
+
+    void release() {
+        released = true;
+    }
+
+    bool released = false;
+};
+
+void Users::pre_setup()
 {
-    user_config = Config::Object({
+    config = Config::Object({
         {"users", Config::Array(
             {
                 Config::Object({
@@ -217,39 +236,37 @@ Users::Users()
                 {"username", Config::Str("", 0, USERNAME_LENGTH)},
                 {"digest_hash", Config::Str("", 0, 32)},
             })),
-            0, MAX_ACTIVE_USERS,
+            1, MAX_ACTIVE_USERS,
             Config::type_id<Config::ConfObject>()
         )},
-        {"next_user_id", Config::Uint8(1)},
+        {"next_user_id", Config::Uint8(0)},
         {"http_auth_enabled", Config::Bool(false)}
     });
 
     add = ConfigRoot(Config::Object({
         {"id", Config::Uint8(0)},
         {"roles", Config::Uint32(0)},
-        {"current", Config::Uint16(32000)},
+        {"current", Config::Uint(32000, 0, 32000)},
         {"display_name", Config::Str("", 0, USERNAME_LENGTH)},
         {"username", Config::Str("", 0, USERNAME_LENGTH)},
         {"digest_hash", Config::Str("", 0, 32)},
     }), [this](Config &add) -> String {
-        if (user_api_blocked) {
-            for(int i = 0; i < 50; ++i) {
-                vTaskDelay(100 / portTICK_PERIOD_MS);
-                if (!user_api_blocked)
-                    break;
-            }
-            if (user_api_blocked)
-                return "Still applying the last operation. Please retry.";
-        }
+        RAIIUserApiUnblocker unblocker{false};
 
-        if (add.get("id")->asUint() != user_config.get("next_user_id")->asUint())
+        if (!unblocker.try_block())
+            return "Still applying the last operation. Please retry.";
+
+        if (config.get("next_user_id")->asUint() == 0)
+            return "Can't add user. All user IDs in use.";
+
+        if (add.get("id")->asUint() != config.get("next_user_id")->asUint())
             return "Can't add user. Wrong next user ID";
 
-        if (user_config.get("users")->count() == MAX_ACTIVE_USERS)
+        if (config.get("users")->count() == MAX_ACTIVE_USERS)
             return "Can't add user. Already have the maximum number of active users.";
 
-        for(int i = 0; i < user_config.get("users")->count(); ++i)
-            if (user_config.get("users")->get(i)->get("username")->asString() == add.get("username")->asString())
+        for(int i = 0; i < config.get("users")->count(); ++i)
+            if (config.get("users")->get(i)->get("username")->asString() == add.get("username")->asString())
                 return "Can't add user. A user with this username already exists.";
 
         {
@@ -263,7 +280,8 @@ Users::Users()
             }
         }
 
-        user_api_blocked = true;
+        // Keep blocked for the users/add callback
+        unblocker.release();
         return "";
     });
     add.permit_null_updates = false;
@@ -271,22 +289,18 @@ Users::Users()
     remove = ConfigRoot(Config::Object({
         {"id", Config::Uint8(0)}
     }), [this](Config &remove) -> String {
-        if (user_api_blocked) {
-            for (int i = 0; i < 50; ++i) {
-                vTaskDelay(100 / portTICK_PERIOD_MS);
-                if (!user_api_blocked)
-                    break;
-            }
-            if (user_api_blocked)
-                return "Still applying the last operation. Please retry.";
-        }
+        RAIIUserApiUnblocker unblocker{false};
+
+        if (!unblocker.try_block())
+            return "Still applying the last operation. Please retry.";
 
         if (remove.get("id")->asUint() == 0)
             return "The anonymous user can't be removed.";
 
-        for (int i = 0; i < user_config.get("users")->count(); ++i) {
-            if (user_config.get("users")->get(i)->get("id")->asUint() == remove.get("id")->asUint()) {
-                user_api_blocked = true;
+        for (int i = 0; i < config.get("users")->count(); ++i) {
+            if (config.get("users")->get(i)->get("id")->asUint() == remove.get("id")->asUint()) {
+                // Keep blocked for the users/add callback
+                unblocker.release();
                 return "";
             }
         }
@@ -298,14 +312,14 @@ Users::Users()
         {"enabled", Config::Bool(false)}
     }), [this](Config &update) -> String {
         if (!update.get("enabled")->asBool())
-            return String("");
+            return "";
 
-        for (int i = 0; i < user_config.get("users")->count(); ++i) {
-            if (user_config.get("users")->get(i)->get("digest_hash")->asString() != "")
-                return String("");
+        for (int i = 0; i < config.get("users")->count(); ++i) {
+            if (config.get("users")->get(i)->get("digest_hash")->asString() != "")
+                return "";
         }
 
-        return String("Can't enable HTTP authentication if not at least one user with a password is configured!");
+        return "Can't enable HTTP authentication if not at least one user with a password is configured!";
     });
 }
 
@@ -321,22 +335,56 @@ void create_username_file()
 
 void Users::setup()
 {
-    api.restorePersistentConfig("users/config", &user_config);
+    api.restorePersistentConfig("users/config", &config);
 
     if (!LittleFS.exists(USERNAME_FILE)) {
         logger.printfln("Username list does not exist! Recreating now.");
         create_username_file();
-        for (int i = 0; i < user_config.get("users")->count(); ++i) {
-            Config *user = user_config.get("users")->get(i);
-            this->rename_user(user->get("id")->asUint(), user->get("username")->asCStr(), user->get("display_name")->asCStr());
+        for (int i = 0; i < config.get("users")->count(); ++i) {
+            Config *user = (Config *)config.get("users")->get(i);
+            this->rename_user(user->get("id")->asUint(), user->get("username")->asString(), user->get("display_name")->asString());
         }
     }
 
+    // Next user id is 0 if there is no free user left.
+    // After a reboot maybe tracked charges were removed.
+    if (config.get("next_user_id")->asUint() == 0)
+        search_next_free_user();
+
+    Config* user_slot = get_user_slot();
     bool charge_start_tracked = charge_tracker.currentlyCharging();
-    bool charging = get_charger_state() == 2 || get_charger_state() == 3;
+    bool charging = get_charger_state() == 2 || get_charger_state() == 3
+                    || (user_slot->get("active")->asBool() && user_slot->get("max_current")->asUint() == 32000);
+
 
     if (charge_start_tracked && !charging) {
-        this->stop_charging(0, true);
+        float override_value = get_energy();
+
+        // This can be 0 if the EVSE 2.0 already reports the meter as available,
+        // but has not read any value from it.
+        if (std::isnan(override_value) || override_value == 0.0f)
+        {
+            auto start = millis();
+#if MODULE_EVSE_AVAILABLE() && MODULE_MODBUS_METER_AVAILABLE()
+            while(!deadline_elapsed(start + 10000) && meter.values.get("energy_abs")->asFloat() == 0)
+            {
+                modbus_meter.checkRS485State();
+                modbus_meter.loop();
+                delay(50);
+            }
+            override_value = meter.values.get("energy_abs")->asFloat();
+#elif MODULE_EVSE_V2_AVAILABLE()
+            while(!deadline_elapsed(start + 10000) && evse_v2.energy_meter_values.get("energy_abs")->asFloat() == 0)
+            {
+                evse_v2.update_all_data();
+                delay(250);
+            }
+            override_value = evse_v2.energy_meter_values.get("energy_abs")->asFloat();
+#endif
+        }
+
+        // ChargeTracker::endCharge replaces 0 with NAN.
+        this->stop_charging(0, true, override_value);
     }
 
     if (charging) {
@@ -345,7 +393,7 @@ void Users::setup()
         bool success = read_user_slot_info(&info);
         if (success) {
             if (!charge_start_tracked) {
-                charge_tracker.startCharge(info.timestamp_minutes, info.meter_start, info.user_id, info.evse_uptime_on_start, CHARGE_TRACKER_AUTH_TYPE_LOST, nullptr);
+                charge_tracker.startCharge(info.timestamp_minutes, info.meter_start, info.user_id, info.evse_uptime_on_start, CHARGE_TRACKER_AUTH_TYPE_LOST, Config::ConfVariant{});
             } else {
                 // Don't track a start, but restore the current_charge API anyway.
                 charge_tracker.current_charge.get("user_id")->updateInt(info.user_id);
@@ -355,11 +403,12 @@ void Users::setup()
                 charge_tracker.current_charge.get("authorization_type")->updateUint(CHARGE_TRACKER_AUTH_TYPE_LOST);
             }
         } else if (!charge_start_tracked)
-            this->start_charging(0, 32000, CHARGE_TRACKER_AUTH_TYPE_NONE, nullptr);
+            this->start_charging(0, 32000, CHARGE_TRACKER_AUTH_TYPE_NONE, Config::ConfVariant{});
     }
 
-    task_scheduler.scheduleWithFixedDelay([this](){
-        static uint8_t last_charger_state = get_charger_state();
+    auto outer_charger_state = get_charger_state();
+    task_scheduler.scheduleWithFixedDelay([this, outer_charger_state](){
+        static uint8_t last_charger_state = outer_charger_state;
 
         uint8_t charger_state = get_charger_state();
         if (charger_state == last_charger_state)
@@ -380,14 +429,29 @@ void Users::setup()
             case CHARGER_STATE_READY_TO_CHARGE:
             case CHARGER_STATE_CHARGING:
                 if (!get_user_slot()->get("active")->asBool())
-                    this->start_charging(0, 32000, CHARGE_TRACKER_AUTH_TYPE_NONE, nullptr);
+                    this->start_charging(0, 32000, CHARGE_TRACKER_AUTH_TYPE_NONE, Config::ConfVariant{});
                 break;
             case CHARGER_STATE_ERROR:
                 break;
         }
     }, 1000, 1000);
 
-    if (user_config.get("http_auth_enabled")->asBool()) {
+    initialized = true;
+
+    if (config.get("http_auth_enabled")->asBool()) {
+        bool user_with_password_found = false;
+        for (int i = 0; i < config.get("users")->count(); ++i) {
+            if (config.get("users")->get(i)->get("digest_hash")->asString() != "") {
+                user_with_password_found = true;
+                break;
+            }
+        }
+
+        if (!user_with_password_found) {
+            logger.printfln("Web interface authentication can not be enabled: No user with set password found.");
+            return;
+        }
+
         server.setAuthentication([this](WebServerRequest req) -> bool {
             String auth = req.header("Authorization");
             if (auth == "") {
@@ -401,9 +465,9 @@ void Users::setup()
             auth = auth.substring(7);
             AuthFields fields = parseDigestAuth(auth.c_str());
 
-            for (int i = 0; i < user_config.get("users")->count(); ++i) {
-                if (user_config.get("users")->get(i)->get("username")->asString().equals(fields.username))
-                    return checkDigestAuthentication(fields, req.methodString(), fields.username.c_str(), user_config.get("users")->get(i)->get("digest_hash")->asCStr(), nullptr, true, nullptr, nullptr, nullptr);
+            for (int i = 0; i < config.get("users")->count(); ++i) {
+                if (config.get("users")->get(i)->get("username")->asString().equals(fields.username))
+                    return checkDigestAuthentication(fields, req.methodString(), fields.username.c_str(), config.get("users")->get(i)->get("digest_hash")->asEphemeralCStr(), nullptr, true, nullptr, nullptr, nullptr); // use of emphemeral C string ok
             }
 
             return false;
@@ -411,44 +475,173 @@ void Users::setup()
 
         logger.printfln("Web interface authentication enabled.");
     }
+}
 
-    initialized = true;
+void Users::search_next_free_user() {
+    uint8_t user_id = config.get("next_user_id")->asUint();
+    uint8_t start_uid = user_id;
+    user_id++;
+    {
+        File f = LittleFS.open(USERNAME_FILE, "r+");
+        while(start_uid != user_id) {
+            if (user_id == 0)
+                user_id++;
+            f.seek(user_id * USERNAME_ENTRY_LENGTH, SeekMode::SeekSet);
+            char user_name_byte = 0;
+            f.readBytes(&user_name_byte, 1);
+            if (user_name_byte == '\0')
+                break;
+            user_id++;
+        };
+    }
+    if (user_id == start_uid)
+        user_id = 0;
+
+    config.get("next_user_id")->updateUint(user_id);
+}
+
+int Users::get_display_name(uint8_t user_id, char *ret_buf)
+{
+    for (auto &cfg : config.get("users")) {
+        if (cfg.get("id")->asUint() == user_id) {
+            String s = cfg.get("display_name")->asString();
+            strncpy(ret_buf, s.c_str(), 32);
+            return min(s.length(), 32u);
+        }
+    }
+    File f = LittleFS.open(USERNAME_FILE, "r");
+    f.seek(user_id * USERNAME_ENTRY_LENGTH + USERNAME_LENGTH, SeekMode::SeekSet);
+    f.read((uint8_t *) ret_buf, DISPLAY_NAME_LENGTH);
+    return strnlen(ret_buf, 32);
+}
+
+static void check_waiting_for_start(Config *ignored) {
+    (void) ignored;
+
+    static Config *iec_state = (Config *) api.getState("evse/state", false)->get("iec61851_state");
+    static Config *user_slot_current = (Config *) api.getState("evse/slots", false)->get(CHARGING_SLOT_USER)->get("max_current");
+
+    if (iec_state == nullptr || user_slot_current == nullptr)
+        return;
+
+    bool waiting_for_start = (iec_state->asUint() == 1)
+                          && (user_slot_current->asUint() == 0);
+
+    if (waiting_for_start)
+        evse_led.set_module(EvseLed::Blink::Nag, 2000);
 }
 
 void Users::register_urls()
 {
-    api.addRawCommand("users/modify", [this](char *c, size_t s) -> String {
-        if (user_api_blocked) {
-            for(int i = 0; i < 50; ++i) {
-                vTaskDelay(100 / portTICK_PERIOD_MS);
-                if (!user_api_blocked)
-                    break;
-            }
-            if (user_api_blocked)
-                return "Still applying the last operation. Please retry.";
-        }
+    // No users (except anonymous) configured: Make sure the EVSE's user slot is disabled.
+    bool user_slot = false;
 
-        // TODO: in which context is this callback executed? Is this racy with other reads/writes to the user config?
+#if MODULE_EVSE_AVAILABLE()
+
+    if (api.hasFeature("evse"))
+        user_slot = evse.slots.get(CHARGING_SLOT_USER)->get("active")->asBool();
+
+#elif MODULE_EVSE_V2_AVAILABLE()
+
+    if (api.hasFeature("evse"))
+        user_slot = evse_v2.slots.get(CHARGING_SLOT_USER)->get("active")->asBool();
+
+#endif
+
+    if (config.get("users")->count() <= 1 && user_slot) {
+        logger.printfln("User slot enabled, but no users configured. Disabling user slot.");
+        api.callCommand("evse/user_enabled_update", Config::ConfUpdateObject{{
+            {"enabled", false}
+        }});
+    }
+
+    api.addRawCommand("users/modify", [this](char *c, size_t s) -> String {
+        RAIIUserApiUnblocker unblocker{false};
+
+        if (!unblocker.try_block())
+            return "Still applying the last operation. Please retry.";
+
         StaticJsonDocument<96> doc;
 
         DeserializationError error = deserializeJson(doc, c, s);
 
         if (error) {
-            return String("Failed to deserialize string: ") + String(error.c_str());
+            return String("Failed to deserialize string: ") + error.c_str();
         }
 
+        const char * const expected_keys[] = {
+            "id",
+            "roles",
+            "current",
+            "display_name",
+            "username",
+            "digest_hash"
+        };
+
+        auto obj = doc.as<JsonObjectConst>();
+
+        for (JsonPairConst kv : obj) {
+            bool found = false;
+            for(int i = 0; i < ARRAY_SIZE(expected_keys); ++i) {
+                if (kv.key() != expected_keys[i])
+                    continue;
+
+                found = true;
+                break;
+            }
+            if (!found)
+                return String("JSON object has unknown key '") + kv.key().c_str() + "'.\n";
+        }
+
+        if (doc["id"] != nullptr && !doc["id"].is<uint32_t>())
+            return "[\"id\"]JSON node was not an unsigned integer.";
+
+        if (doc["roles"] != nullptr && !doc["roles"].is<uint32_t>())
+            return "[\"roles\"]JSON node was not an unsigned integer.";
+
+        if (doc["current"] != nullptr && !doc["current"].is<uint32_t>())
+            return "[\"current\"]JSON node was not an unsigned integer.";
+
+        if (doc["display_name"] != nullptr && !doc["display_name"].is<String>())
+            return "[\"display_name\"]JSON node was not a string.";
+
+        if (doc["username"] != nullptr && !doc["username"].is<String>())
+            return "[\"username\"]JSON node was not a string.";
+
+        if (doc["digest_hash"] != nullptr && !doc["digest_hash"].is<String>())
+            return "[\"digest_hash\"]JSON node was not a string.";
+
+        if (doc["display_name"] != nullptr && doc["display_name"].as<String>().length() > USERNAME_LENGTH)
+            return String("[\"display_name\"]String of maximum length ") + USERNAME_LENGTH + " was expected, but got " + doc["display_name"].as<String>().length();
+
+        if (doc["username"] != nullptr && doc["username"].as<String>().length() > USERNAME_LENGTH)
+            return String("[\"username\"]String of maximum length ") + USERNAME_LENGTH + " was expected, but got " + doc["username"].as<String>().length();
+
+        if (doc["digest_hash"] != nullptr && doc["digest_hash"].as<String>().length() > 32)
+            return String("[\"digest_hash\"]String of maximum length 32 was expected, but got ") + doc["digest_hash"].as<String>().length();
+
+        if (doc["current"] != nullptr && doc["current"].as<uint32_t>() > 32000)
+            return String("[\"current\"]Unsigned integer value ") + doc["current"].as<uint32_t>() + " was more than the allowed maximum of 32000";
+
         if (doc["id"] == nullptr)
-            return String("Can't modify user. User ID is null or missing.");
+            return "Can't modify user. User ID is null or missing.";
 
         uint8_t id = doc["id"].as<uint8_t>();
         if (id == 0) {
-            return "Can't modify the anonymous user.";
+            if (doc["username"] != nullptr)
+                return "Username needs to be empty.";
+            if (doc["roles"] != nullptr)
+                return "Roles need to be empty.";
+            if (doc["current"] != nullptr)
+                return "Current needs to be empty.";
+            if (doc["digest_hash"] != nullptr)
+                return "Digest_hash needs to be empty.";
         }
 
         Config *user = nullptr;
-        for(int i = 0; i < user_config.get("users")->count(); ++i) {
-            if (user_config.get("users")->get(i)->get("id")->asUint() == id) {
-                user = user_config.get("users")->get(i);
+        for(int i = 0; i < config.get("users")->count(); ++i) {
+            if (config.get("users")->get(i)->get("id")->asUint() == id) {
+                user = (Config *)config.get("users")->get(i);
                 break;
             }
         }
@@ -457,11 +650,19 @@ void Users::register_urls()
             return "Can't modify user. User with this ID not found.";
         }
 
-        for(int i = 0; i < user_config.get("users")->count(); ++i) {
-            if (user_config.get("users")->get(i)->get("id")->asUint() == id)
+        // The digest hash is calculated with the username and password.
+        if (doc["username"] != nullptr
+         && doc["digest_hash"] == nullptr
+         && user->get("username")->asString() != doc["username"]
+         && user->get("digest_hash")->asString() != "") {
+            return "Changing the username without updating the digest hash is not allowed!";
+        }
+
+        for(int i = 0; i < config.get("users")->count(); ++i) {
+            if (config.get("users")->get(i)->get("id")->asUint() == id)
                 continue;
 
-            if (user_config.get("users")->get(i)->get("username")->asString() == doc["username"]) {
+            if (config.get("users")->get(i)->get("username")->asString() == doc["username"]) {
                 return "Can't modify user. Another user with the same username already exists.";
             }
         }
@@ -495,46 +696,53 @@ void Users::register_urls()
         if (doc["digest_hash"] != nullptr)
             user->get("digest_hash")->updateString(doc["digest_hash"]);
 
-        String err = this->user_config.validate();
+        String err = this->config.validate();
         if (err != "")
             return err;
 
-        API::writeConfig("users/config", &user_config);
+        // Keep blocked for the task below
+        unblocker.release();
 
-        if (display_name_changed || username_changed)
-            this->rename_user(user->get("id")->asUint(), user->get("username")->asCStr(), user->get("display_name")->asCStr());
+        task_scheduler.scheduleOnce([this, display_name_changed, username_changed, user](){
+            // Blocked in users/modify raw command handler
+            RAIIUserApiUnblocker inner_unblocker{true};
+            API::writeConfig("users/config", &config);
+
+            if (display_name_changed || username_changed)
+                this->rename_user(user->get("id")->asUint(), user->get("username")->asString(), user->get("display_name")->asString());
+        }, 0);
 
         return "";
     }, true);
 
-    api.addState("users/config", &user_config, {"digest_hash"}, 10000);
+    api.addState("users/config", &config, {"digest_hash"}, 1000);
     api.addCommand("users/add", &add, {"digest_hash"}, [this](){
-        user_config.get("users")->add();
-        Config *user = user_config.get("users")->get(user_config.get("users")->count() - 1);
+        // Blocked in users/add validator
+        RAIIUserApiUnblocker inner_unblocker{true};
+
+        config.get("users")->add();
+        Config *user = (Config *)config.get("users")->get(config.get("users")->count() - 1);
 
         user->get("id")->updateUint(add.get("id")->asUint());
         user->get("roles")->updateUint(add.get("roles")->asUint());
         user->get("current")->updateUint(add.get("current")->asUint());
         user->get("display_name")->updateString(add.get("display_name")->asString());
         user->get("username")->updateString(add.get("username")->asString());
-        user->get("digest_hash")->updateString(add.get("digest_hash")->asCStr());
+        user->get("digest_hash")->updateString(add.get("digest_hash")->asString());
 
-        uint8_t user_id = user_config.get("next_user_id")->asUint();
-        ++user_id;
-        if (user_id == 0)
-            user_id = 1;
+        search_next_free_user();
 
-        user_config.get("next_user_id")->updateUint(user_id);
-
-        API::writeConfig("users/config", &user_config);
-        this->rename_user(user->get("id")->asUint(), user->get("username")->asCStr(), user->get("display_name")->asCStr());
-        user_api_blocked = false;
+        API::writeConfig("users/config", &config);
+        this->rename_user(user->get("id")->asUint(), user->get("username")->asString(), user->get("display_name")->asString());
     }, true);
 
     api.addCommand("users/remove", &remove, {}, [this](){
+        // Blocked in users/remove validator
+        RAIIUserApiUnblocker inner_unblocker{true};
+
         int idx = -1;
-        for(int i = 0; i < user_config.get("users")->count(); ++i) {
-            if (user_config.get("users")->get(i)->get("id")->asUint() == remove.get("id")->asUint()) {
+        for(int i = 0; i < config.get("users")->count(); ++i) {
+            if (config.get("users")->get(i)->get("id")->asUint() == remove.get("id")->asUint()) {
                 idx = i;
                 break;
             }
@@ -545,61 +753,71 @@ void Users::register_urls()
             return;
         }
 
-        user_config.get("users")->remove(idx);
-        API::writeConfig("users/config", &user_config);
+        config.get("users")->remove(idx);
+        API::writeConfig("users/config", &config);
 
-        Config *tags = nfc.config.get("authorized_tags");
+#if MODULE_NFC_AVAILABLE()
+        Config *tags = (Config *)nfc.config.get("authorized_tags");
 
         for(int i = 0; i < tags->count(); ++i) {
             if(tags->get(i)->get("user_id")->asUint() == remove.get("id")->asUint())
                 tags->get(i)->get("user_id")->updateUint(0);
         }
         API::writeConfig("nfc/config", &nfc.config);
+#endif
 
         if (!charge_tracker.is_user_tracked(remove.get("id")->asUint()))
+        {
             this->rename_user(remove.get("id")->asUint(), "", "");
-
-        user_api_blocked = false;
+            // If this user still has tracked charges, we can't recycle their ID, so it is correct
+            // to check this here (and not one level up).
+            if (config.get("next_user_id")->asUint() == 0)
+            {
+                config.get("next_user_id")->updateUint(remove.get("id")->asUint());
+                API::writeConfig("users/config", &config);
+            }
+        }
     }, true);
 
 
     api.addCommand("users/http_auth_update", &http_auth_update, {}, [this](){
-        user_config.get("http_auth_enabled")->updateBool(http_auth_update.get("enabled")->asBool());
-        API::writeConfig("users/config", &user_config);
+        bool enable = http_auth_update.get("enabled")->asBool();
+        if (!enable)
+            server.setAuthentication([](WebServerRequest req){return true;});
+
+        config.get("http_auth_enabled")->updateBool(enable);
+        API::writeConfig("users/config", &config);
     }, false);
 
     server.on("/users/all_usernames", HTTP_GET, [this](WebServerRequest request) {
         //std::lock_guard<std::mutex> lock{records_mutex};
         size_t len = MAX_PASSIVE_USERS * USERNAME_ENTRY_LENGTH;
-        char *buf = (char *)malloc(len);
+        auto buf = heap_alloc_array<char>(len);
         if (buf == nullptr) {
-            request.send(507);
-            return;
+            return request.send(507);
         }
 
         File f = LittleFS.open(USERNAME_FILE, "r");
 
-        size_t read = f.read((uint8_t *)buf, len);
-        request.send(200, "application/octet-stream", buf, read);
-
-        free(buf);
+        size_t read = f.read((uint8_t *)buf.get(), len);
+        return request.send(200, "application/octet-stream", buf.get(), read);
     });
-}
 
-void Users::loop()
-{
+#if MODULE_EVSE_LED_AVAILABLE()
+    task_scheduler.scheduleWithFixedDelay([](){check_waiting_for_start(nullptr);}, 1000, 1000);
+#endif
 }
 
 uint8_t Users::next_user_id()
 {
-    return this->user_config.get("next_user_id")->asUint();
+    return this->config.get("next_user_id")->asUint();
 }
 
-void Users::rename_user(uint8_t user_id, const char *username, const char *display_name)
+void Users::rename_user(uint8_t user_id, const String &username, const String &display_name)
 {
     char buf[USERNAME_ENTRY_LENGTH] = {0};
-    snprintf(buf, USERNAME_LENGTH, "%s", username);
-    snprintf(buf + USERNAME_LENGTH, DISPLAY_NAME_LENGTH, "%s", display_name);
+    username.toCharArray(buf, USERNAME_LENGTH);
+    display_name.toCharArray(buf + USERNAME_LENGTH, DISPLAY_NAME_LENGTH);
 
     File f = LittleFS.open(USERNAME_FILE, "r+");
     f.seek(user_id * USERNAME_ENTRY_LENGTH, SeekMode::SeekSet);
@@ -608,7 +826,7 @@ void Users::rename_user(uint8_t user_id, const char *username, const char *displ
 
 void Users::remove_from_username_file(uint8_t user_id)
 {
-    Config *users = user_config.get("users");
+    Config *users = (Config *)config.get("users");
     for (int i = 0; i < users->count(); ++i) {
         if (users->get(i)->get("id")->asUint() == user_id) {
             return;
@@ -616,10 +834,15 @@ void Users::remove_from_username_file(uint8_t user_id)
     }
 
     this->rename_user(user_id, "", "");
+    if (config.get("next_user_id")->asUint() == 0)
+    {
+        config.get("next_user_id")->updateUint(user_id);
+        API::writeConfig("users/config", &config);
+    }
 }
 
 // Only returns true if the triggered action was a charge start.
-bool Users::trigger_charge_action(uint8_t user_id, uint8_t auth_type, Config::ConfVariant auth_info)
+bool Users::trigger_charge_action(uint8_t user_id, uint8_t auth_type, Config::ConfVariant auth_info, int action)
 {
     bool user_enabled = get_user_slot()->get("active")->asBool();
     if (!user_enabled)
@@ -628,7 +851,7 @@ bool Users::trigger_charge_action(uint8_t user_id, uint8_t auth_type, Config::Co
     // I.e. when holding an NFC tag at the box or when calling the start_charging API
 
     uint16_t current_limit = 0;
-    Config *users = user_config.get("users");
+    Config *users = (Config *)config.get("users");
     for (int i = 0; i < users->count(); ++i) {
         if (users->get(i)->get("id")->asUint() != user_id)
             continue;
@@ -647,14 +870,18 @@ bool Users::trigger_charge_action(uint8_t user_id, uint8_t auth_type, Config::Co
     switch (iec_state) {
         case IEC_STATE_B: // State B: The user wants to start charging. If we already have a tracked charge, stop charging to allow switching to another user.
             if (charge_tracker.currentlyCharging()) {
-                this->stop_charging(user_id, false);
+                if (action == TRIGGER_CHARGE_ANY || action == TRIGGER_CHARGE_STOP)
+                    this->stop_charging(user_id, false);
                 return false;
             }
-            return this->start_charging(user_id, current_limit, auth_type, auth_info);
+            if (action == TRIGGER_CHARGE_ANY || action == TRIGGER_CHARGE_START)
+                return this->start_charging(user_id, current_limit, auth_type, auth_info);
+            return false;
         case IEC_STATE_C: // State C: The user wants to stop charging.
             // Debounce here a bit, an impatient user can otherwise accidentially trigger a stop if a start_charging takes too long.
-            if (tscs > 3000)
+            if (tscs > 3000 && (action == TRIGGER_CHARGE_ANY || action == TRIGGER_CHARGE_STOP))
                 this->stop_charging(user_id, false);
+            return false;
         default: //Don't do anything in state A, D, and E/F
             break;
     }
@@ -667,16 +894,6 @@ void Users::remove_username_file()
         LittleFS.remove(USERNAME_FILE);
 }
 
-uint32_t timestamp_minutes()
-{
-    struct timeval tv_now;
-
-    if (!clock_synced(&tv_now))
-        return 0;
-
-    return tv_now.tv_sec / 60;
-}
-
 bool Users::start_charging(uint8_t user_id, uint16_t current_limit, uint8_t auth_type, Config::ConfVariant auth_info)
 {
     if (charge_tracker.currentlyCharging())
@@ -686,15 +903,15 @@ bool Users::start_charging(uint8_t user_id, uint16_t current_limit, uint8_t auth
     float meter_start = get_energy();
     uint32_t timestamp = timestamp_minutes();
 
+    if (!charge_tracker.startCharge(timestamp, meter_start, user_id, evse_uptime, auth_type, auth_info))
+        return false;
     write_user_slot_info(user_id, evse_uptime, timestamp, meter_start);
-    charge_tracker.startCharge(timestamp, meter_start, user_id, evse_uptime, auth_type, auth_info);
-
     set_user_current(current_limit);
 
     return true;
 }
 
-bool Users::stop_charging(uint8_t user_id, bool force)
+bool Users::stop_charging(uint8_t user_id, bool force, float meter_abs)
 {
     if (charge_tracker.currentlyCharging()) {
         UserSlotInfo info;
@@ -718,7 +935,10 @@ bool Users::stop_charging(uint8_t user_id, bool force)
             charge_duration = now_seconds - start_seconds;
         }
 
-        charge_tracker.endCharge(charge_duration, get_energy());
+        if (meter_abs)
+            charge_tracker.endCharge(charge_duration, meter_abs);
+        else
+            charge_tracker.endCharge(charge_duration, get_energy());
     }
 
     zero_user_slot_info();

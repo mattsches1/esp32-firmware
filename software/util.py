@@ -6,6 +6,10 @@ import hashlib
 from zipfile import ZipFile
 import json
 import re
+import binascii
+import struct
+import mimetypes
+from base64 import b64encode
 
 def get_digest_paths(dst_dir, var_name, env=None):
     if env is not None:
@@ -47,7 +51,7 @@ def check_digest(src_paths, src_datas, dst_dir, var_name, env=None):
     except FileNotFoundError:
         old_digest2 = None
 
-    # caclulate new digest
+    # calculate new digest
     h = hashlib.sha256()
 
     with open(__file__, 'rb') as f:
@@ -155,6 +159,15 @@ def embed_data_with_digest(data, dst_dir, var_name, var_type, data_filter=lambda
         embed_data_internal(data_filter(data), cpp_path, h_path, var_name, var_type)
         store_digest(new_digest, dst_dir, var_name)
 
+def patch_beta_firmware(data, beta_version):
+    data = bytearray(data)
+    data[-10] = 200 + beta_version
+
+    new_checksum = struct.pack('<I', binascii.crc32(data[:-4]) & 0xFFFFFFFF)
+    print(new_checksum.hex())
+    data = data[:-4] + new_checksum
+    return data
+
 def embed_bricklet_firmware_bin(env=None):
     firmwares = [x for x in os.listdir('.') if x.endswith('.zbin') and x.startswith('bricklet_')]
 
@@ -167,7 +180,7 @@ def embed_bricklet_firmware_bin(env=None):
         sys.exit(-1)
 
     firmware = firmwares[0]
-    m = re.fullmatch('bricklet_(.*)_firmware_\d+_\d+_\d+.zbin', firmware)
+    m = re.fullmatch('bricklet_(.*)_firmware_\d+_\d+_\d+(?:_beta(\d+))?.zbin', firmware)
 
     if m == None:
         print('Firmware {} did not match naming schema'.format(firmware))
@@ -177,7 +190,13 @@ def embed_bricklet_firmware_bin(env=None):
 
     with ZipFile(firmware) as zf:
         with zf.open('{}-bricklet-firmware.bin'.format(firmware_name.replace('_', '-')), 'r') as f:
-            embed_data_with_digest(f.read(), '.', firmware_name + '_bricklet_firmware_bin', 'uint8_t', env=env)
+            fw = f.read()
+
+    beta_version = m.group(2)
+    if beta_version is not None:
+        fw = patch_beta_firmware(fw, int(beta_version))
+
+    embed_data_with_digest(fw, '.', firmware_name + '_bricklet_firmware_bin', 'uint8_t', env=env)
 
 def merge(left, right, path=[]):
     for key in right:
@@ -190,20 +209,14 @@ def merge(left, right, path=[]):
             left[key] = right[key]
     return left
 
-def parse_ts_file(path, name, translation, used_placeholders, template_literals):
-    START_PATTERN = "{[index: string]:any} = "
-    END_PATTERN = "};"
-
-    with open(path) as f:
+def parse_ts_file(path, name, used_placeholders, template_literals):
+    with open(path, 'r', encoding='utf-8') as f:
         content = f.read()
 
-    placeholders = re.findall('__\(([^\)]*)', content)
-    try:
-        placeholders.remove("s: string")
-    except:
-        pass
+    placeholders = [x.strip() for x in re.findall('__\(([^\)]*)', content)]
+    placeholders_unchecked = [x.strip() for x in re.findall('translate_unchecked\(([^\)]*)', content)]
 
-    template_literal_keys = [x for x in placeholders if x[0] == '`' and x[-1] == '`' and '${' in x and '}' in x]
+    template_literal_keys = [x for x in placeholders_unchecked if x[0] == '`' and x[-1] == '`' and '${' in x and '}' in x]
     placeholders = [x for x in placeholders if x not in template_literal_keys]
 
     template_literals.update({x[1:-1]: [] for x in template_literal_keys})
@@ -214,36 +227,14 @@ def parse_ts_file(path, name, translation, used_placeholders, template_literals)
 
     used_placeholders += [x[1:-1] for x in placeholders]
 
-    if not name.startswith("translation_") or not name.endswith(".ts"):
-        return
-
-    language = name[len('translation_'):-len('.ts')]
-    start = content.find(START_PATTERN)
-    while start >= 0:
-        content = content[start+len(START_PATTERN):]
-        end = content.find(END_PATTERN)
-        json_dict = content[:end+1]
-        json_dict = re.sub(",\s*\}", "}", json_dict)
-        for x in re.findall('"([^"]*)":\s*""', json_dict):
-            print('error: key "{}" in {} has empty value. Use {{{{{{empty_text}}}}}} instead.'.format(x, name))
-        json_dict = json_dict.replace("{{{empty_text}}}", '""')
-        try:
-            merge(translation, {language: json.loads(json_dict)})
-        except Exception as e:
-            print("error:", e, json_dict)
-
-        content = content[end+len(END_PATTERN):]
-        start = content.find(START_PATTERN)
-
 def parse_ts_files(files):
-    translation = {}
     used_placeholders = []
     template_literals = {}
 
     for f in files:
-        parse_ts_file(f, os.path.basename(f), translation, used_placeholders, template_literals)
+        parse_ts_file(f, os.path.basename(f), used_placeholders, template_literals)
 
-    return translation, used_placeholders, template_literals
+    return used_placeholders, template_literals
 
 def get_nested_keys(d, path=""):
     r = []
@@ -269,3 +260,47 @@ def green(s):
 
 def gray(s):
     return colors['gray']+s+colors["off"]
+
+def specialize_template(template_filename, destination_filename, replacements, check_completeness=True, remove_template=False):
+    lines = []
+    replaced = set()
+
+    with open(template_filename, 'r', encoding='utf-8') as f:
+        for line in f.readlines():
+            for key in replacements:
+                replaced_line = line.replace(key, replacements[key])
+
+                if replaced_line != line:
+                    replaced.add(key)
+
+                line = replaced_line
+
+            lines.append(line)
+
+    if check_completeness and replaced != set(replacements.keys()):
+        raise Exception('Not all replacements for {0} have been applied. Missing are {1}'.format(template_filename, ', '.join(set(replacements.keys() - replaced))))
+
+    with open(destination_filename, 'w', encoding='utf-8') as f:
+        f.writelines(lines)
+
+    if remove_template:
+        os.remove(template_filename)
+
+def file_to_data_url(path):
+    with open(path, 'rb') as f:
+        data = b64encode(f.read()).decode('ascii')
+
+    mimetypes.init()
+    mtype, encoding = mimetypes.guess_type(path)
+    if mtype is None:
+        print("Failed to guess mimetype for", path)
+        sys.exit(1)
+
+    return "data:{};base64,{}".format(mtype, data)
+
+def file_to_embedded_ts(path):
+    data_url = file_to_data_url(path)
+    basename = os.path.basename(path).replace(".", "_")
+    path = path.replace(os.path.basename(path), basename)
+    with open(path + ".embedded.ts", 'w') as f:
+        f.write('export let {} = "{}";'.format(basename, data_url))

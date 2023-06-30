@@ -27,37 +27,34 @@
 
 #include "digest_auth.h"
 
-extern WebServer server;
-extern API api;
-extern EventLog logger;
-
-Authentication::Authentication()
+void Authentication::pre_setup()
 {
-    authentication_config = ConfigRoot{Config::Object({
+    config = ConfigRoot{Config::Object({
         {"enable_auth", Config::Bool(false)},
         {"username", Config::Str("", 0, 32)},
         {"digest_hash", Config::Str("", 0, 32)},
-    }), [](Config &update) {
+    }), [this](Config &update) -> String {
         if (update.get("enable_auth")->asBool() && update.get("digest_hash")->asString() == "")
-            return String("Authentication can not be enabled if no password/digest hash is set.");
+            return "Authentication can not be enabled if no password/digest hash is set.";
 
+        // Theoretically authentication works without a username; not in Firefox with xhr.open(..., username, password);
         if (update.get("enable_auth")->asBool() && update.get("username")->asString() == "")
-            return String("Authentication can not be enabled if no username is set.");
+            return "Authentication can not be enabled if no username is set.";
 
-        if (!update.get("enable_auth")->asBool() && update.get("digest_hash")->asString() != "")
-            update.get("digest_hash")->updateString("");
+        if (update.get("username")->asString() != this->config.get("username")->asString() && update.get("digest_hash")->asString() == this->config.get("digest_hash")->asString())
+            return "To change the username the digest hash also has to be updated.";
 
-        return String("");
+        return "";
     }};
 }
 
 void Authentication::setup()
 {
-    api.restorePersistentConfig("authentication/config", &authentication_config);
+    api.restorePersistentConfig("authentication/config", &config);
 
-    if (authentication_config.get("enable_auth")->asBool()) {
-        String user = authentication_config.get("username")->asString();
-        String digest_hash = authentication_config.get("digest_hash")->asString();
+    if (config.get("enable_auth")->asBool()) {
+        String user = config.get("username")->asString(); // Create copies of possibly emphemeral Strings from config.
+        String digest_hash = config.get("digest_hash")->asString();
 
         server.setAuthentication([user, digest_hash](WebServerRequest req) -> bool {
             String auth = req.header("Authorization");
@@ -85,9 +82,5 @@ void Authentication::setup()
 
 void Authentication::register_urls()
 {
-    api.addPersistentConfig("authentication/config", &authentication_config, {"digest_hash"}, 10000);
-}
-
-void Authentication::loop()
-{
+    api.addPersistentConfig("authentication/config", &config, {"digest_hash"}, 1000);
 }

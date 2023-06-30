@@ -24,10 +24,7 @@
 #include "api.h"
 #include "event_log.h"
 
-extern API api;
-extern EventLog logger;
-
-TutorialPhase2::TutorialPhase2()
+void TutorialPhase2::pre_setup()
 {
 }
 
@@ -37,7 +34,7 @@ void TutorialPhase2::setup()
     // module. Containing one member "color" representing the color value
     // in HTML #RRGGBB notation. The string is limited to exactly 7 byte
     // in length.
-    tutorial_config = Config::Object({
+    config = Config::Object({
         {"color", Config::Str("#FF0000", 7, 7)}
     });
 
@@ -52,7 +49,7 @@ void TutorialPhase2::register_urls()
     // "tutorial_phase_2/config" to be exposed to the frontend module.
     // The API manager checks the ConfigRoot object for changes every 1000
     // milliseconds. If a change is detected an update is send.
-    api.addState("tutorial_phase_2/config", &tutorial_config, {}, 1000);
+    api.addState("tutorial_phase_2/config", &config, {}, 1000);
 }
 
 void TutorialPhase2::loop()

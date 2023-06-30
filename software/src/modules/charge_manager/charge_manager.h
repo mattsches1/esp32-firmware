@@ -21,33 +21,43 @@
 
 #include "config.h"
 
-class ChargeManager {
+#include "module.h"
+
+class ChargeManager final : public IModule
+{
 public:
-    ChargeManager();
-    void setup();
-    void register_urls();
-    void post_setup();
-    void loop();
+    ChargeManager(){}
+    void pre_setup() override;
+    void setup() override;
+    void register_urls() override;
 
-    bool initialized = false;
-
-    void start_evse_state_update();
-    void send_current();
     void distribute_current();
     void start_manager_task();
     void check_watchdog();
+    bool have_chargers();
+    bool seen_all_chargers();
+    bool is_charging_stopped(uint32_t last_update_cutoff);
+    void set_all_control_pilot_disconnect(bool disconnect);
+    bool are_all_control_pilot_disconnected(uint32_t last_update_cutoff);
+    bool is_control_pilot_disconnect_supported(uint32_t last_update_cutoff);
+    void set_allocated_current_callback(std::function<void(uint32_t)> callback);
 
-    ConfigRoot charge_manager_config;
-    ConfigRoot charge_manager_config_in_use;
+    ConfigRoot config;
+    ConfigRoot config_in_use;
 
-    std::mutex state_mutex;
-    ConfigRoot charge_manager_state;
+    ConfigRoot state;
 
-    ConfigRoot charge_manager_available_current;
-
-    bool request_in_progress;
-    uint32_t request_id;
-    String buf;
+    ConfigRoot available_current;
+    ConfigRoot available_current_update;
+    ConfigRoot available_phases;
+    ConfigRoot available_phases_update;
+    ConfigRoot control_pilot_disconnect;
 
     uint32_t last_available_current_update = 0;
+
+private:
+    bool all_chargers_seen = false;
+    std::function<void(uint32_t)> allocated_current_callback;
+
+    std::unique_ptr<char[]> distribution_log;
 };

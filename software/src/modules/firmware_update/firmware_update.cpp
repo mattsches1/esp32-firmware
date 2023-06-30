@@ -30,6 +30,7 @@
 #include "tools.h"
 #include "build.h"
 #include "modules.h"
+#include "web_server.h"
 
 #include "./crc32.h"
 #include "./recovery_html.embedded.h"
@@ -39,21 +40,14 @@
 
 extern const char *DISPLAY_NAME;
 
-extern API api;
-extern EventLog logger;
-
-extern WebServer server;
-extern TaskScheduler task_scheduler;
-
 extern bool firmware_update_allowed;
-extern bool factory_reset_requested;
 extern int8_t green_led_pin;
 
 // Newer firmwares contain a firmware info page.
 #define FIRMWARE_INFO_OFFSET (0xd000 - 0x1000)
 #define FIRMWARE_INFO_LENGTH 0x1000
 
-TaskHandle_t xTaskBuffer;
+static TaskHandle_t xTaskBuffer;
 
 void blinky(void *arg)
 {
@@ -67,7 +61,7 @@ void blinky(void *arg)
 
 static bool factory_reset_running = false;
 
-void factory_reset()
+void factory_reset(bool restart_esp)
 {
     if (factory_reset_running)
         return;
@@ -81,13 +75,17 @@ void factory_reset()
             tskIDLE_PRIORITY,
             &xTaskBuffer);
 
+#if MODULE_EVSE_AVAILABLE()
+    evse.factory_reset();
+#endif
+#if MODULE_EVSE_V2_AVAILABLE()
+    evse_v2.factory_reset();
+#endif
+
     LittleFS.end();
     LittleFS.format();
-    ESP.restart();
-}
-
-FirmwareUpdate::FirmwareUpdate()
-{
+    if (restart_esp)
+        ESP.restart();
 }
 
 void FirmwareUpdate::setup()
@@ -102,6 +100,7 @@ void FirmwareUpdate::reset_firmware_info()
     info_offset = 0;
     checksum_offset = 0;
     update_aborted = false;
+    info_found = false;
 }
 
 bool FirmwareUpdate::handle_firmware_info_chunk(size_t chunk_index, uint8_t *data, size_t chunk_length)
@@ -119,7 +118,7 @@ bool FirmwareUpdate::handle_firmware_info_chunk(size_t chunk_index, uint8_t *dat
 
     if (info_offset < sizeof(info)) {
         size_t to_write = MIN(length, sizeof(info) - info_offset);
-        memcpy(&info + info_offset, start, to_write);
+        memcpy(((uint8_t *)&info) + info_offset, start, to_write);
         info_offset += to_write;
     }
 
@@ -140,11 +139,12 @@ bool FirmwareUpdate::handle_firmware_info_chunk(size_t chunk_index, uint8_t *dat
 
     if (checksum_offset < sizeof(checksum)) {
         size_t to_write = MIN(length, sizeof(checksum) - checksum_offset);
-        memcpy(&checksum + checksum_offset, start, to_write);
+        memcpy((uint8_t *)&checksum + checksum_offset, start, to_write);
         checksum_offset += to_write;
     }
 
-    return checksum_offset == sizeof(checksum) && info.magic[0] == 0x12CE2171 && (info.magic[1] & 0x00FFFFFF) == 0x6E12F0;
+    info_found = checksum_offset == sizeof(checksum) && info.magic[0] == 0x12CE2171 && (info.magic[1] & 0x00FFFFFF) == 0x6E12F0;
+    return info_found;
 }
 
 String FirmwareUpdate::check_firmware_info(bool firmware_info_found, bool detect_downgrade, bool log)
@@ -163,9 +163,9 @@ String FirmwareUpdate::check_firmware_info(bool firmware_info_found, bool detect
             return "{\"error\":\"firmware_update.script.info_page_corrupted\"}";
         }
 
-        if (strcmp(DISPLAY_NAME, info.firmware_name) != 0) {
+        if (strncmp(DISPLAY_NAME, info.firmware_name, ARRAY_SIZE(info.firmware_name)) != 0) {
             if (log) {
-                logger.printfln("Failed to update: Firmware is for a %s but this is a %s!", info.firmware_name, DISPLAY_NAME);
+                logger.printfln("Failed to update: Firmware is for a %.*s but this is a %s!", static_cast<int>(ARRAY_SIZE(info.firmware_name)), info.firmware_name, DISPLAY_NAME);
             }
             return "{\"error\":\"firmware_update.script.wrong_firmware_type\"}";
         }
@@ -176,9 +176,9 @@ String FirmwareUpdate::check_firmware_info(bool firmware_info_found, bool detect
                 logger.printfln("Failed to update: Firmware is a downgrade!");
             }
             char buf[128];
-            snprintf(buf, sizeof(buf)/sizeof(buf[0]), "{\"error\":\"firmware_update.script.downgrade\", \"fw\":\"%u.%u.%u\", \"installed\":\"%u.%u.%u\"}",
+            snprintf(buf, sizeof(buf)/sizeof(buf[0]), "{\"error\":\"firmware_update.script.downgrade\", \"fw\":\"%u.%u.%u\", \"installed\":\"%i.%i.%i\"}",
                      info.fw_version[0], info.fw_version[1], info.fw_version[2],
-                     (uint8_t) BUILD_VERSION_MAJOR, (uint8_t) BUILD_VERSION_MINOR, (uint8_t) BUILD_VERSION_PATCH);
+                     BUILD_VERSION_MAJOR, BUILD_VERSION_MINOR, BUILD_VERSION_PATCH);
             return String(buf);
         }
     }
@@ -265,17 +265,24 @@ void FirmwareUpdate::register_urls()
         req.addResponseHeader("ETag", "dontcachemeplease");
         // Intentionally don't handle the If-None-Match header:
         // This makes sure that a cached version is never used.
-        req.send(200, "text/html", recovery_html_data, recovery_html_length);
+        return req.send(200, "text/html", recovery_html_data, recovery_html_length);
     });
 
     server.on("/check_firmware", HTTP_POST, [this](WebServerRequest request){
-        request.send(200, "text/plain", "{\"error\":\"firmware_update.script.ok\"}");
+        if (!this->info_found && BUILD_REQUIRE_FIRMWARE_INFO) {
+            return request.send(400, "text/plain", "{\"error\":\"firmware_update.script.no_info_page\"}");
+        }
+        return request.send(200);
     },[this](WebServerRequest request, String filename, size_t index, uint8_t *data, size_t len, bool final){
         if (index == 0) {
             this->reset_firmware_info();
         }
 
-        if (!firmware_update_allowed) {
+        bool firmware_update_allowed_check_required = true;
+#if MODULE_ENERGY_MANAGER_AVAILABLE() && !(MODULE_EVSE_AVAILABLE() || MODULE_EVSE_V2_AVAILABLE())
+        firmware_update_allowed_check_required = energy_manager.disallow_fw_update_with_vehicle_connected();
+#endif
+        if (firmware_update_allowed_check_required && !firmware_update_allowed) {
             request.send(400, "text/plain", "{\"error\":\"firmware_update.script.vehicle_connected\"}");
             return false;
         }
@@ -299,26 +306,18 @@ void FirmwareUpdate::register_urls()
 
     server.on("/flash_firmware", HTTP_POST, [this](WebServerRequest request){
         if (update_aborted)
-            return;
+            return request.unsafe_ResponseAlreadySent(); // Already sent in upload callback.
 
         this->firmware_update_running = false;
-        if (!firmware_update_allowed) {
-            request.send(423, "text/plain", "vehicle connected");
-            return;
-        }
 
         if(!Update.hasError()) {
             logger.printfln("Firmware flashed successfully! Rebooting in one second.");
             task_scheduler.scheduleOnce([](){ESP.restart();}, 1000);
         }
 
-        request.send(Update.hasError() ? 400: 200, "text/plain", Update.hasError() ? Update.errorString() : "Update OK");
+        return request.send(Update.hasError() ? 400: 200, "text/plain", Update.hasError() ? Update.errorString() : "Update OK");
     },[this](WebServerRequest request, String filename, size_t index, uint8_t *data, size_t len, bool final){
-        if (!firmware_update_allowed) {
-            request.send(423, "text/plain", "vehicle connected");
-            this->firmware_update_running = false;
-            return false;
-        }
+
         this->firmware_update_running = true;
         return handle_update_chunk(U_FLASH, request, index, data, len, final, request.contentLength());
     });
@@ -329,7 +328,7 @@ void FirmwareUpdate::register_urls()
             task_scheduler.scheduleOnce([](){ESP.restart();}, 1000);
         }
 
-        request.send(Update.hasError() ? 400: 200, "text/plain", Update.hasError() ? Update.errorString() : "Update OK");
+        return request.send(Update.hasError() ? 400: 200, "text/plain", Update.hasError() ? Update.errorString() : "Update OK");
     },[this](WebServerRequest request, String filename, size_t index, uint8_t *data, size_t len, bool final){
         return handle_update_chunk(U_SPIFFS, request, index, data, len, final, request.contentLength());
     });
@@ -340,7 +339,7 @@ void FirmwareUpdate::register_urls()
         DeserializationError error = deserializeJson(doc, c, s);
 
         if (error) {
-            return String("Failed to deserialize string: ") + String(error.c_str());
+            return String("Failed to deserialize string: ") + error.c_str();
         }
 
         if (!doc["do_i_know_what_i_am_doing"].is<bool>()) {
@@ -365,7 +364,7 @@ void FirmwareUpdate::register_urls()
         DeserializationError error = deserializeJson(doc, c, s);
 
         if (error) {
-            return String("Failed to deserialize string: ") + String(error.c_str());
+            return String("Failed to deserialize string: ") + error.c_str();
         }
 
         if (!doc["do_i_know_what_i_am_doing"].is<bool>()) {
@@ -378,9 +377,16 @@ void FirmwareUpdate::register_urls()
 
         task_scheduler.scheduleOnce([](){
             logger.printfln("Config reset requested");
-#if defined MODULE_USERS_AVAILABLE
-            for(int i = 0; i < users.user_config.get("users")->count(); ++i) {
-                uint8_t id = users.user_config.get("users")->get(i)->get("id")->asUint();
+#if MODULE_EVSE_AVAILABLE()
+            evse.factory_reset();
+#endif
+#if MODULE_EVSE_V2_AVAILABLE()
+            evse_v2.factory_reset();
+#endif
+
+#if MODULE_USERS_AVAILABLE()
+            for(int i = 0; i < users.config.get("users")->count(); ++i) {
+                uint8_t id = users.config.get("users")->get(i)->get("id")->asUint();
                 if (id == 0) // skip anonymous user
                     continue;
                 if (!charge_tracker.is_user_tracked(id)) {
@@ -389,16 +395,10 @@ void FirmwareUpdate::register_urls()
             }
 #endif
 
-            remove_directory("/config");
+            API::removeAllConfig();
             ESP.restart();
         }, 3000);
 
         return "";
     }, true);
-}
-
-void FirmwareUpdate::loop()
-{
-    if (factory_reset_requested)
-        factory_reset();
 }

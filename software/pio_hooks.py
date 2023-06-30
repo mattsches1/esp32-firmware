@@ -3,7 +3,7 @@ Import("env")
 import sys
 
 if sys.hexversion < 0x3060000:
-    print('Python >= 3.6 required')
+    print('Error: Python >= 3.6 required')
     sys.exit(1)
 
 from collections import namedtuple
@@ -20,6 +20,8 @@ import gzip
 from base64 import b64encode
 from zlib import crc32
 import util
+
+from hyphenations import hyphenations, allowed_missing
 
 NameFlavors = namedtuple('NameFlavors', 'space lower camel headless under upper dash camel_abbrv lower_no_space camel_constant_safe')
 
@@ -95,9 +97,10 @@ class ChangedDirectory(object):
 
 
 def get_changelog_version(name):
+    path = os.path.join('changelog_{}.txt'.format(name))
     versions = []
 
-    with open(os.path.join('changelog_{}.txt'.format(name)), 'r', encoding='utf-8') as f:
+    with open(path, 'r', encoding='utf-8') as f:
         for i, line in enumerate(f.readlines()):
             line = line.rstrip()
 
@@ -110,33 +113,33 @@ def get_changelog_version(name):
             m = re.match(r'^(?:<unknown>|20[0-9]{2}-[0-9]{2}-[0-9]{2}): ([0-9]+)\.([0-9]+)\.([0-9]+) \((?:<unknown>|[a-f0-9]+)\)$', line)
 
             if m == None:
-                raise Exception('invalid line {} in changelog: {}'.format(i + 1, line))
+                raise Exception('Invalid line {} in {}: {}'.format(i + 1, path, line))
 
             version = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
 
             if version[0] not in [0, 1, 2]:
-                raise Exception('invalid major version in changelog: {}'.format(version))
+                raise Exception('Invalid major version in {}: {}'.format(path, version))
 
-            if version[2] < 90 and len(versions) > 0:
+            if len(versions) > 0 and (version[2] < 90 and versions[-1][2] < 90) or  (version[2] >= 90 and versions[-1][2] >= 90):
                 if versions[-1] >= version:
-                    raise Exception('invalid version order in changelog: {} -> {}'.format(versions[-1], version))
+                    raise Exception('Invalid version order in {}: {} -> {}'.format(path, versions[-1], version))
 
                 if versions[-1][0] == version[0] and versions[-1][1] == version[1] and versions[-1][2] + 1 != version[2]:
-                    raise Exception('invalid version jump in changelog: {} -> {}'.format(versions[-1], version))
+                    raise Exception('Invalid version jump in {}: {} -> {}'.format(path, versions[-1], version))
 
                 if versions[-1][0] == version[0] and versions[-1][1] != version[1] and versions[-1][1] + 1 != version[1]:
-                    raise Exception('invalid version jump in changelog: {} -> {}'.format(versions[-1], version))
+                    raise Exception('Invalid version jump in {}: {} -> {}'.format(path, versions[-1], version))
 
                 if versions[-1][1] != version[1] and version[2] != 0:
-                    raise Exception('invalid version jump in changelog: {} -> {}'.format(versions[-1], version))
+                    raise Exception('Invalid version jump in {}: {} -> {}'.format(path, versions[-1], version))
 
                 if versions[-1][0] != version[0] and (version[1] != 0 or version[2] != 0):
-                    raise Exception('invalid version jump in changelog: {} -> {}'.format(versions[-1], version))
+                    raise Exception('Invalid version jump in {}: {} -> {}'.format(path, versions[-1], version))
 
             versions.append(version)
 
     if len(versions) == 0:
-        raise Exception('no version found in changelog')
+        raise Exception('No version found in {}'.format(path))
 
     oldest_version = (str(versions[0][0]), str(versions[0][1]), str(versions[0][2]))
     version = (str(versions[-1][0]), str(versions[-1][1]), str(versions[-1][2]))
@@ -218,31 +221,179 @@ def check_translation(translation, parent_key=None):
         if isinstance(value, dict):
             check_translation(value, parent_key=parent_key + [key])
 
+HYPHENATE_THRESHOLD = 9
+
+missing_hyphenations = []
+
+def hyphenate(s):
+    # Replace longest words first. This prevents replacing parts of longer words.
+    for word in sorted(re.split('\W+', s.replace("&shy;", "")), key=lambda x: len(x), reverse=True):
+        for l, r in hyphenations:
+            if word == l:
+                s = s.replace(l, r)
+                break
+        else:
+            if len(word) > HYPHENATE_THRESHOLD:
+                missing_hyphenations.append(word)
+
+    return s
+
+def hyphenate_translation(translation, parent_key=None):
+    if parent_key == None:
+        parent_key = []
+
+    return {key: (hyphenate(value) if isinstance(value, str) else hyphenate_translation(value, parent_key=parent_key + [key])) for key, value in translation.items()}
+
+def repair_rtc_dir():
+    path = os.path.abspath("src/modules/rtc")
+    try:
+        os.remove(path + "/real_time_clock_v2_bricklet_firmware_bin.digest")
+        os.remove(path + "/real_time_clock_v2_bricklet_firmware_bin.embedded.cpp")
+        os.remove(path + "/real_time_clock_v2_bricklet_firmware_bin.embedded.h")
+    except:
+        pass
+
+def find_branding_module(frontend_modules):
+    branding_module = None
+
+    for frontend_module in frontend_modules:
+        mod_path = os.path.join('web', 'src', 'modules', frontend_module.under)
+
+        potential_branding_path = os.path.join(mod_path, 'branding.ts')
+
+        if os.path.exists(potential_branding_path):
+            if branding_module != None:
+                print('Error: Branding module collision ' + mod_path + ' vs ' + branding_module)
+                sys.exit(1)
+
+            branding_module = mod_path
+
+    if branding_module is None:
+        print('Error: No branding module selected')
+        sys.exit(1)
+
+    req_for_branding = ['branding.ts', 'logo.png', 'favicon.png']
+
+    for f in req_for_branding:
+        if not os.path.exists(os.path.join(branding_module, f)):
+            print('Error: Branding module does not contain {}'.format(f))
+            sys.exit(1)
+
+    return branding_module
+
 def main():
+    if env.IsCleanTarget():
+        return
+
+    repair_rtc_dir()
+    subprocess.check_call([env.subst('$PYTHONEXE'), "-u", "update_packages.py"])
+
     # Add build flags
     timestamp = int(time.time())
-    name = env.GetProjectOption("name")
-    host_prefix = env.GetProjectOption("host_prefix")
-    display_name = env.GetProjectOption("display_name")
-    manual_url = env.GetProjectOption("manual_url")
-    apidoc_url = env.GetProjectOption("apidoc_url")
-    firmware_url = env.GetProjectOption("firmware_url")
-    require_firmware_info = env.GetProjectOption("require_firmware_info")
-    src_filter = env.GetProjectOption("src_filter")
-    oldest_version, version = get_changelog_version(name)
+    name = env.GetProjectOption("custom_name")
+    config_type = env.GetProjectOption("custom_config_type")
+    host_prefix = env.GetProjectOption("custom_host_prefix")
+    display_name = env.GetProjectOption("custom_display_name")
+    manual_url = env.GetProjectOption("custom_manual_url")
+    apidoc_url = env.GetProjectOption("custom_apidoc_url")
+    firmware_url = env.GetProjectOption("custom_firmware_url")
+    require_firmware_info = env.GetProjectOption("custom_require_firmware_info")
+    build_flags = env.GetProjectOption("build_flags")
+    frontend_debug = env.GetProjectOption("custom_frontend_debug") == "true"
+    web_only = env.GetProjectOption("custom_web_only") == "true"
+    monitor_speed = env.GetProjectOption("monitor_speed")
+    nightly = "-DNIGHTLY" in build_flags
 
-    if src_filter[0] == '+<empty.c>':
-        src_filter = None
-    else:
-        src_filter = ['+<*>', '-<empty.c>']
+    is_release = len(subprocess.run(["git", "tag", "--contains", "HEAD"], check=True, capture_output=True).stdout) > 0
+    is_dirty = len(subprocess.run(["git", "diff"], check=True, capture_output=True).stdout) > 0
+    dirty_suffix = ""
+    git_url = subprocess.run(["git", "config", "--get", "remote.origin.url"], check=True, capture_output=True).stdout.decode("utf-8").strip()
+    git_commit_id = subprocess.run(["git", "rev-parse", "--short=15", "HEAD"], check=True, capture_output=True).stdout.decode("utf-8").strip()
+    branch_name = subprocess.run(["git", "branch", "--show-current"], check=True, capture_output=True).stdout.decode("utf-8").strip()
+
+    if is_dirty or not is_release:
+        if branch_name == "master":
+            dirty_suffix = '_' + git_commit_id
+        else:
+            dirty_suffix = '_' + git_commit_id + "_" + branch_name.replace("_", "-")
+
+    try:
+        oldest_version, version = get_changelog_version(name)
+    except Exception as e:
+        print('Error: Could not get changelog version: {0}'.format(e))
+        sys.exit(1)
+
+    build_src_filter = ['+<*>']
 
     if not os.path.isdir("build"):
         os.makedirs("build")
+
+    # Open <project_name>_wifi.json (example: esp32_ethernet_wifi.json) for custom default WIFI configuration.
+    # If default_wifi.json is available it is used for all projects instead of <project_name>_wifi.json.
+    # If no *_wifi.json is available the default as defined in Wifi::setup in the wifi.c is used.
+    not_for_distribution = False
+    is_from_default_wifi_json = False
+    try:
+        with open(os.path.join('default_wifi.json'), 'r', encoding='utf-8') as f:
+            custom_wifi = json.loads(f.read())
+            is_from_default_wifi_json = True
+    except FileNotFoundError:
+        try:
+            with open(os.path.join(name + '_wifi.json'), 'r', encoding='utf-8') as f:
+                custom_wifi = json.loads(f.read())
+        except FileNotFoundError:
+            custom_wifi = {}
+
+    if 'mqtt_enable' in custom_wifi:
+        build_flags.append('-DDEFAULT_MQTT_ENABLE={0}'.format(custom_wifi['mqtt_enable']))
+    if 'mqtt_broker_host' in custom_wifi:
+        build_flags.append('-DDEFAULT_MQTT_BROKER_HOST=\\"{0}\\"'.format(custom_wifi['mqtt_broker_host']))
+    if 'mqtt_broker_port' in custom_wifi:
+        build_flags.append('-DDEFAULT_MQTT_BROKER_PORT={0}'.format(custom_wifi['mqtt_broker_port']))
+    if 'mqtt_broker_username' in custom_wifi:
+        build_flags.append('-DDEFAULT_MQTT_BROKER_USERNAME=\\"{0}\\"'.format(custom_wifi['mqtt_broker_username']))
+    if 'mqtt_broker_password' in custom_wifi:
+        build_flags.append('-DDEFAULT_MQTT_BROKER_PASSWORD=\\"{0}\\"'.format(custom_wifi['mqtt_broker_password']))
+
+    if 'ap_enable' in custom_wifi:
+        build_flags.append('-DDEFAULT_WIFI_AP_ENABLE={0}'.format(custom_wifi['ap_enable']))
+
+    if 'ap_fallback_only' in custom_wifi:
+        build_flags.append('-DDEFAULT_WIFI_AP_FALLBACK_ONLY={0}'.format(custom_wifi['ap_fallback_only']))
+
+    if 'ap_ssid' in custom_wifi:
+        build_flags.append('-DDEFAULT_WIFI_AP_SSID="\\"{0}\\""'.format(custom_wifi['ap_ssid']))
+
+    if 'ap_passphrase' in custom_wifi:
+        # If password comes from the default_wifi.json it is not for distribution and the file is renamed accordingly
+        not_for_distribution = is_from_default_wifi_json
+        build_flags.append('-DDEFAULT_WIFI_AP_PASSPHRASE="\\"{0}\\""'.format(custom_wifi['ap_passphrase']))
+
+    if 'sta_enable' in custom_wifi:
+        build_flags.append('-DDEFAULT_WIFI_STA_ENABLE={0}'.format(custom_wifi['sta_enable']))
+
+    if 'sta_ssid' in custom_wifi:
+        build_flags.append('-DDEFAULT_WIFI_STA_SSID="\\"{0}\\""'.format(custom_wifi['sta_ssid']))
+
+    if 'sta_passphrase' in custom_wifi:
+        # If password comes from the default_wifi.json it is not for distribution and the file is renamed accordingly
+        not_for_distribution = is_from_default_wifi_json
+        build_flags.append('-DDEFAULT_WIFI_STA_PASSPHRASE="\\"{0}\\""'.format(custom_wifi['sta_passphrase']))
+
+    if 'debug_fs_enable' in custom_wifi:
+        # Force not for distribution if file system access is enabled.
+        # This is too dangerous to distribute, as one can access for example stored wifi passphrases
+        # via /debug/fs/config/wifi_sta_config
+        not_for_distribution = True
+        build_flags.append('-DDEBUG_FS_ENABLE="\\"{0}\\""'.format(custom_wifi['debug_fs_enable']))
+
+    env.Replace(BUILD_FLAGS=build_flags)
 
     write_firmware_info(display_name, *version, timestamp)
 
     with open(os.path.join('src', 'build.h'), 'w', encoding='utf-8') as f:
         f.write('#pragma once\n')
+        f.write('#include <stdint.h>\n')
         f.write('#define OLDEST_VERSION_MAJOR {}\n'.format(oldest_version[0]))
         f.write('#define OLDEST_VERSION_MINOR {}\n'.format(oldest_version[1]))
         f.write('#define OLDEST_VERSION_PATCH {}\n'.format(oldest_version[2]))
@@ -252,21 +403,48 @@ def main():
         f.write('#define BUILD_VERSION_STRING "{}.{}.{}"\n'.format(*version))
         f.write('#define BUILD_HOST_PREFIX "{}"\n'.format(host_prefix))
         f.write('#define BUILD_NAME_{}\n'.format(name.upper()))
+        f.write('#define BUILD_CONFIG_TYPE "{}"\n'.format(config_type))
         f.write('#define BUILD_DISPLAY_NAME "{}"\n'.format(display_name))
+        f.write('#define BUILD_DISPLAY_NAME_UPPER "{}"\n'.format(display_name.upper()))
         f.write('#define BUILD_REQUIRE_FIRMWARE_INFO {}\n'.format(require_firmware_info))
+        f.write('#define BUILD_MONITOR_SPEED {}\n'.format(monitor_speed))
+        f.write('uint32_t build_timestamp(void);\n')
+        f.write('const char *build_timestamp_hex_str(void);\n')
+        f.write('const char *build_version_full_str(void);\n')
+        f.write('const char *build_info_str(void);\n')
+        f.write('const char *build_filename_str(void);')
+        f.write('const char *build_commit_id_str(void);')
 
-    with open(os.path.join('src', 'build_timestamp.h'), 'w', encoding='utf-8') as f:
-        f.write('#pragma once\n')
-        f.write('#define BUILD_TIMESTAMP {}\n'.format(timestamp))
-        f.write('#define BUILD_TIMESTAMP_HEX_STR "{:x}"\n'.format(timestamp))
-        f.write('#define BUILD_VERSION_FULL_STR "{}.{}.{}-{:x}"\n'.format(*version, timestamp))
+    firmware_basename = '{}_firmware{}{}_{}_{:x}{}'.format(
+        name,
+        "-NIGHTLY" if nightly else "",
+        "-WITH-WIFI-PASSPHRASE-DO-NOT-DISTRIBUTE" if not_for_distribution else "",
+        '_'.join(version),
+        timestamp,
+        dirty_suffix,
+    )
+    with open(os.path.join('src', 'build.cpp'), 'w', encoding='utf-8') as f:
+        f.write('#include "build.h"\n')
+        f.write('uint32_t build_timestamp(void) {{ return {}; }}\n'.format(timestamp))
+        f.write('const char *build_timestamp_hex_str(void) {{ return "{:x}"; }}\n'.format(timestamp))
+        f.write('const char *build_version_full_str(void) {{ return "{}.{}.{}-{:x}"; }}\n'.format(*version, timestamp))
+        f.write('const char *build_info_str(void) {{ return "git url: {}, git branch: {}, git commit id: {}"; }}\n'.format(git_url, branch_name, git_commit_id))
+        f.write('const char *build_filename_str(void){{return "{}"; }}\n'.format(firmware_basename))
+        f.write('const char *build_commit_id_str(void){{return "{}"; }}\n'.format(git_commit_id))
+
 
     with open(os.path.join(env.subst('$BUILD_DIR'), 'firmware_basename'), 'w', encoding='utf-8') as f:
-        f.write('{}_firmware_{}_{:x}'.format(name, '_'.join(version), timestamp))
+        f.write(firmware_basename)
+
+    frontend_modules = [FlavoredName(x).get() for x in env.GetProjectOption("custom_frontend_modules").splitlines()]
+    if nightly:
+        frontend_modules.append(FlavoredName("Nightly").get())
+
+    branding_module = find_branding_module(frontend_modules)
 
     # Handle backend modules
     excluded_backend_modules = list(os.listdir('src/modules'))
-    backend_modules = [FlavoredName(x).get() for x in env.GetProjectOption("backend_modules").splitlines()]
+    backend_modules = [FlavoredName(x).get() for x in env.GetProjectOption("custom_backend_modules").splitlines()]
     for backend_module in backend_modules:
         mod_path = os.path.join('src', 'modules', backend_module.under)
 
@@ -282,30 +460,35 @@ def main():
             environ['PLATFORMIO_PROJECT_DIR'] = env.subst('$PROJECT_DIR')
             environ['PLATFORMIO_BUILD_DIR'] = env.subst('$BUILD_DIR')
 
+            abs_branding_module = os.path.abspath(branding_module)
             with ChangedDirectory(mod_path):
-                subprocess.check_call([env.subst('$PYTHONEXE'), "-u", "prepare.py"], env=environ)
+                subprocess.check_call([env.subst('$PYTHONEXE'), "-u", "prepare.py", abs_branding_module], env=environ)
 
-    if src_filter != None:
+    if build_src_filter != None:
         for excluded_backend_module in excluded_backend_modules:
-            src_filter.append('-<modules/{0}/*>'.format(excluded_backend_module))
+            build_src_filter.append('-<modules/{0}/*>'.format(excluded_backend_module))
 
-        env.Replace(SRC_FILTER=[' '.join(src_filter)])
+        env.Replace(SRC_FILTER=[' '.join(build_src_filter)])
 
-    specialize_template("main.cpp.template", os.path.join("src", "main.cpp"), {
-        '{{{module_includes}}}': '\n'.join(['#include "modules/{0}/{0}.h"'.format(x.under) for x in backend_modules]),
-        '{{{module_decls}}}': '\n'.join(['{} {};'.format(x.camel, x.under) for x in backend_modules]),
-        '{{{module_setup}}}': '\n    '.join(['{}.setup();'.format(x.under) for x in backend_modules]),
-        '{{{module_register_urls}}}': '\n    '.join(['{}.register_urls();'.format(x.under) for x in backend_modules]),
-        '{{{module_loop}}}': '\n    '.join(['{}.loop();'.format(x.under) for x in backend_modules]),
-        '{{{display_name}}}': display_name,
-        '{{{display_name_upper}}}': display_name.upper(),
-        '{{{module_init_config}}}': ',\n        '.join('{{"{0}", Config::Bool({0}.initialized)}}'.format(x.under) for x in backend_modules if not x.under.startswith("hidden_"))
-    })
+    all_mods = []
+    for existing_backend_module in os.listdir(os.path.join('src', 'modules')):
+        if not os.path.isdir(os.path.join('src', 'modules', existing_backend_module)):
+            continue
+
+        all_mods.append(existing_backend_module.upper())
+
+    backend_mods_upper = [x.upper for x in backend_modules]
 
     specialize_template("modules.h.template", os.path.join("src", "modules.h"), {
         '{{{module_includes}}}': '\n'.join(['#include "modules/{0}/{0}.h"'.format(x.under) for x in backend_modules]),
-        '{{{module_defines}}}': '\n'.join(['#define MODULE_{}_AVAILABLE'.format(x.upper) for x in backend_modules]),
+        '{{{module_defines}}}': '\n'.join(['#define MODULE_{}_AVAILABLE() {}'.format(x, "1" if x in backend_mods_upper else "0") for x in all_mods]),
         '{{{module_extern_decls}}}': '\n'.join(['extern {} {};'.format(x.camel, x.under) for x in backend_modules]),
+    })
+
+    specialize_template("modules.cpp.template", os.path.join("src", "modules.cpp"), {
+        '{{{module_decls}}}': '\n'.join(['{} {};'.format(x.camel, x.under) for x in backend_modules]),
+        '{{{imodule_vector}}}': '\n    '.join(['imodules->push_back(&{});'.format(x.under) for x in backend_modules]),
+        '{{{module_init_config}}}': ',\n        '.join('{{"{0}", Config::Bool({0}.initialized)}}'.format(x.under) for x in backend_modules if not x.under.startswith("hidden_")),
     })
 
     # Handle frontend modules
@@ -315,7 +498,6 @@ def main():
     main_ts_entries = []
     pre_scss_paths = []
     post_scss_paths = []
-    frontend_modules = [FlavoredName(x).get() for x in env.GetProjectOption("frontend_modules").splitlines()]
     translation = collect_translation('web')
 
     # API
@@ -327,49 +509,37 @@ def main():
     exported_type_pattern = re.compile("export type ([A-Za-z0-9$_]+)")
     api_path_pattern = re.compile("//APIPath:([^\n]*)\n")
 
-    favicon_path = None
-    logo_module = None
-
     for frontend_module in frontend_modules:
         mod_path = os.path.join('web', 'src', 'modules', frontend_module.under)
 
-        if not os.path.exists(mod_path) or not os.path.isdir(mod_path):
-            print("Frontend module {} not found.".format(frontend_module.space, mod_path))
-            sys.exit(1)
+        if os.path.exists(os.path.join(mod_path, "prepare.py")):
+            print('Preparing frontend module:', frontend_module.space)
 
-        if os.path.exists(os.path.join(mod_path, 'logo.png')):
-            if logo_module != None:
-                print('Logo module collision ' + frontend_module.under + ' vs ' + logo_module)
-                sys.exit(1)
+            environ = dict(os.environ)
+            environ['PLATFORMIO_PROJECT_DIR'] = env.subst('$PROJECT_DIR')
+            environ['PLATFORMIO_BUILD_DIR'] = env.subst('$BUILD_DIR')
 
-            logo_module = frontend_module.under
-
-        potential_favicon_path = os.path.join(mod_path, 'favicon.png')
-
-        if os.path.exists(potential_favicon_path):
-            if favicon_path != None:
-                print('Favicon path collision ' + potential_favicon_path + ' vs ' + favicon_path)
-                sys.exit(1)
-
-            favicon_path = potential_favicon_path
+            abs_branding_module = os.path.abspath(branding_module)
+            with ChangedDirectory(mod_path):
+                subprocess.check_call([env.subst('$PYTHONEXE'), "-u", "prepare.py", abs_branding_module], env=environ)
 
         if os.path.exists(os.path.join(mod_path, 'navbar.html')):
-            with open(os.path.join(mod_path, 'navbar.html'), encoding='utf-8') as f:
+            with open(os.path.join(mod_path, 'navbar.html'), 'r', encoding='utf-8') as f:
                 navbar_entries.append(f.read())
 
         if os.path.exists(os.path.join(mod_path, 'content.html')):
-            with open(os.path.join(mod_path, 'content.html'), encoding='utf-8') as f:
+            with open(os.path.join(mod_path, 'content.html'), 'r', encoding='utf-8') as f:
                 content_entries.append(f.read())
 
         if os.path.exists(os.path.join(mod_path, 'status.html')):
-            with open(os.path.join(mod_path, 'status.html'), encoding='utf-8') as f:
+            with open(os.path.join(mod_path, 'status.html'), 'r', encoding='utf-8') as f:
                 status_entries.append(f.read())
 
-        if os.path.exists(os.path.join(mod_path, 'main.ts')):
+        if os.path.exists(os.path.join(mod_path, 'main.ts')) or os.path.exists(os.path.join(mod_path, 'main.tsx')):
             main_ts_entries.append(frontend_module.under)
 
         if os.path.exists(os.path.join(mod_path, 'api.ts')):
-            with open(os.path.join(mod_path, 'api.ts'), encoding='utf-8') as f:
+            with open(os.path.join(mod_path, 'api.ts'), 'r', encoding='utf-8') as f:
                 content = f.read()
 
             api_path = frontend_module.under + "/"
@@ -386,7 +556,8 @@ def main():
                 api_imports.append("import * as {} from '../modules/{}/api';".format(api_module, frontend_module.under))
 
                 api_config_map_entries += ["'{}{}': {}.{},".format(api_path, x, api_module, x) for x in api_exports]
-                api_cache_entries += ["'{}{}': null,".format(api_path, x) for x in api_exports]
+                api_cache_entries += ["'{}{}': null as any,".format(api_path, x) for x in api_exports]
+                api_cache_entries += ["'{}{}_modified': null as any,".format(api_path, x) for x in api_exports]
 
         for phase, scss_paths in [('pre', pre_scss_paths), ('post', post_scss_paths)]:
             scss_path = os.path.join(mod_path, phase + '.scss')
@@ -398,50 +569,58 @@ def main():
         update_translation(translation, collect_translation(mod_path, override=True), override=True)
 
     check_translation(translation)
+    translation = hyphenate_translation(translation)
+
+    global missing_hyphenations
+    missing_hyphenations = sorted(set(missing_hyphenations) - allowed_missing)
+    if len(missing_hyphenations) > 0:
+        print("Missing hyphenations detected. Add those to hyphenations.py!")
+        for x in missing_hyphenations:
+            print("    {}".format(x))
 
     for path in glob.glob(os.path.join('web', 'src', 'ts', 'translation_*.ts')):
         os.remove(path)
 
     if len(translation) == 0:
-        print('Translation missing')
+        print('Error: Translation missing')
         sys.exit(1)
 
-    for language in sorted(translation):
-        with open(os.path.join('web', 'src', 'ts', 'translation_{0}.ts'.format(language)), 'w', encoding='utf-8') as f:
-            data = json.dumps(translation[language], indent=4, ensure_ascii=False)
-            data = data.replace('{{{empty_text}}}', '\u200b') # Zero Width Space to work around a bug in the translation library: empty strings are replaced with "null"
-            data = data.replace('{{{display_name}}}', display_name)
-            data = data.replace('{{{manual_url}}}', manual_url)
-            data = data.replace('{{{apidoc_url}}}', apidoc_url)
-            data = data.replace('{{{firmware_url}}}', firmware_url)
+    with open(os.path.join('web', 'src', 'ts', 'translation.json'), 'w', encoding='utf-8') as f:
+        data = json.dumps(translation, indent=4, ensure_ascii=False)
+        data = data.replace('{{{display_name}}}', display_name)
+        data = data.replace('{{{manual_url}}}', manual_url)
+        data = data.replace('{{{apidoc_url}}}', apidoc_url)
+        data = data.replace('{{{firmware_url}}}', firmware_url)
 
-            f.write('export const translation_{0}: {{[index: string]:any}} = '.format(language))
-            f.write(data + ';\n')
+        f.write(data)
 
-    if favicon_path == None:
-        print('Favison missing')
-        sys.exit(1)
-
-    if logo_module == None:
-        print('Logo missing')
-        sys.exit(1)
-
-    with open(favicon_path, 'rb') as f:
+    with open(os.path.join(branding_module, 'favicon.png'), 'rb') as f:
         favicon = b64encode(f.read()).decode('ascii')
+
+    with open(os.path.join(branding_module, 'logo.png'), 'rb') as f:
+        logo_base64 = b64encode(f.read()).decode('ascii')
+
+    with open(os.path.join(branding_module, 'branding.ts'), 'r', encoding='utf-8') as f:
+        branding = f.read()
+
+    with open(os.path.join(branding_module, 'pre.scss'), 'r', encoding='utf-8') as f:
+        color = f.read().split('\n')[1].split(' ')[1]
+        if color.endswith(';'):
+            color = color[:-1]
 
     specialize_template(os.path.join("web", "index.html.template"), os.path.join("web", "src", "index.html"), {
         '{{{favicon}}}': favicon,
-        '{{{logo_module}}}': logo_module,
+        '{{{logo_base64}}}': logo_base64,
         '{{{navbar}}}': '\n                        '.join(navbar_entries),
         '{{{content}}}': '\n                    '.join(content_entries),
-        '{{{status}}}': '\n                            '.join(status_entries)
+        '{{{status}}}': '\n                            '.join(status_entries),
+        '{{{theme_color}}}': color
     })
 
     specialize_template(os.path.join("web", "main.ts.template"), os.path.join("web", "src", "main.ts"), {
         '{{{module_imports}}}': '\n'.join(['import * as {0} from "./modules/{0}/main";'.format(x) for x in main_ts_entries]),
         '{{{modules}}}': ', '.join([x for x in main_ts_entries]),
-        '{{{translation_imports}}}': '\n'.join(['import {{translation_{0}}} from "./ts/translation_{0}";'.format(x) for x in sorted(translation)]),
-        '{{{translation_adds}}}': '\n'.join(["    translator.add('{0}', translation_{0});".format(x) for x in sorted(translation)])
+        '{{{preact_debug}}}': 'import "preact/debug";' if frontend_debug else ''
     })
 
     specialize_template(os.path.join("web", "main.scss.template"), os.path.join("web", "src", "main.scss"), {
@@ -456,6 +635,59 @@ def main():
         '{{{api_cache_entries}}}': '\n    '.join(api_cache_entries),
     })
 
+    specialize_template(os.path.join("web", "branding.ts.template"), os.path.join("web", "src", "ts", "branding.ts"), {
+        '{{{logo_base64}}}': logo_base64,
+        '{{{branding}}}': branding,
+    })
+
+    translation_str = ''
+
+    def format_translation(translation, type_only, indent):
+        output = ['{\n']
+
+        assert isinstance(translation, (dict, str)), type(translation)
+
+        for key, value in sorted(translation.items()):
+            output += [indent + '    ', key, ': ']
+
+            if isinstance(value, dict):
+                output += format_translation(value, type_only, indent + '    ')
+            elif type_only:
+                output += ['string,\n']
+            else:
+                string = '"{0}"'.format(value.replace('"', '\\"'))
+
+                if '{{{' in string:
+                    string = string.replace('{{{display_name}}}', display_name)
+                    string = string.replace('{{{manual_url}}}', manual_url)
+                    string = string.replace('{{{apidoc_url}}}', apidoc_url)
+                    string = string.replace('{{{firmware_url}}}', firmware_url)
+
+                output += [string, ',\n']
+
+        output += [indent, '}']
+
+        if len(indent) > 0:
+            output += [',\n']
+
+        return output
+
+    translation_str += 'type Translation = ' + ''.join(format_translation(translation['en'], True, '')) + '\n\n'
+
+    for language in sorted(translation):
+        translation_str += 'const translation_{0}: Translation = {1} as const\n\n'.format(language, ''.join(format_translation(translation[language], False, '')))
+
+    translation_str += 'const translation: {[index: string]: Translation} = {\n'
+
+    for language in sorted(translation):
+        translation_str += '    "{0}": translation_{0},\n'.format(language)
+
+    translation_str += '} as const\n'
+
+    specialize_template(os.path.join("web", "translation.tsx.template"), os.path.join("web", "src", "ts", "translation.tsx"), {
+        '{{{translation}}}': translation_str,
+    })
+
     # Check translation completeness
     print('Checking translation completeness')
 
@@ -466,7 +698,7 @@ def main():
     print('Checking translation override completeness')
 
     with ChangedDirectory('web'):
-        subprocess.check_call([env.subst('$PYTHONEXE'), "-u", "check_override_completeness.py"] + [x.under for x in frontend_modules])
+        subprocess.check_call([env.subst('$PYTHONEXE'), "-u", "check_override_completeness.py"])
 
     # Generate web interface
     print('Checking web interface dependencies')
@@ -489,12 +721,38 @@ def main():
 
         util.remove_digest('web', 'node_modules', env=env)
 
-        try:
-            shutil.rmtree('web/node_modules')
-        except FileNotFoundError:
-            pass
+        rmtree_tries = 10
+
+        while rmtree_tries > 0:
+            try:
+                shutil.rmtree('web/node_modules')
+                break
+            except FileNotFoundError:
+                break
+            except:
+                # on windows for some unknown reason sometimes a directory stays
+                # or becomes non-empty during the shutil.rmtree call and and
+                # cannot be removed anymore. if that happens jus try again
+                time.sleep(0.5)
+
+                rmtree_tries -= 1
+
+                if rmtree_tries == 0:
+                    raise
 
         with ChangedDirectory('web'):
+            npm_version = subprocess.check_output(['npm', '--version'], shell=sys.platform == 'win32', encoding='utf-8').strip()
+
+            m = re.fullmatch(r'(\d+)\.\d+\.\d+', npm_version)
+
+            if m == None:
+                print('Error: npm version has unexpected format: {0}'.format(npm_version))
+                sys.exit(1)
+
+            if int(m.group(1)) < 8:
+                print('Error: npm >= 8 required, found npm {0}'.format(npm_version))
+                sys.exit(1)
+
             subprocess.check_call(['npm', 'ci'], shell=sys.platform == 'win32')
 
         with open('web/node_modules/tinkerforge.marker', 'wb') as f:
@@ -543,21 +801,33 @@ def main():
             pass
 
         with ChangedDirectory('web'):
-            subprocess.check_call(['npx', 'gulp'], shell=sys.platform == 'win32')
+            subprocess.check_call([env.subst('$PYTHONEXE'), "-u", "build.py"] + ([] if not frontend_debug else ['--js-source-map', '--css-source-map']))
 
-        with open('web/build/main.css', 'r', encoding='utf-8') as f:
+        with open('web/build/main.min.css', 'r', encoding='utf-8') as f:
             css = f.read()
 
-        with open('web/build/bundle.js', 'r', encoding='utf-8') as f:
+        with open('web/build/bundle.min.js', 'r', encoding='utf-8') as f:
             js = f.read()
 
-        with open('web/build/index.html', 'r', encoding='utf-8') as f:
+        with open('web/build/index.min.html', 'r', encoding='utf-8') as f:
             html = f.read()
 
         html = html.replace('<link href=css/main.css rel=stylesheet>', '<style rel=stylesheet>{0}</style>'.format(css))
         html = html.replace('<script src=js/bundle.js></script>', '<script>{0}</script>'.format(js))
+        html_bytes = html.encode('utf-8')
 
-        util.embed_data(gzip.compress(html.encode('utf-8')), 'src', 'index_html', 'char')
+        with open('web/build/index.standalone.html', 'wb') as f:
+            f.write(html_bytes)
+
+        util.embed_data(gzip.compress(html_bytes), 'src', 'index_html', 'char')
         util.store_digest(index_html_digest, 'src', 'index_html', env=env)
+
+    print("Checking HTML ID usage")
+    with ChangedDirectory('web'):
+        subprocess.check_call([env.subst('$PYTHONEXE'), "-u", "check_id_usage.py"] + [x.under for x in frontend_modules])
+
+    if web_only:
+        print('Stopping build after web')
+        sys.exit(0)
 
 main()

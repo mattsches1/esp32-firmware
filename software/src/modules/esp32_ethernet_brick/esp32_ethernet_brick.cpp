@@ -21,8 +21,12 @@
 
 #include <Arduino.h>
 
+#include "build.h"
 #include "tools.h"
 #include "hal_arduino_esp32_ethernet_brick/hal_arduino_esp32_ethernet_brick.h"
+#include "event_log.h"
+#include "modules.h"
+#include "task_scheduler.h"
 
 #if TF_LOCAL_ENABLE != 0
 
@@ -39,9 +43,8 @@
 #define BUTTON 0
 
 TF_HAL hal;
-extern EventLog logger;
 extern uint32_t local_uid_num;
-extern char local_uid_str[7];
+extern char local_uid_str[32];
 extern char passphrase[20];
 extern int8_t blue_led_pin;
 extern int8_t green_led_pin;
@@ -53,14 +56,87 @@ static TF_Local local;
 
 #endif
 
-ESP32EthernetBrick::ESP32EthernetBrick()
-{
+#if MODULE_DEBUG_AVAILABLE()
+#define RESET_WAIT_SECS 2
+#else
+#define RESET_WAIT_SECS 8
+#endif
+
+#if defined(BUILD_NAME_ENERGY_MANAGER)
+static void check_for_factory_reset() {
+    // A factory reset will leave the green LED on, even across a restart. Switch it off here.
+    digitalWrite(green_led_pin, false);
+
+    // Check if ethernet clock seems to be enabled.
+    // If it's on, a low pin level can be seen, usually already on the first or second poll.
+    bool seen_ethernet_clock = false;
+    for (uint32_t i = 0; i < 256; i++) {
+        if (!digitalRead(BUTTON)) {
+            seen_ethernet_clock = true;
+            break;
+        }
+        // Perturb sampling every 32 cycles for an increasing amount of clock cycles
+        // to avoid perfectly syncing up to the ethernet clock by accident.
+        if (i % 32 == 31) {
+            for (uint32_t j = 0; j < (i/32); j++) {
+                __asm("nop.n");
+            }
+        }
+    }
+
+    bool blue_led_off = false;
+    if (!seen_ethernet_clock) {
+        // Flash LED for 8 seconds while waiting for button press.
+        bool button_pressed = false;
+        for (uint32_t i = 0; i < (RESET_WAIT_SECS*10); i++) {
+            digitalWrite(blue_led_pin, i % 4 == 0 ? false : true);
+            delay(100); // 8 * 10 * 100ms = 8s
+            if (!digitalRead(BUTTON)) {
+                button_pressed = true;
+                break;
+            }
+        }
+        // Blink LED quickly while the button has to stay pressed for almost 8 seconds.
+        if (button_pressed) {
+            for (uint32_t i = 0; i < 100; i++) {
+                digitalWrite(blue_led_pin, i % 2);
+                delay(75); // 100 * 75ms = 7.5s
+                if (digitalRead(BUTTON)) {
+                    button_pressed = false;
+                    break;
+                }
+            }
+            // If the button is still pressed, perform factory reset.
+            if (button_pressed) {
+                // Perform factory reset, switch on blue LED to show success.
+                digitalWrite(blue_led_pin, false);
+                factory_reset();
+            } else {
+                // Factory reset aborted, switch off blue LED.
+                blue_led_off = true;
+            }
+        }
+    }
+    digitalWrite(blue_led_pin, blue_led_off);
 }
+#endif
 
 void ESP32EthernetBrick::setup()
 {
     read_efuses(&local_uid_num, local_uid_str, passphrase);
     logger.printfln("ESP32 Ethernet Brick UID: %s", local_uid_str);
+
+    pinMode(GREEN_LED, OUTPUT);
+    pinMode(BLUE_LED, OUTPUT);
+    pinMode(BUTTON, INPUT);
+
+    green_led_pin = GREEN_LED;
+    blue_led_pin = BLUE_LED;
+    button_pin = BUTTON;
+
+#if defined(BUILD_NAME_ENERGY_MANAGER)
+    check_for_factory_reset();
+#endif
 
     check(tf_hal_create(&hal), "hal create");
     tf_hal_set_timeout(&hal, 100000);
@@ -74,40 +150,13 @@ void ESP32EthernetBrick::setup()
     tf_hal_set_local(&hal, &local);
 #endif
 
-    pinMode(GREEN_LED, OUTPUT);
-    pinMode(BLUE_LED, OUTPUT);
-    pinMode(BUTTON, INPUT);
+    task_scheduler.scheduleWithFixedDelay([](){
+#if MODULE_WATCHDOG_AVAILABLE()
+    static int watchdog_handle = watchdog.add("esp_ethernet_led_blink", "Main thread blocked");
+    watchdog.reset(watchdog_handle);
+#endif
+        led_blink(BLUE_LED, 2000, 1, 0);
+    }, 0, 100);
 
-    green_led_pin = GREEN_LED;
-    blue_led_pin = BLUE_LED;
-    button_pin = BUTTON;
-}
-
-void ESP32EthernetBrick::register_urls()
-{
-}
-
-void ledBlink(int8_t led_pin, int interval, int blinks_per_interval, int off_time_ms)
-{
-    int t_in_second = millis() % interval;
-    if (off_time_ms != 0 && (interval - t_in_second <= off_time_ms)) {
-        digitalWrite(led_pin, 1);
-        return;
-    }
-
-    // We want blinks_per_interval blinks and blinks_per_interval pauses between them. The off_time counts as pause.
-    int state_count = ((2 * blinks_per_interval) - (off_time_ms != 0 ? 1 : 0));
-    int state_interval = (interval - off_time_ms) / state_count;
-    bool led = (t_in_second / state_interval) % 2 != 0;
-
-    digitalWrite(led_pin, led);
-}
-
-/*
-The ESP Ethernet Brick can not trigger a factory reset itself,
-as the ethernet phy clock disturbs any IO0 button reading.
-*/
-void ESP32EthernetBrick::loop()
-{
-    ledBlink(BLUE_LED, 2000, 1, 0);
+    initialized = true;
 }

@@ -54,25 +54,25 @@ void tf_spitfp_packet_processed(TF_SPITFP *spitfp) {
 }
 
 static uint8_t bytes_to_recv(TF_SPITFP *spitfp, uint8_t bytes_missing, uint8_t bytes_to_send) {
-    uint8_t result = tf_packet_buffer_get_free(&spitfp->recv_buf);
+    uint8_t free_in_buf = tf_packet_buffer_get_free(&spitfp->recv_buf);
 
     if (bytes_missing > 0) {
         if (bytes_to_send > 0) {
             // Send or receive the next packet.
-            return MIN(MIN(result, bytes_missing), bytes_to_send);
+            return MIN(MIN(free_in_buf, bytes_missing), bytes_to_send);
         } else {
             // Receive the next packet
-            return MIN(result, bytes_missing);
+            return MIN(free_in_buf, bytes_missing);
         }
     }
 
     if (bytes_to_send > 0) {
         // Send the next packet
-        return MIN(result, bytes_to_send);
+        return MIN(free_in_buf, bytes_to_send);
     }
 
     // Receive single bytes if we don't have any other information
-    return MIN(result, 1);
+    return MIN(free_in_buf, 1);
 }
 
 static bool process_packets(TF_SPITFP *spitfp, uint8_t *bytes_missing) {
@@ -180,22 +180,26 @@ static int tf_spitfp_receive(TF_SPITFP *spitfp, uint8_t length) {
     return tf_spitfp_transceive_buffer(spitfp, hal_common->empty_buf, 0, length);
 }
 
-uint8_t tf_spitfp_build_packet(TF_SPITFP *spitfp, bool retransmission) {
+uint8_t tf_spitfp_build_packet(TF_SPITFP *spitfp, int8_t seq_num_param) {
     uint8_t packet_length = spitfp->send_buf[TF_SPITFP_HEADER_LENGTH + TF_TFP_HEADER_LENGTH_OFFSET] + TF_SPITFP_PROTOCOL_OVERHEAD;
     spitfp->send_buf[0] = packet_length;
     uint8_t seq_num;
 
-    if (retransmission) {
-        seq_num = spitfp->send_buf[1] & 0x0F;
-    } else {
-        if (spitfp->last_sequence_number_sent == 0x0F) {
-            seq_num = 0x02;
-        } else {
-            seq_num = spitfp->last_sequence_number_sent + 1;
-        }
-
-        spitfp->last_sequence_number_sent = seq_num;
+    switch(seq_num_param) {
+        case TF_RETRANSMISSION:
+            seq_num = spitfp->send_buf[1] & 0x0F;
+            break;
+        case TF_NEW_PACKET:
+            if (spitfp->last_sequence_number_sent == 0x0F) {
+                seq_num = 0x02;
+            } else {
+                seq_num = spitfp->last_sequence_number_sent + 1;
+            }
+            break;
+        default:
+            seq_num = (uint8_t)seq_num_param;
     }
+    spitfp->last_sequence_number_sent = seq_num;
 
     spitfp->send_buf[1] = seq_num | (uint8_t)(spitfp->last_sequence_number_seen << 4);
 
@@ -215,23 +219,24 @@ uint8_t tf_spitfp_build_packet(TF_SPITFP *spitfp, bool retransmission) {
 #define TRANSCEIVE_PACKET_ACKED 4
 #define TRANSCEIVE_TIMEOUT 8
 
-static int tf_spitfp_transceive_packet(TF_SPITFP *spitfp, uint8_t bytes_to_send, uint8_t *send_buf_offset) {
-    while (*send_buf_offset < bytes_to_send) {
+static int tf_spitfp_transceive_packet(TF_SPITFP *spitfp, uint8_t send_buf_length, uint8_t *send_buf_offset) {
+    while (*send_buf_offset < send_buf_length) {
         uint8_t bytes_missing;
 
         if (process_packets(spitfp, &bytes_missing)) {
             return TRANSCEIVE_PACKET_RECEIVED;
         }
 
-        uint8_t to_recv = bytes_to_recv(spitfp, bytes_missing, bytes_to_send);
-        uint8_t bytes_to_transceive = MIN(bytes_to_send, to_recv);
-        int rc = tf_spitfp_transceive(spitfp, *send_buf_offset, bytes_to_transceive);
+        uint8_t to_send = send_buf_length - *send_buf_offset;
+        uint8_t to_recv = bytes_to_recv(spitfp, bytes_missing, to_send);
+        uint8_t to_transceive = MIN(to_send, to_recv);
+        int rc = tf_spitfp_transceive(spitfp, *send_buf_offset, to_transceive);
 
         if (rc != TF_E_OK) {
             return rc;
         }
 
-        *send_buf_offset += bytes_to_transceive;
+        *send_buf_offset += to_transceive;
     }
 
     return TRANSCEIVE_PACKET_SENT | (process_packets(spitfp, NULL) ? TRANSCEIVE_PACKET_RECEIVED : 0);
@@ -378,7 +383,7 @@ int tf_spitfp_tick(TF_SPITFP *spitfp, uint32_t deadline_us) {
 
         case STATE_TRANSCEIVE: {
             uint8_t seq_num = m->info.transceive.seq_num_to_send;
-            int result = tf_spitfp_transceive_packet(spitfp,  m->info.transceive.bytes_to_send, & m->info.transceive.send_buf_offset);
+            int result = tf_spitfp_transceive_packet(spitfp,  m->info.transceive.bytes_to_send, &m->info.transceive.send_buf_offset);
 
             if (result < 0) {
                 return result;
@@ -398,7 +403,7 @@ int tf_spitfp_tick(TF_SPITFP *spitfp, uint32_t deadline_us) {
 
             if (result & TRANSCEIVE_PACKET_RECEIVED) {
                 m->info.transceive.packet_received = true;
-                return TF_TICK_AGAIN | tf_spitfp_filter_duplicates(spitfp);
+                return TF_TICK_AGAIN | TF_TICK_IN_TRANSCEIVE | tf_spitfp_filter_duplicates(spitfp);
             }
 
             if (result & TRANSCEIVE_PACKET_SENT) {

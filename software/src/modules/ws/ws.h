@@ -19,25 +19,29 @@
 
 #pragma once
 
+#include <functional>
+#include <vector>
+
 #include "api.h"
 #include "web_sockets.h"
 
-class WS : public IAPIBackend {
+class WS final : public IAPIBackend
+{
 public:
-    WS();
-    void setup();
-    void register_urls();
-    void loop();
+    WS() : web_sockets() {}
+    void pre_setup() override;
+    void setup() override;
+    void register_urls() override;
+    void addOnConnectCallback(std::function<void(WebSocketsClient)> callback);
 
     // IAPIBackend implementation
     void addCommand(size_t commandIdx, const CommandRegistration &reg) override;
     void addState(size_t stateIdx, const StateRegistration &reg) override;
     void addRawCommand(size_t rawCommandIdx, const RawCommandRegistration &reg) override;
-    bool pushStateUpdate(size_t stateIdx, String payload, String path) override;
-    void pushRawStateUpdate(String payload, String path) override;
-    void wifiAvailable() override;
-
-    bool initialized = false;
+    void addResponse(size_t responseIdx, const ResponseRegistration &reg) override;
+    bool pushStateUpdate(size_t stateIdx, const String &payload, const String &path) override;
+    void pushRawStateUpdate(const String &payload, const String &path) override;
 
     WebSockets web_sockets;
+    std::vector<std::function<void(WebSocketsClient)>> on_connect_callbacks;
 };

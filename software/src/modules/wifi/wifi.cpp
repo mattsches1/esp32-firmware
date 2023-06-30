@@ -30,47 +30,47 @@
 
 #include "modules.h"
 #include "build.h"
+#include "tools.h"
 
-extern EventLog logger;
-
-extern TaskScheduler task_scheduler;
-extern WebServer server;
-extern char local_uid_str[7];
+extern char local_uid_str[32];
 extern char passphrase[20];
 
-extern API api;
-
-Wifi::Wifi()
+void Wifi::pre_setup()
 {
-    wifi_ap_config = ConfigRoot(Config::Object({
+    ap_config = ConfigRoot(Config::Object({
         {"enable_ap", Config::Bool(true)},
         {"ap_fallback_only", Config::Bool(false)},
         {"ssid", Config::Str("", 0, 32)},
         {"hide_ssid", Config::Bool(false)},
         {"passphrase", Config::Str("this-will-be-replaced-in-setup", 8, 64)},//FIXME: check if there are only ASCII characters or hex digits (for PSK) here.
-        {"channel", Config::Uint(1, 1, 13)},
+        {"channel", Config::Uint(0, 0, 13)},
         {"ip", Config::Str("10.0.0.1", 7, 15)},
         {"gateway", Config::Str("10.0.0.1", 7, 15)},
         {"subnet", Config::Str("255.255.255.0", 7, 15)}
     }), [](Config &cfg) -> String {
-        const char *ip = cfg.get("ip")->asCStr();
-        const char *gateway = cfg.get("gateway")->asCStr();
-        const char *subnet = cfg.get("subnet")->asCStr();
-
-        IPAddress unused;
-        if (!unused.fromString(ip))
+        IPAddress ip_addr, subnet_mask, gateway_addr;
+        if (!ip_addr.fromString(cfg.get("ip")->asEphemeralCStr()))
             return "Failed to parse \"ip\": Expected format is dotted decimal, i.e. 10.0.0.1";
 
-        if (!unused.fromString(gateway))
+        if (!gateway_addr.fromString(cfg.get("gateway")->asEphemeralCStr()))
             return "Failed to parse \"gateway\": Expected format is dotted decimal, i.e. 10.0.0.1";
 
-        if (!unused.fromString(subnet))
+        if (!subnet_mask.fromString(cfg.get("subnet")->asEphemeralCStr()))
             return "Failed to parse \"subnet\": Expected format is dotted decimal, i.e. 10.0.0.1";
+
+        if (!is_valid_subnet_mask(subnet_mask))
+            return "Invalid subnet mask passed: Expected format is 255.255.255.0";
+
+        if (ip_addr != IPAddress(0,0,0,0) && is_in_subnet(ip_addr, subnet_mask, IPAddress(127,0,0,1)))
+            return "Invalid IP or subnet mask passed: This configuration would route localhost (127.0.0.1) to the WiFi AP.";
+
+        if (gateway_addr != IPAddress(0,0,0,0) && !is_in_subnet(ip_addr, subnet_mask, gateway_addr))
+            return "Invalid IP, subnet mask, or gateway passed: IP and gateway are not in the same network according to the subnet mask.";
 
         return "";
     });
 
-    wifi_sta_config = ConfigRoot(Config::Object({
+    sta_config = ConfigRoot(Config::Object({
         {"enable_sta", Config::Bool(false)},
         {"ssid", Config::Str("", 0, 32)},
         {"bssid", Config::Array({
@@ -88,78 +88,171 @@ Wifi::Wifi()
             )
         },
         {"bssid_lock", Config::Bool(false)},
-        {"passphrase", Config::Str("", 8, 64)},
+        {"passphrase", Config::Str("", 0, 64)},
         {"ip", Config::Str("0.0.0.0", 7, 15)},
         {"gateway", Config::Str("0.0.0.0", 7, 15)},
         {"subnet", Config::Str("0.0.0.0", 7, 15)},
         {"dns", Config::Str("0.0.0.0", 7, 15)},
         {"dns2", Config::Str("0.0.0.0", 7, 15)},
     }), [](Config &cfg) -> String {
-        const String &value = cfg.get("passphrase")->asString();
-        if (value.length() > 0 && value.length() < 8)
+        const String &phrase = cfg.get("passphrase")->asString();
+        if (phrase.length() > 0 && phrase.length() < 8)
             return "Passphrase too short. Must be at least 8 characters, or zero if open network.";
         // Fixme: Check if only hex if exactly 64 bytes long: then it's a PSK instead of a passphrase.
 
-        const char *ip = cfg.get("ip")->asCStr();
-        const char *gateway = cfg.get("gateway")->asCStr();
-        const char *subnet = cfg.get("subnet")->asCStr();
-        const char *dns = cfg.get("dns")->asCStr();
-        const char *dns2 = cfg.get("dns2")->asCStr();
+        IPAddress ip_addr, subnet_mask, gateway_addr, unused;
 
-        IPAddress unused;
-        if (!unused.fromString(ip))
+        if (!ip_addr.fromString(cfg.get("ip")->asEphemeralCStr()))
             return "Failed to parse \"ip\": Expected format is dotted decimal, i.e. 10.0.0.1";
 
-        if (!unused.fromString(gateway))
+        if (!gateway_addr.fromString(cfg.get("gateway")->asEphemeralCStr()))
             return "Failed to parse \"gateway\": Expected format is dotted decimal, i.e. 10.0.0.1";
 
-        if (!unused.fromString(subnet))
-            return "Failed to parse \"subnet\": Expected format is dotted decimal, i.e. 10.0.0.1";
+        if (!subnet_mask.fromString(cfg.get("subnet")->asEphemeralCStr()))
+            return "Failed to parse \"subnet\": Expected format is dotted decimal, i.e. 255.255.255.0";
 
-        if (!unused.fromString(dns))
+        if (!is_valid_subnet_mask(subnet_mask))
+            return "Invalid subnet mask passed: Expected format is 255.255.255.0";
+
+        if (ip_addr != IPAddress(0,0,0,0) && is_in_subnet(ip_addr, subnet_mask, IPAddress(127,0,0,1)))
+            return "Invalid IP or subnet mask passed: This configuration would route localhost (127.0.0.1) to the WiFi STA interface.";
+
+        if (gateway_addr != IPAddress(0,0,0,0) && !is_in_subnet(ip_addr, subnet_mask, gateway_addr))
+            return "Invalid IP, subnet mask, or gateway passed: IP and gateway are not in the same network according to the subnet mask.";
+
+        if (!unused.fromString(cfg.get("dns")->asEphemeralCStr()))
             return "Failed to parse \"dns\": Expected format is dotted decimal, i.e. 10.0.0.1";
 
-        if (!unused.fromString(dns2))
+        if (!unused.fromString(cfg.get("dns2")->asEphemeralCStr()))
             return "Failed to parse \"dns2\": Expected format is dotted decimal, i.e. 10.0.0.1";
 
         return "";
     });
 
-    wifi_state = Config::Object({
-        {"connection_state", Config::Int(0)},
+    state = Config::Object({
+        {"connection_state", Config::Int((int32_t)WifiState::NOT_CONFIGURED)},
+        {"connection_start", Config::Uint32(0)},
+        {"connection_end", Config::Uint32(0)},
         {"ap_state", Config::Int(0)},
         {"ap_bssid", Config::Str("", 0, 20)},
         {"sta_ip", Config::Str("0.0.0.0", 7, 15)},
+        {"sta_subnet", Config::Str("0.0.0.0", 7, 15)},
         {"sta_rssi", Config::Int8(0)},
         {"sta_bssid", Config::Str("", 0, 20)}
     });
+}
 
-    wifi_scan_config = Config::Null();
+float rssi_to_weight(int rssi)
+{
+    return pow(2, (float)(128 + rssi) / 10);
+}
+
+void apply_weight(float *channels, int channel, float weight)
+{
+    for (int i = MAX(1, channel - 2); i <= MIN(13, channel + 2); ++i) {
+        if (i == channel - 2 || i == channel + 2)
+            channels[i] += weight / 2;
+        else
+            channels[i] += weight;
+    }
 }
 
 void Wifi::apply_soft_ap_config_and_start()
 {
+    static uint32_t scan_start_time = 0;
+    static int channel_to_use = ap_config_in_use.get("channel")->asUint();
+
+    // We don't want apply_soft_ap_config_and_start
+    // to be called over and over from the fallback AP task
+    // if we are still scanning for a channel.
+    soft_ap_running = true;
+
+    if (channel_to_use == 0 && scan_start_time == 0) {
+        logger.printfln("Starting scan to select unoccupied channel for soft AP.");
+        WiFi.scanDelete();
+        WiFi.scanNetworks(true, true);
+        scan_start_time = millis();
+        task_scheduler.scheduleOnce([this](){
+            this->apply_soft_ap_config_and_start();
+        }, 500);
+        return;
+    }
+
+    if (channel_to_use == 0 && scan_start_time != 0 && !deadline_elapsed(scan_start_time + 6000)) {
+        int network_count = WiFi.scanComplete();
+
+        if (network_count == WIFI_SCAN_RUNNING) {
+            task_scheduler.scheduleOnce([this](){
+                this->apply_soft_ap_config_and_start();
+            }, 500);
+            return;
+        }
+
+        if (network_count == WIFI_SCAN_FAILED) {
+            task_scheduler.scheduleOnce([this](){
+                this->apply_soft_ap_config_and_start();
+            }, 500);
+        }
+
+        float channels[14] = {0}; // Don't use 0, channels are one-based.
+        float channels_smeared[14] = {0}; // Don't use 0, channels are one-based.
+        for (int i = 0; i < network_count; ++i) {
+            wifi_ap_record_t *info = (wifi_ap_record_t *)WiFi.getScanInfoByIndex(i);
+
+            int channel = info->primary;
+            float weight = rssi_to_weight(info->rssi);
+            apply_weight(channels, channel, weight);
+
+            if (info->second == WIFI_SECOND_CHAN_ABOVE) {
+                apply_weight(channels, channel + 4, weight);
+            } else if (info->second == WIFI_SECOND_CHAN_BELOW) {
+                apply_weight(channels, channel - 4, weight);
+            }
+        }
+
+        memcpy(channels_smeared, channels, sizeof(channels_smeared) / sizeof(channels_smeared[0]));
+
+        for (int i = 1; i <= 13; ++i) {
+            if (i > 1)
+                channels_smeared[i] += channels[i - 1];
+            if (i < 13)
+                channels_smeared[i] += channels[i + 1];
+        }
+
+        int min = 1;
+        for (int i = 1; i <= 13; ++i) {
+            if (channels_smeared[i] < channels_smeared[min])
+                min = i;
+        }
+        logger.printfln("Selecting channel %d for softAP", min);
+        channel_to_use = min;
+    }
+    if (channel_to_use == 0 && scan_start_time != 0 && deadline_elapsed(scan_start_time + 7000)) {
+        channel_to_use = (esp_random() % 4) * 4 + 1;
+        logger.printfln("Channel selection scan timeout elapsed! Randomly selected channel %i", channel_to_use);
+    }
+
     IPAddress ip, gateway, subnet;
-    ip.fromString(wifi_ap_config_in_use.get("ip")->asCStr());
-    gateway.fromString(wifi_ap_config_in_use.get("gateway")->asCStr());
-    subnet.fromString(wifi_ap_config_in_use.get("subnet")->asCStr());
+    ip.fromString(ap_config_in_use.get("ip")->asEphemeralCStr());
+    gateway.fromString(ap_config_in_use.get("gateway")->asEphemeralCStr());
+    subnet.fromString(ap_config_in_use.get("subnet")->asEphemeralCStr());
 
     int counter = 0;
     while (ip != WiFi.softAPIP()) {
-        WiFi.softAPConfig(ip, gateway, subnet);
+        if (!WiFi.softAPConfig(ip, gateway, subnet))
+            logger.printfln("WiFi.softAPConfig() failed. Try different Access Point settings.");
         ++counter;
     }
     logger.printfln("Had to configure soft AP IP address %d times.", counter);
     logger.printfln("Wifi soft AP started");
-    logger.printfln("    SSID: %s", wifi_ap_config_in_use.get("ssid")->asString().c_str());
+    logger.printfln("    SSID: %s", ap_config_in_use.get("ssid")->asEphemeralCStr());
 
-    WiFi.softAP(wifi_ap_config_in_use.get("ssid")->asString().c_str(),
-                wifi_ap_config_in_use.get("passphrase")->asString().c_str(),
-                wifi_ap_config_in_use.get("channel")->asUint(),
-                wifi_ap_config_in_use.get("hide_ssid")->asBool());
+    WiFi.softAP(ap_config_in_use.get("ssid")->asEphemeralCStr(),
+                ap_config_in_use.get("passphrase")->asEphemeralCStr(),
+                channel_to_use,
+                ap_config_in_use.get("hide_ssid")->asBool());
     WiFi.setSleep(false);
 
-    soft_ap_running = true;
     IPAddress myIP = WiFi.softAPIP();
     logger.printfln("    MAC address: %s", WiFi.softAPmacAddress().c_str());
     logger.printfln("    IP address: %s", myIP.toString().c_str());
@@ -167,7 +260,12 @@ void Wifi::apply_soft_ap_config_and_start()
 
 bool Wifi::apply_sta_config_and_connect()
 {
-    if (get_connection_state() == WifiState::CONNECTED) {
+    return apply_sta_config_and_connect(get_connection_state());
+}
+
+bool Wifi::apply_sta_config_and_connect(WifiState current_state)
+{
+    if (current_state == WifiState::CONNECTED) {
         return false;
     }
 
@@ -175,23 +273,21 @@ bool Wifi::apply_sta_config_and_connect()
     WiFi.setAutoReconnect(false);
     WiFi.disconnect(false, true);
 
-    String ssid = wifi_sta_config_in_use.get("ssid")->asString();
+    const char *ssid = sta_config_in_use.get("ssid")->asEphemeralCStr();
 
     uint8_t bssid[6];
-    wifi_sta_config_in_use.get("bssid")->fillArray<uint8_t, Config::ConfUint>(bssid, 6 * sizeof(bssid));
+    sta_config_in_use.get("bssid")->fillArray<uint8_t, Config::ConfUint>(bssid, 6 * sizeof(bssid));
 
-    String passphrase = wifi_sta_config_in_use.get("passphrase")->asString();
-    bool bssid_lock = wifi_sta_config_in_use.get("bssid_lock")->asBool();
+    const char *passphrase = sta_config_in_use.get("passphrase")->asEphemeralCStr();
+    bool bssid_lock = sta_config_in_use.get("bssid_lock")->asBool();
 
     IPAddress ip, subnet, gateway, dns, dns2;
 
-    ip.fromString(wifi_sta_config_in_use.get("ip")->asCStr());
-    subnet.fromString(wifi_sta_config_in_use.get("subnet")->asCStr());
-    gateway.fromString(wifi_sta_config_in_use.get("gateway")->asCStr());
-    dns.fromString(wifi_sta_config_in_use.get("dns")->asCStr());
-    dns2.fromString(wifi_sta_config_in_use.get("dns2")->asCStr());
-
-    WiFi.begin(ssid.c_str(), passphrase.c_str(), 0, bssid_lock ? bssid : nullptr, false);
+    ip.fromString(sta_config_in_use.get("ip")->asEphemeralCStr());
+    subnet.fromString(sta_config_in_use.get("subnet")->asEphemeralCStr());
+    gateway.fromString(sta_config_in_use.get("gateway")->asEphemeralCStr());
+    dns.fromString(sta_config_in_use.get("dns")->asEphemeralCStr());
+    dns2.fromString(sta_config_in_use.get("dns2")->asEphemeralCStr());
 
     if (ip != 0) {
         WiFi.config(ip, gateway, subnet, dns, dns2);
@@ -199,9 +295,9 @@ bool Wifi::apply_sta_config_and_connect()
         WiFi.config((uint32_t)0, (uint32_t)0, (uint32_t)0);
     }
 
-    logger.printfln("Wifi connecting to %s", wifi_sta_config_in_use.get("ssid")->asString().c_str());
+    logger.printfln("Wifi connecting to %s", ssid);
 
-    WiFi.begin(ssid.c_str(), passphrase.c_str(), 0, bssid_lock ? bssid : nullptr, true);
+    WiFi.begin(ssid, passphrase, 0, bssid_lock ? bssid : nullptr, true);
     WiFi.setSleep(false);
     return true;
 }
@@ -259,33 +355,75 @@ const char *reason2str(uint8_t reason)
 
 void Wifi::setup()
 {
-    String default_ssid = String(BUILD_HOST_PREFIX) + String("-") + String(local_uid_str);
-    String default_passphrase = String(passphrase);
+    String default_ap_ssid = String(BUILD_HOST_PREFIX) + "-" + local_uid_str;
+    String default_ap_passphrase = String(passphrase);
 
-    api.restorePersistentConfig("wifi/sta_config", &wifi_sta_config);
-
-    if (!api.restorePersistentConfig("wifi/ap_config", &wifi_ap_config)) {
-        wifi_ap_config.get("ssid")->updateString(default_ssid);
-        wifi_ap_config.get("passphrase")->updateString(default_passphrase);
+    if (!api.restorePersistentConfig("wifi/sta_config", &sta_config)) {
+#ifdef DEFAULT_WIFI_STA_ENABLE
+        sta_config.get("enable_sta")->updateBool(DEFAULT_WIFI_STA_ENABLE);
+#endif
+#ifdef DEFAULT_WIFI_STA_SSID
+        sta_config.get("ssid")->updateString(String(DEFAULT_WIFI_STA_SSID));
+#endif
+#ifdef DEFAULT_WIFI_STA_PASSPHRASE
+        sta_config.get("passphrase")->updateString(String(DEFAULT_WIFI_STA_PASSPHRASE));
+#endif
     }
 
-    wifi_ap_config_in_use = wifi_ap_config;
-    wifi_sta_config_in_use = wifi_sta_config;
+    if (!api.restorePersistentConfig("wifi/ap_config", &ap_config)) {
+#ifdef DEFAULT_WIFI_AP_ENABLE
+        ap_config.get("enable_ap")->updateBool(DEFAULT_WIFI_AP_ENABLE);
+#endif
+#ifdef DEFAULT_WIFI_AP_FALLBACK_ONLY
+        ap_config.get("ap_fallback_only")->updateBool(DEFAULT_WIFI_AP_FALLBACK_ONLY);
+#endif
+#ifdef DEFAULT_WIFI_AP_SSID
+        ap_config.get("ssid")->updateString(String(DEFAULT_WIFI_AP_SSID));
+#else
+        ap_config.get("ssid")->updateString(default_ap_ssid);
+#endif
+#ifdef DEFAULT_WIFI_AP_PASSPHRASE
+        ap_config.get("passphrase")->updateString(String(DEFAULT_WIFI_AP_PASSPHRASE));
+#else
+        ap_config.get("passphrase")->updateString(default_ap_passphrase);
+#endif
+    }
+
+    ap_config_in_use = ap_config;
+    sta_config_in_use = sta_config;
 
     WiFi.persistent(false);
 
     WiFi.onEvent([this](arduino_event_id_t event, arduino_event_info_t info) {
+            static bool first = true;
             uint8_t reason_code = info.wifi_sta_disconnected.reason;
             const char *reason = reason2str(reason_code);
             if (!this->was_connected) {
-                logger.printfln("Wifi failed to connect to %s: %s (%u)", wifi_sta_config_in_use.get("ssid")->asString().c_str(), reason, reason_code);
+            {
+                logger.printfln("Wifi failed to connect to %s: %s (%u)", sta_config_in_use.get("ssid")->asEphemeralCStr(), reason, reason_code);
+                if (first)
+                {
+                    first = false;
+                    this->apply_sta_config_and_connect();
+                }
+            }
             } else {
-                logger.printfln("Wifi disconnected from %s: %s (%u)", wifi_sta_config_in_use.get("ssid")->asString().c_str(), reason, reason_code);
+                uint32_t now = millis();
+                uint32_t connected_for = now - last_connected_ms;
+                state.get("connection_end")->updateUint(now);
+
+                // FIXME: Use a better way of time keeping here.
+                if (connected_for < 0x7FFFFFFF)
+                    logger.printfln("Wifi disconnected from %s: %s (%u). Was connected for %u seconds.", sta_config_in_use.get("ssid")->asEphemeralCStr(), reason, reason_code, connected_for / 1000);
+                else
+                    logger.printfln("Wifi disconnected from %s: %s (%u). Was connected for a long time.", sta_config_in_use.get("ssid")->asEphemeralCStr(), reason, reason_code);
+
             }
             this->was_connected = false;
 
-            wifi_state.get("sta_ip")->updateString("0.0.0.0");
-            wifi_state.get("sta_bssid")->updateString("");
+            state.get("sta_ip")->updateString("0.0.0.0");
+            state.get("sta_subnet")->updateString("0.0.0.0");
+            state.get("sta_bssid")->updateString("");
         },
         ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
 
@@ -293,6 +431,8 @@ void Wifi::setup()
             this->was_connected = true;
 
             logger.printfln("Wifi connected to %s", WiFi.SSID().c_str());
+            last_connected_ms = millis();
+            state.get("connection_start")->updateUint(last_connected_ms);
         },
         ARDUINO_EVENT_WIFI_STA_CONNECTED);
 
@@ -304,12 +444,12 @@ void Wifi::setup()
             this->was_connected = true;
 
             auto ip = WiFi.localIP().toString();
+            auto subnet = WiFi.subnetMask();
             logger.printfln("Wifi MAC address: %s", WiFi.macAddress().c_str());
-            logger.printfln("Wifi got IP address: %s. Connected to BSSID %s", ip.c_str(), WiFi.BSSIDstr().c_str());
-            wifi_state.get("sta_ip")->updateString(ip);
-            wifi_state.get("sta_bssid")->updateString(WiFi.BSSIDstr());
-
-            api.wifiAvailable();
+            logger.printfln("Wifi got IP address: %s/%u. Connected to BSSID %s", ip.c_str(), WiFiGenericClass::calculateSubnetCIDR(subnet), WiFi.BSSIDstr().c_str());
+            state.get("sta_ip")->updateString(ip);
+            state.get("sta_subnet")->updateString(subnet.toString());
+            state.get("sta_bssid")->updateString(WiFi.BSSIDstr());
         },
         ARDUINO_EVENT_WIFI_STA_GOT_IP);
 
@@ -325,29 +465,35 @@ void Wifi::setup()
         this->was_connected = false;
 
         logger.printfln("Wifi lost IP. Forcing disconnect and reconnect of WiFi");
-        wifi_state.get("sta_ip")->updateString("0.0.0.0");
-        wifi_state.get("sta_bssid")->updateString("");
+        state.get("sta_ip")->updateString("0.0.0.0");
+        state.get("sta_subnet")->updateString("0.0.0.0");
+        state.get("sta_bssid")->updateString("");
 
         WiFi.disconnect(false, true);
     }, ARDUINO_EVENT_WIFI_STA_LOST_IP);
 
-    bool enable_ap = wifi_ap_config_in_use.get("enable_ap")->asBool();
-    bool enable_sta = wifi_sta_config_in_use.get("enable_sta")->asBool();
-    bool ap_fallback_only = wifi_ap_config_in_use.get("ap_fallback_only")->asBool();
+    bool enable_ap = ap_config_in_use.get("enable_ap")->asBool();
+    bool enable_sta = sta_config_in_use.get("enable_sta")->asBool();
+    bool ap_fallback_only = ap_config_in_use.get("ap_fallback_only")->asBool();
 
     // For some reason WiFi.setHostname only writes a temporary buffer that is passed to the IDF when calling WiFi.mode.
     // As we have the same hostname for STA and AP, it is sufficient to set the hostname here once and never call WiFi.softAPsetHostname.
-    WiFi.setHostname(network.config.get("hostname")->asCStr());
+#if MODULE_NETWORK_AVAILABLE()
+    WiFi.setHostname(network.config.get("hostname")->asEphemeralCStr());
+#else
+    WiFi.setHostname((String(BUILD_HOST_PREFIX) + "-" + local_uid_str)).c_str();
+#endif
 
     if (enable_sta && enable_ap) {
         WiFi.mode(WIFI_AP_STA);
     } else if (enable_ap) {
         WiFi.mode(WIFI_AP);
-    } else if (enable_sta) {
-        WiFi.mode(WIFI_STA);
     } else {
-        WiFi.mode(WIFI_OFF);
+        WiFi.mode(WIFI_STA);
     }
+
+    WiFi.setAutoReconnect(false);
+    WiFi.disconnect(false, true);
 
     wifi_country_t config;
     config.cc[0] = 'D';
@@ -360,41 +506,75 @@ void Wifi::setup()
 
     esp_wifi_set_ps(WIFI_PS_NONE);
 
+    // We don't need the additional speed of HT40 and it only causes more errors.
+    if (enable_sta) {
+        esp_err_t err = esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT20);
+        if (err != ESP_OK)
+            logger.printfln("WiFi: Setting HT20 for station failed: %i", err);
+    }
+    if (enable_ap) {
+        esp_err_t err = esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT20);
+        if (err != ESP_OK)
+            logger.printfln("WiFi: Setting HT20 for AP failed: %i", err);
+    }
+
     WiFi.setTxPower(WIFI_POWER_19_5dBm);
 
-    wifi_state.get("ap_bssid")->updateString(WiFi.softAPmacAddress());
+    state.get("ap_bssid")->updateString(WiFi.softAPmacAddress());
 
     if (enable_ap && !ap_fallback_only) {
         apply_soft_ap_config_and_start();
     } else {
+        LogSilencer ls;
         WiFi.softAPdisconnect(true);
     }
 
+    if (enable_ap) {
+        task_scheduler.scheduleWithFixedDelay([this]() {
+            state.get("ap_state")->updateInt(get_ap_state());
+        }, 5000, 5000);
+    }
+
     if (enable_sta) {
-        task_scheduler.scheduleWithFixedDelay([this](){
-            static int backoff = 1;
-            static int backoff_counter = 0;
+        task_scheduler.scheduleWithFixedDelay([this]() {
+            WifiState connection_state = get_connection_state();
+            state.get("connection_state")->updateInt((int)connection_state);
+            state.get("sta_rssi")->updateInt(WiFi.RSSI());
 
-            if (backoff_counter > 0) {
-                --backoff_counter;
-                return;
-            }
-
-            if (!apply_sta_config_and_connect()) {
-                // We are already connected. Reset exponential backoff
-                backoff = 1;
-                backoff_counter = 0;
-            } else {
-                if (backoff <= 32)
-                    backoff *= 2;
-                backoff_counter = backoff;
-            }
+            static int tries = 0;
+            if (tries < 10 || (tries - 10) % 8 == 0)
+                if (!apply_sta_config_and_connect(connection_state))
+                    tries = 0;
+            tries++;
         }, 0, 5000);
     }
 
-    task_scheduler.scheduleWithFixedDelay([this](){
-        wifi_state.get("sta_rssi")->updateInt(WiFi.RSSI());
-    }, 5000, 5000);
+    if (ap_fallback_only) {
+        task_scheduler.scheduleWithFixedDelay([this]() {
+            bool connected = false;
+
+#if MODULE_ETHERNET_AVAILABLE()
+            connected = ethernet.get_connection_state() == EthernetState::CONNECTED;
+#endif
+            if (!connected)
+                connected = (WifiState)state.get("connection_state")->asInt() == WifiState::CONNECTED;
+
+            if (connected == soft_ap_running) {
+                if (connected) {
+                    logger.printfln("Network connected. Stopping soft AP");
+                    WiFi.softAPdisconnect(true);
+                    soft_ap_running = false;
+                } else {
+                    apply_soft_ap_config_and_start();
+                }
+            }
+        },
+        enable_sta
+#if MODULE_ETHERNET_AVAILABLE()
+        || (ethernet.is_enabled() && ethernet.get_connection_state() != EthernetState::NOT_CONNECTED)
+#endif
+        ? 30 * 1000 : 1000, 10 * 1000);
+    }
 
     initialized = true;
 }
@@ -453,34 +633,59 @@ void Wifi::check_for_scan_completion()
         }, 500);
         return;
     }
+
+    if (result == "scan failed") {
+        logger.printfln("Scan failed.");
+        return;
+    }
+
     logger.printfln("Scan done. %d networks.", WiFi.scanComplete());
 
-#if defined(MODULE_WS_AVAILABLE)
-    ws.pushRawStateUpdate(this->get_scan_results(), "wifi/scan_results");
+#if MODULE_WS_AVAILABLE()
+    ws.pushRawStateUpdate(result, "wifi/scan_results");
 #endif
 }
 
-void Wifi::register_urls()
+void Wifi::start_scan()
 {
-    api.addState("wifi/state", &wifi_state, {}, 1000);
+    // Abort if a scan is running. This is safe, because
+    // the state will change to SCAN_FAILED if it timed out.
+    if (WiFi.scanComplete() == WIFI_SCAN_RUNNING)
+        return;
 
-    api.addCommand("wifi/scan", &wifi_scan_config, {}, [this](){
-        // Abort if a scan is running. This is save, because
-        // the state will change to SCAN_FAILED if it timed out.
-        if (WiFi.scanComplete() == WIFI_SCAN_RUNNING)
+    logger.printfln("Scanning for wifis...");
+    WiFi.scanDelete();
+
+    // WIFI_SCAN_FAILED also means the scan is done.
+    if (WiFi.scanComplete() != WIFI_SCAN_FAILED)
+        return;
+
+    if (WiFi.scanNetworks(true, true) != WIFI_SCAN_FAILED) {
+        task_scheduler.scheduleOnce([this]() {
+            this->check_for_scan_completion();
+        }, 2000);
+        return;
+    }
+
+    logger.printfln("Starting WiFi scan failed. Maybe a connection attempt is running concurrently. Retrying once in 6 seconds.");
+    task_scheduler.scheduleOnce([this](){
+        if (WiFi.scanNetworks(true, true) == WIFI_SCAN_FAILED) {
+            logger.printfln("Second scan attempt failed. Giving up.");
             return;
-
-        logger.printfln("Scanning for wifis...");
-        WiFi.scanDelete();
-
-        // WIFI_SCAN_FAILED also means the scan is done.
-        if(WiFi.scanComplete() == WIFI_SCAN_FAILED){
-            WiFi.scanNetworks(true, true);
         }
 
         task_scheduler.scheduleOnce([this]() {
             this->check_for_scan_completion();
-        }, 500);
+        }, 2000);
+    }, 6000);
+}
+
+void Wifi::register_urls()
+{
+    api.addState("wifi/state", &state, {}, 1000);
+
+    api.addCommand("wifi/scan", Config::Null(), {}, [this](){
+        start_scan();
     }, true);
 
     server.on("/wifi/scan_results", HTTP_GET, [this](WebServerRequest request) {
@@ -488,47 +693,23 @@ void Wifi::register_urls()
         String result = this->get_scan_results();
 
         if (network_count < 0) {
-            request.send(200, "text/plain; charset=utf-8", result.c_str());
+            return request.send(200, "text/plain; charset=utf-8", result.c_str());
         }
 
         logger.printfln("scan done");
-        request.send(200, "application/json; charset=utf-8", result.c_str());
+        return request.send(200, "application/json; charset=utf-8", result.c_str());
     });
 
-    api.addPersistentConfig("wifi/sta_config", &wifi_sta_config, {"passphrase"}, 1000);
-    api.addPersistentConfig("wifi/ap_config", &wifi_ap_config, {"passphrase"}, 1000);
+    api.addPersistentConfig("wifi/sta_config", &sta_config, {"passphrase"}, 1000);
+    api.addPersistentConfig("wifi/ap_config", &ap_config, {"passphrase"}, 1000);
 }
 
-void Wifi::loop()
+WifiState Wifi::get_connection_state() const
 {
-    auto connection_state = get_connection_state();
-    wifi_state.get("connection_state")->updateInt((int)connection_state);
-    wifi_state.get("ap_state")->updateInt(get_ap_state());
-
-    bool ap_fallback_only = wifi_ap_config_in_use.get("enable_ap")->asBool() && wifi_ap_config_in_use.get("ap_fallback_only")->asBool();
-    bool ethernet_connected = false;
-#if defined(MODULE_ETHERNET_AVAILABLE)
-    ethernet_connected = ethernet.get_connection_state() == EthernetState::CONNECTED;
-#endif
-    bool connected = (wifi_sta_config_in_use.get("enable_sta")->asBool() && connection_state == WifiState::CONNECTED) || ethernet_connected;
-
-    if (!connected && ap_fallback_only && !soft_ap_running) {
-        apply_soft_ap_config_and_start();
-    }
-
-    if (connected && ap_fallback_only && soft_ap_running) {
-        logger.printfln("Network connected. Stopping soft AP");
-        WiFi.softAPdisconnect(true);
-        soft_ap_running = false;
-    }
-}
-
-WifiState Wifi::get_connection_state()
-{
-    if (!wifi_sta_config_in_use.get("enable_sta")->asBool())
+    if (!sta_config_in_use.get("enable_sta")->asBool())
         return WifiState::NOT_CONFIGURED;
 
-    switch(WiFi.status()) {
+    switch (WiFi.status()) {
         case WL_CONNECT_FAILED:
         case WL_CONNECTION_LOST:
         case WL_DISCONNECTED:
@@ -546,14 +727,21 @@ WifiState Wifi::get_connection_state()
     }
 }
 
+bool Wifi::is_sta_enabled() const
+{
+    return sta_config_in_use.get("enable_sta")->asBool();
+}
+
 int Wifi::get_ap_state()
 {
-    bool enable_ap = wifi_ap_config_in_use.get("enable_ap")->asBool();
-    bool ap_fallback = wifi_ap_config_in_use.get("ap_fallback_only")->asBool();
+    bool enable_ap = ap_config_in_use.get("enable_ap")->asBool();
     if (!enable_ap)
         return 0;
+
+    bool ap_fallback = ap_config_in_use.get("ap_fallback_only")->asBool();
     if (!ap_fallback)
         return 1;
+
     if (!soft_ap_running)
         return 2;
 

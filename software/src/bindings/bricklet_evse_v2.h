@@ -1,7 +1,7 @@
 /* ***********************************************************
- * This file was automatically generated on 2022-01-27.      *
+ * This file was automatically generated on 2023-06-21.      *
  *                                                           *
- * C/C++ for Microcontrollers Bindings Version 2.0.0         *
+ * C/C++ for Microcontrollers Bindings Version 2.0.3         *
  *                                                           *
  * If you have a bugfix for this file and want to commit it, *
  * please fix the bug in the generator. You can find a link  *
@@ -41,7 +41,7 @@ typedef struct TF_EVSEV2 {
 
 #endif
     uint16_t magic;
-    uint8_t response_expected[2];
+    uint8_t response_expected[3];
 } TF_EVSEV2;
 
 /**
@@ -172,22 +172,62 @@ typedef struct TF_EVSEV2 {
 /**
  * \ingroup TF_EVSEV2
  */
-#define TF_EVSE_V2_FUNCTION_SET_CONTROL_PILOT_CONFIGURATION 26
+#define TF_EVSE_V2_FUNCTION_SET_EV_WAKEUP 26
 
 /**
  * \ingroup TF_EVSEV2
  */
-#define TF_EVSE_V2_FUNCTION_GET_CONTROL_PILOT_CONFIGURATION 27
+#define TF_EVSE_V2_FUNCTION_GET_EV_WAKUEP 27
 
 /**
  * \ingroup TF_EVSEV2
  */
-#define TF_EVSE_V2_FUNCTION_GET_ALL_DATA_1 28
+#define TF_EVSE_V2_FUNCTION_SET_CONTROL_PILOT_DISCONNECT 28
 
 /**
  * \ingroup TF_EVSEV2
  */
-#define TF_EVSE_V2_FUNCTION_GET_ALL_DATA_2 29
+#define TF_EVSE_V2_FUNCTION_GET_CONTROL_PILOT_DISCONNECT 29
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_FUNCTION_GET_ALL_DATA_1 30
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_FUNCTION_GET_ALL_DATA_2 31
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_FUNCTION_FACTORY_RESET 32
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_FUNCTION_GET_BUTTON_PRESS_BOOT_TIME 33
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_FUNCTION_SET_BOOST_MODE 34
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_FUNCTION_GET_BOOST_MODE 35
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_FUNCTION_TRIGGER_DC_FAULT_TEST 36
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_FUNCTION_SET_GP_OUTPUT 37
 
 /**
  * \ingroup TF_EVSEV2
@@ -491,12 +531,12 @@ typedef struct TF_EVSEV2 {
 /**
  * \ingroup TF_EVSEV2
  */
-#define TF_EVSE_V2_OUTPUT_LOW 0
+#define TF_EVSE_V2_OUTPUT_CONNECTED_TO_GROUND 0
 
 /**
  * \ingroup TF_EVSEV2
  */
-#define TF_EVSE_V2_OUTPUT_HIGH 1
+#define TF_EVSE_V2_OUTPUT_HIGH_IMPEDANCE 1
 
 /**
  * \ingroup TF_EVSEV2
@@ -552,6 +592,106 @@ typedef struct TF_EVSEV2 {
  * \ingroup TF_EVSEV2
  */
 #define TF_EVSE_V2_ENERGY_METER_TYPE_SDM72V2 3
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_ENERGY_METER_TYPE_SDM72CTM 4
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_ENERGY_METER_TYPE_SDM630MCTV2 5
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_ENERGY_METER_TYPE_DSZ15DZMOD 6
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_INPUT_UNCONFIGURED 0
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_INPUT_ACTIVE_LOW_MAX_0A 1
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_INPUT_ACTIVE_LOW_MAX_6A 2
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_INPUT_ACTIVE_LOW_MAX_8A 3
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_INPUT_ACTIVE_LOW_MAX_10A 4
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_INPUT_ACTIVE_LOW_MAX_13A 5
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_INPUT_ACTIVE_LOW_MAX_16A 6
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_INPUT_ACTIVE_LOW_MAX_20A 7
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_INPUT_ACTIVE_LOW_MAX_25A 8
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_INPUT_ACTIVE_HIGH_MAX_0A 9
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_INPUT_ACTIVE_HIGH_MAX_6A 10
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_INPUT_ACTIVE_HIGH_MAX_8A 11
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_INPUT_ACTIVE_HIGH_MAX_10A 12
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_INPUT_ACTIVE_HIGH_MAX_13A 13
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_INPUT_ACTIVE_HIGH_MAX_16A 14
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_INPUT_ACTIVE_HIGH_MAX_20A 15
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_INPUT_ACTIVE_HIGH_MAX_25A 16
 
 /**
  * \ingroup TF_EVSEV2
@@ -738,7 +878,7 @@ int tf_evse_v2_get_hardware_configuration(TF_EVSEV2 *evse_v2, uint8_t *ret_jumpe
  *
  * TODO
  */
-int tf_evse_v2_get_low_level_state(TF_EVSEV2 *evse_v2, uint8_t *ret_led_state, uint16_t *ret_cp_pwm_duty_cycle, uint16_t ret_adc_values[7], int16_t ret_voltages[7], uint32_t ret_resistances[2], bool ret_gpio[24], uint32_t *ret_charging_time, uint32_t *ret_time_since_state_change, uint32_t *ret_uptime);
+int tf_evse_v2_get_low_level_state(TF_EVSEV2 *evse_v2, uint8_t *ret_led_state, uint16_t *ret_cp_pwm_duty_cycle, uint16_t ret_adc_values[7], int16_t ret_voltages[7], uint32_t ret_resistances[2], bool ret_gpio[24], uint32_t *ret_charging_time, uint32_t *ret_time_since_state_change, uint32_t *ret_time_since_dc_fault_check, uint32_t *ret_uptime);
 
 /**
  * \ingroup TF_EVSEV2
@@ -755,28 +895,28 @@ int tf_evse_v2_set_charging_slot(TF_EVSEV2 *evse_v2, uint8_t slot, uint16_t max_
 /**
  * \ingroup TF_EVSEV2
  *
- * 
+ *
  */
 int tf_evse_v2_set_charging_slot_max_current(TF_EVSEV2 *evse_v2, uint8_t slot, uint16_t max_current);
 
 /**
  * \ingroup TF_EVSEV2
  *
- * 
+ *
  */
 int tf_evse_v2_set_charging_slot_active(TF_EVSEV2 *evse_v2, uint8_t slot, bool active);
 
 /**
  * \ingroup TF_EVSEV2
  *
- * 
+ *
  */
 int tf_evse_v2_set_charging_slot_clear_on_disconnect(TF_EVSEV2 *evse_v2, uint8_t slot, bool clear_on_disconnect);
 
 /**
  * \ingroup TF_EVSEV2
  *
- * 
+ *
  */
 int tf_evse_v2_get_charging_slot(TF_EVSEV2 *evse_v2, uint8_t slot, uint16_t *ret_max_current, bool *ret_active, bool *ret_clear_on_disconnect);
 
@@ -801,7 +941,7 @@ int tf_evse_v2_set_charging_slot_default(TF_EVSEV2 *evse_v2, uint8_t slot, uint1
 /**
  * \ingroup TF_EVSEV2
  *
- * 
+ *
  */
 int tf_evse_v2_get_charging_slot_default(TF_EVSEV2 *evse_v2, uint8_t slot, uint16_t *ret_max_current, bool *ret_active, bool *ret_clear_on_disconnect);
 
@@ -908,14 +1048,28 @@ int tf_evse_v2_get_button_state(TF_EVSEV2 *evse_v2, uint32_t *ret_button_press_t
  *
  * TODO
  */
-int tf_evse_v2_set_control_pilot_configuration(TF_EVSEV2 *evse_v2, uint8_t control_pilot);
+int tf_evse_v2_set_ev_wakeup(TF_EVSEV2 *evse_v2, bool ev_wakeup_enabled);
 
 /**
  * \ingroup TF_EVSEV2
  *
  * TODO
  */
-int tf_evse_v2_get_control_pilot_configuration(TF_EVSEV2 *evse_v2, uint8_t *ret_control_pilot);
+int tf_evse_v2_get_ev_wakuep(TF_EVSEV2 *evse_v2, bool *ret_ev_wakeup_enabled);
+
+/**
+ * \ingroup TF_EVSEV2
+ *
+ * TODO
+ */
+int tf_evse_v2_set_control_pilot_disconnect(TF_EVSEV2 *evse_v2, bool control_pilot_disconnect, bool *ret_is_control_pilot_disconnect);
+
+/**
+ * \ingroup TF_EVSEV2
+ *
+ * TODO
+ */
+int tf_evse_v2_get_control_pilot_disconnect(TF_EVSEV2 *evse_v2, bool *ret_control_pilot_disconnect);
 
 /**
  * \ingroup TF_EVSEV2
@@ -929,20 +1083,62 @@ int tf_evse_v2_get_all_data_1(TF_EVSEV2 *evse_v2, uint8_t *ret_iec61851_state, u
  *
  * TODO
  */
-int tf_evse_v2_get_all_data_2(TF_EVSEV2 *evse_v2, uint8_t *ret_shutdown_input_configuration, uint8_t *ret_input_configuration, uint8_t *ret_output_configuration, int16_t *ret_indication, uint16_t *ret_duration, uint8_t *ret_button_configuration, uint32_t *ret_button_press_time, uint32_t *ret_button_release_time, bool *ret_button_pressed, uint8_t *ret_control_pilot);
+int tf_evse_v2_get_all_data_2(TF_EVSEV2 *evse_v2, uint8_t *ret_shutdown_input_configuration, uint8_t *ret_input_configuration, uint8_t *ret_output_configuration, int16_t *ret_indication, uint16_t *ret_duration, uint8_t *ret_button_configuration, uint32_t *ret_button_press_time, uint32_t *ret_button_release_time, bool *ret_button_pressed, bool *ret_ev_wakeup_enabled, bool *ret_control_pilot_disconnect, bool *ret_boost_mode_enabled);
+
+/**
+ * \ingroup TF_EVSEV2
+ *
+ * TODO
+ */
+int tf_evse_v2_factory_reset(TF_EVSEV2 *evse_v2, uint32_t password);
+
+/**
+ * \ingroup TF_EVSEV2
+ *
+ * TODO
+ */
+int tf_evse_v2_get_button_press_boot_time(TF_EVSEV2 *evse_v2, bool reset, uint32_t *ret_button_press_boot_time);
+
+/**
+ * \ingroup TF_EVSEV2
+ *
+ * TODO
+ */
+int tf_evse_v2_set_boost_mode(TF_EVSEV2 *evse_v2, bool boost_mode_enabled);
+
+/**
+ * \ingroup TF_EVSEV2
+ *
+ * TODO
+ */
+int tf_evse_v2_get_boost_mode(TF_EVSEV2 *evse_v2, bool *ret_boost_mode_enabled);
+
+/**
+ * \ingroup TF_EVSEV2
+ *
+ * TODO
+ */
+int tf_evse_v2_trigger_dc_fault_test(TF_EVSEV2 *evse_v2, uint32_t password, bool *ret_started);
+
+/**
+ * \ingroup TF_EVSEV2
+ *
+ * TODO
+ */
+int tf_evse_v2_set_gp_output(TF_EVSEV2 *evse_v2, uint8_t gp_output);
 
 /**
  * \ingroup TF_EVSEV2
  *
  * Returns the error count for the communication between Brick and Bricklet.
- * 
+ *
  * The errors are divided into
- * 
+ *
  * * ACK checksum errors,
  * * message checksum errors,
  * * framing errors and
  * * overflow errors.
- * 
+ *
  * The errors counts are for errors that occur on the Bricklet side. All
  * Bricks have a similar function that returns the errors on the Brick side.
  */
@@ -953,11 +1149,11 @@ int tf_evse_v2_get_spitfp_error_count(TF_EVSEV2 *evse_v2, uint32_t *ret_error_co
  *
  * Sets the bootloader mode and returns the status after the requested
  * mode change was instigated.
- * 
+ *
  * You can change from bootloader mode to firmware mode and vice versa. A change
  * from bootloader mode to firmware mode will only take place if the entry function,
  * device identifier and CRC are present and correct.
- * 
+ *
  * This function is used by Brick Viewer during flashing. It should not be
  * necessary to call it in a normal user program.
  */
@@ -976,7 +1172,7 @@ int tf_evse_v2_get_bootloader_mode(TF_EVSEV2 *evse_v2, uint8_t *ret_mode);
  * Sets the firmware pointer for {@link tf_evse_v2_write_firmware}. The pointer has
  * to be increased by chunks of size 64. The data is written to flash
  * every 4 chunks (which equals to one page of size 256).
- * 
+ *
  * This function is used by Brick Viewer during flashing. It should not be
  * necessary to call it in a normal user program.
  */
@@ -988,9 +1184,9 @@ int tf_evse_v2_set_write_firmware_pointer(TF_EVSEV2 *evse_v2, uint32_t pointer);
  * Writes 64 Bytes of firmware at the position as written by
  * {@link tf_evse_v2_set_write_firmware_pointer} before. The firmware is written
  * to flash every 4 chunks.
- * 
+ *
  * You can only write firmware in bootloader mode.
- * 
+ *
  * This function is used by Brick Viewer during flashing. It should not be
  * necessary to call it in a normal user program.
  */
@@ -1002,9 +1198,9 @@ int tf_evse_v2_write_firmware(TF_EVSEV2 *evse_v2, const uint8_t data[64], uint8_
  * Sets the status LED configuration. By default the LED shows
  * communication traffic between Brick and Bricklet, it flickers once
  * for every 10 received data packets.
- * 
+ *
  * You can also turn the LED permanently on/off or show a heartbeat.
- * 
+ *
  * If the Bricklet is in bootloader mode, the LED is will show heartbeat by default.
  */
 int tf_evse_v2_set_status_led_config(TF_EVSEV2 *evse_v2, uint8_t config);
@@ -1021,7 +1217,7 @@ int tf_evse_v2_get_status_led_config(TF_EVSEV2 *evse_v2, uint8_t *ret_config);
  *
  * Returns the temperature as measured inside the microcontroller. The
  * value returned is not the ambient temperature!
- * 
+ *
  * The temperature is only proportional to the real temperature and it has bad
  * accuracy. Practically it is only useful as an indicator for
  * temperature changes.
@@ -1033,7 +1229,7 @@ int tf_evse_v2_get_chip_temperature(TF_EVSEV2 *evse_v2, int16_t *ret_temperature
  *
  * Calling this function will reset the Bricklet. All configurations
  * will be lost.
- * 
+ *
  * After a reset you have to create new device objects,
  * calling functions on the existing ones will result in
  * undefined behavior!
@@ -1046,7 +1242,7 @@ int tf_evse_v2_reset(TF_EVSEV2 *evse_v2);
  * Writes a new UID into flash. If you want to set a new UID
  * you have to decode the Base58 encoded UID string into an
  * integer first.
- * 
+ *
  * We recommend that you use Brick Viewer to change the UID.
  */
 int tf_evse_v2_write_uid(TF_EVSEV2 *evse_v2, uint32_t uid);
@@ -1065,11 +1261,11 @@ int tf_evse_v2_read_uid(TF_EVSEV2 *evse_v2, uint32_t *ret_uid);
  * Returns the UID, the UID where the Bricklet is connected to,
  * the position, the hardware and firmware version as well as the
  * device identifier.
- * 
+ *
  * The position can be 'a', 'b', 'c', 'd', 'e', 'f', 'g' or 'h' (Bricklet Port).
  * A Bricklet connected to an :ref:`Isolator Bricklet <isolator_bricklet>` is always at
  * position 'z'.
- * 
+ *
  * The device identifier numbers can be found :ref:`here <device_identifier>`.
  * |device_identifier_constant|
  */

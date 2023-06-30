@@ -10,6 +10,10 @@ $body-color: black;
 $gray-700: black;
 $gray-900: black;
 
+$cyan: #0dcaf0;
+// Default is 150. The changed $cyan has a y (luma) value of 149.821.
+$yiq-contrasted-threshold: 149;
+
 @import "../node_modules/bootstrap/scss/functions";
 @import "../node_modules/bootstrap/scss/variables";
 
@@ -65,40 +69,12 @@ $container-max-widths: (
 @import "../node_modules/bootstrap/scss/spinners";
 @import "../node_modules/bootstrap/scss/utilities";
 //@import "../node_modules/bootstrap/scss/print";
-
-@import "../node_modules/chartist/dist/scss/chartist.scss";
+@import "../node_modules/uplot/dist/uPlot.min";
 
 .borderless-form-control {
     @extend .form-control;
     border: none;
     height: auto;
-}
-
-
-// Color graph points and lines (with transparency) in bootstrap's primary color
-.ct-series-a .ct-line {
-    stroke: var(--primary);
-    opacity: .65;
-    stroke-width: 2px;
-}
-
-.ct-series-a .ct-point {
-    stroke: var(--primary);
-}
-
-.ct-label {
-    color: rgba(0,0,0,.66);
-}
-
-.ct-label.ct-horizontal.ct-end {
-    transform: translate(-50%,0);
-    display: block;
-    text-align: center;
-    width: 100px !important; //For some reasone chartist sets every label to a width of 1 px. Fix this here so that the centering works.
-}
-
-.ct-grid {
-    stroke-dasharray: 4px;
 }
 
 body {
@@ -124,7 +100,7 @@ body {
   top: 0;
   bottom: 0;
   left: 0;
-  z-index: 100; /* Behind the navbar */
+  z-index: 1019; /* Behind the navbar */
   padding: $navbar-height 0 0; /* Height of navbar */
   box-shadow: inset -1px 0 0 rgba(0, 0, 0, 0.1);
 }
@@ -170,7 +146,35 @@ body {
     }
 }
 
+@supports (position: sticky) {
+  @media (max-width: 575.98px) {
+        .sticky-under-top {
+            position: sticky;
+            top: 0;
+            z-index: 1010;
+            background: white;
+        }
+    }
+  @media (min-width: 576px) /*and (max-width: 767.98px)*/ {
+        .sticky-under-top {
+            position: sticky;
+            top: $navbar-height;
+            z-index: 1010;
+            background: white;
+        }
+    }
+}
+/*
+@media (min-width: 768px) {
+    .sticky-under-top {
+        position: static;
+    }
+}
+*/
 
+.tab-header-shadow {
+    box-shadow: 0 .25rem .5rem -.6rem rgb(0, 0, 0) !important;
+}
 
 .sidebar .nav-link {
   font-weight: 500;
@@ -186,13 +190,17 @@ body {
   color: var(--primary);
 }
 
-.sidebar .nav-link:hover {
-    color: var(--primary);
-  }
+@media (hover: hover) {
+    .sidebar .nav-link:hover {
+        color: var(--primary);
+    }
 
-.sidebar .nav-link:hover .feather {
-  color: var(--primary);
+
+    .sidebar .nav-link:hover .feather {
+    color: var(--primary);
+    }
 }
+
 .sidebar .nav-link.active .feather {
   color: inherit;
 }
@@ -282,38 +290,44 @@ body {
 }
 
 .btn-outline-primary.disabled, .btn-outline-primary:disabled {
-    border-color: #555 !important;
-    color: #555 !important;
+    border-color: rgba(0,0,0,.125) !important;
+    color: rgba(0,0,0,.66) !important;
     opacity: 1 !important;
 }
 
 .btn-outline-secondary.disabled, .btn-outline-secondary:disabled {
-    border-color: #555 !important;
-    color: #555 !important;
+    border-color: rgba(0,0,0,.125) !important;
+    color: rgba(0,0,0,.66) !important;
     opacity: 1 !important;
 }
 
 .btn-outline-success.disabled, .btn-outline-success:disabled {
-    border-color: #555 !important;
-    color: #555 !important;
+    border-color: rgba(0,0,0,.125) !important;
+    color: rgba(0,0,0,.66) !important;
     opacity: 1 !important;
 }
 
 .btn-outline-danger.disabled, .btn-outline-danger:disabled {
-    border-color: #555 !important;
-    color: #555 !important;
+    border-color: rgba(0,0,0,.125) !important;
+    color: rgba(0,0,0,.66) !important;
     opacity: 1 !important;
 }
 
 .btn-outline-warning.disabled, .btn-outline-warning:disabled {
-    border-color: #555 !important;
-    color: #555 !important;
+    border-color: rgba(0,0,0,.125) !important;
+    color: rgba(0,0,0,.66) !important;
     opacity: 1 !important;
 }
 
 .btn-outline-info.disabled, .btn-outline-info:disabled {
-    border-color: #555 !important;
-    color: #555 !important;
+    border-color: rgba(0,0,0,.125) !important;
+    color: rgba(0,0,0,.66) !important;
+    opacity: 1 !important;
+}
+
+.btn-outline-dark.disabled, .btn-outline-dark:disabled {
+    border-color: rgba(0,0,0,.125) !important;
+    color: rgba(0,0,0,.66) !important;
     opacity: 1 !important;
 }
 
@@ -412,6 +426,29 @@ body {
     border-left: 5px solid;
 }
 
+.input-indicator-primary {
+    border-left-color: var(--primary);
+}
+.input-indicator-secondary {
+    border-left-color: var(--secondary);
+}
+.input-indicator-success {
+    border-left-color: var(--success);
+}
+.input-indicator-warning {
+    border-left-color: var(--warning);
+}
+.input-indicator-danger {
+    border-left-color: var(--danger);
+}
+.input-indicator-light {
+    border-left-color: var(--light);
+}
+.input-indicator-link {
+    border-left-color: var(--link);
+}
+
+
 #status_wifi_sta_rssi .feather {
     vertical-align: bottom;
 }
@@ -446,4 +483,82 @@ body {
 
 .modal-body {
     font-size: 1rem;
+}
+
+@include media-breakpoint-only(xs) {
+    .page-header {
+        font-size: 1.75rem;
+    }
+}
+
+@include media-breakpoint-up(sm) {
+    .page-header {
+        font-size: 2rem;
+    }
+}
+
+.status-meter-chart {
+    position: relative;
+    aspect-ratio: 1.33333;
+}
+
+@include media-breakpoint-up(md) {
+    .status-meter-chart {
+        position: relative;
+        aspect-ratio: 2.5;
+    }
+}
+
+.meter-chart {
+    position: relative;
+    aspect-ratio: 1.5;
+}
+
+.em-energy-analysis-status-chart {
+    position: relative;
+    aspect-ratio: 1.33333;
+}
+
+@include media-breakpoint-up(md) {
+    .em-energy-analysis-status-chart {
+        position: relative;
+        aspect-ratio: 2.5;
+    }
+}
+
+.em-energy-analysis-chart {
+    position: relative;
+    aspect-ratio: 1.5;
+}
+
+@include media-breakpoint-up(md) {
+    .em-energy-analysis-chart {
+        position: relative;
+        aspect-ratio: 3;
+    }
+}
+
+.d-flex-ni {
+    display: flex;
+}
+
+.u-hide-first-series-in-legend .u-legend .u-series:first-child {
+    display: none;
+}
+
+.u-time-in-legend-alone .u-legend .u-series:first-child th {
+    cursor: default;
+}
+
+.u-time-in-legend-alone .u-legend .u-series:first-child {
+    display: block;
+}
+
+.u-time-in-legend-alone .u-legend .u-marker {
+    display: none;
+}
+
+table ul {
+    margin-bottom: 0 !important;
+    padding-left: 1rem !important;
 }

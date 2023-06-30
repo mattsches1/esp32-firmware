@@ -1,39 +1,41 @@
 {
     "em_meter_config": {
         "status": {
-            "em_meter_config": "Stromzähler"
+            "em_meter_config": "Stromzähler-Einstellungen"
         },
         "navbar": {
-            "em_meter_config": "Stromzähler"
+            "em_meter_config": "Stromzähler-Einstellungen"
         },
         "content": {
-            "em_meter_config": "Stromzähler-Konfiguration",
-            "meter_type": "Stromzähler-Typ",
-            "meter_type_description": "Stromzähler wählen",
-            "meter_type_description_muted": "zum Messen der Strombilanz am Hausanschluss",
+            "em_meter_config": "Stromzähler-Einstellungen",
+            "meter_source": "Stromzähler-Typ",
+            "meter_source_muted": "zur Messung der Energiebilanz am Hausanschluss",
             "type_none": "Kein Stromzähler",
-            "type_sdm630": "SDM630 am WARP Energy Manager",
-            "type_sunspec": "SunSpec-kompatibler Stromzähler per Modbus TCP",
-            "type_modbus_tcp": "Generischer Stromzähler per Modbus TCP",
-            "conf_sdm630": "SDM630 am WARP Energy Manager",
+            "type_sdm": "SDM630*/SDM72* am WARP Energy Manager",
+            "type_sunspec": "SunSpec-kompatibler Stromzähler per Modbus-TCP",
+            "type_modbus_tcp": "Generischer Stromzähler per Modbus-TCP",
+            "type_custom": "Benutzerdefinierter Zähler (MQTT/HTTP)",
+            "conf_sdm": "SDM630*/SDM72* am WARP Energy Manager",
             "conf_sunspec": "SunSpec-Konfiguration",
-            "conf_modbus_tcp": "Modbus/TCP-Konfiguration",
+            "conf_modbus_tcp": "Modbus-TCP-Konfiguration",
 
-            "sdm630_no": "Nein",
-            "sdm630_yes": "Ja",
-            "sdm630_details": "Zeige Stromzähler-Detailansicht",
-            "sdm630_available": "SDM630 angeschlossen",
-            "sdm630_statistics": "Statistiken",
-            "sdm630_reset_statistics": "Zurücksetzen",
-            "sdm630_power": "Leistungs&shy;aufnahme",
-            "sdm630_energy": "Strom&shy;verbrauch",
-            "sdm630_energy_since_reset": "seit dem letzten Zurücksetzen",
-            "sdm630_energy_lifetime": "seit Herstellung des Stromzählers",
+            "sdm_none": "Kein Zähler",
+            "sdm_630": "SDM630",
+            "sdm_72dmv2": "SDM72DM V2",
+            "sdm_630mctv2": "SDM630MCT V2",
+            "sdm_details": "Zeige Stromzähler-Detailansicht",
+            "sdm_available": "Angeschlossener Zähler",
+            "sdm_power": "Leistungsaufnahme",
+            "sdm_energy_import": "Netzbezug",
+            "sdm_energy_import_muted": "",
+            "sdm_energy_export": "Netzeinspeisung",
+            "sdm_energy_export_muted": "",
 
-            "save": "Speichern"
+            "generic_details": "Zeige Detailansicht für generischen Stromzähler"
         },
         "script": {
-
+            "save_failed": "Speichern der Stromzähler-Konfiguration fehlgeschlagen.",
+            "reboot_content_changed": "Stromzähler-Konfiguration"
         }
     }
 }

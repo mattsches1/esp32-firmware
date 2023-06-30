@@ -20,13 +20,16 @@
 #pragma once
 
 #include "config.h"
+#include "module.h"
 
-class TutorialPhase1 {
+class TutorialPhase1 final : public IModule
+{
 public:
-    TutorialPhase1();
-    void setup();
-    void register_urls();
-    void loop();
+    TutorialPhase1(){}
+    void pre_setup() override;
+    void setup() override;
+    void register_urls() override;
+    void loop() override;
 
     bool initialized = false;
 };

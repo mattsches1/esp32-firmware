@@ -27,18 +27,28 @@
 #include "ringbuffer.h"
 #include "malloc_tools.h"
 
-#include "bindings/macros.h"
-
 // Length of a timestamp with two spaces at the end. For example "2022-02-11 12:34:56,789"
 #define TIMESTAMP_LEN 25
 
-class EventLog {
+class EventLog
+{
 public:
     std::mutex event_buf_mutex;
-    TF_Ringbuffer<char, 10000, uint32_t, malloc_32bit_addressed, heap_caps_free> event_buf;
+    TF_Ringbuffer<char,
+                  10000,
+                  uint32_t,
+#if defined(BOARD_HAS_PSRAM)
+                  malloc_psram,
+#else
+                  malloc_32bit_addressed,
+#endif
+                  heap_caps_free> event_buf;
+
+    void setup();
 
     void write(const char *buf, size_t len);
 
+    void printfln(const char *fmt, va_list args);
     void printfln(const char *fmt, ...) __attribute__((__format__(__printf__, 2, 3)));
 
     void drop(size_t count);
@@ -49,3 +59,7 @@ public:
 
     bool sending_response = false;
 };
+
+// Make global variable available everywhere because it is not declared in modules.h.
+// Definition is in event_log.cpp.
+extern EventLog logger;

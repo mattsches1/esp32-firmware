@@ -21,16 +21,15 @@
 
 #include "config.h"
 
-class Network {
-public:
-    Network();
-    void setup();
-    void register_urls();
-    void loop();
+#include "module.h"
 
-    bool initialized;
+class Network final : public IModule
+{
+public:
+    Network(){}
+    void pre_setup() override;
+    void setup() override;
+    void register_urls() override;
 
     ConfigRoot config;
-
-private:
 };

@@ -21,34 +21,34 @@
 
 #include "config.h"
 
-#define MAX_CONNECT_ATTEMPT_INTERVAL_MS (5 * 60 * 1000)
+#include "module.h"
 
 enum class EthernetState {
-    NOT_CONFIGURED,
-    NOT_CONNECTED,
-    CONNECTING,
-    CONNECTED
+    NOT_CONFIGURED = 0,
+    NOT_CONNECTED = 1,
+    CONNECTING = 2,
+    CONNECTED = 3
 };
 
-class Ethernet {
+class Ethernet final : public IModule
+{
 public:
-    Ethernet();
-    void setup();
-    void register_urls();
-    void loop();
-
-    bool initialized = false;
+    Ethernet(){}
+    void pre_setup() override;
+    void setup() override;
+    void register_urls() override;
 
     bool was_connected = false;
+    uint32_t last_connected = 0;
 
-    EthernetState get_connection_state();
+    EthernetState get_connection_state() const;
+    bool is_enabled() const;
+
+    void print_con_duration();
 
 private:
-    ConfigRoot ethernet_config;
-    ConfigRoot ethernet_state;
-    ConfigRoot ethernet_force_reset;
+    ConfigRoot config;
+    ConfigRoot state;
 
-    ConfigRoot ethernet_config_in_use;
-
-    uint32_t connect_attempt_interval_ms;
+    ConfigRoot config_in_use;
 };

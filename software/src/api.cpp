@@ -24,26 +24,27 @@
 #include "bindings/errors.h"
 
 #include "build.h"
-#include "build_timestamp.h"
 #include "config_migrations.h"
 #include "event_log.h"
 #include "task_scheduler.h"
 
 extern TF_HAL hal;
-extern TaskScheduler task_scheduler;
-extern EventLog logger;
 
-API::API()
+// Global definition here to match the declaration in api.h.
+API api;
+
+void API::pre_setup()
 {
     features = Config::Array(
         {},
-        new Config{Config::Str("")},
+        new Config{Config::Str("", 0, 32)},
         0, 20, Config::type_id<Config::ConfString>()
     );
 
     version = Config::Object({
-        {"firmware", Config::Str(BUILD_VERSION_FULL_STR)},
+        {"firmware", Config::Str(build_version_full_str(), 0, strlen(build_version_full_str()))},
         {"config", Config::Str("", 0, 12)},
+        {"config_type", Config::Str("", 0, 32)},
     });
 }
 
@@ -51,9 +52,25 @@ void API::setup()
 {
     migrate_config();
 
-    String config_version = read_config_version();
-    logger.printfln("%s config version: %s", BUILD_DISPLAY_NAME, config_version.c_str());
+    String config_version;
+    String config_type;
+    if (LittleFS.exists("/config/version")) {
+        StaticJsonDocument<JSON_OBJECT_SIZE(2) + 60> doc;
+        File file = LittleFS.open("/config/version", "r");
+
+        deserializeJson(doc, file);
+        file.close();
+
+        config_version = doc["spiffs"].as<String>();
+        config_type    = doc["config_type"].as<String>();
+    } else {
+        logger.printfln("Failed to read config version!");
+        config_version = BUILD_VERSION_STRING;
+        config_type    = BUILD_CONFIG_TYPE;
+    }
+    logger.printfln("%s config version: %s (%s)", BUILD_DISPLAY_NAME, config_version.c_str(), config_type.c_str());
     version.get("config")->updateString(config_version);
+    version.get("config_type")->updateString(config_type);
 
     task_scheduler.scheduleWithFixedDelay([this]() {
         for (size_t state_idx = 0; state_idx < states.size(); ++state_idx) {
@@ -82,12 +99,12 @@ void API::setup()
     }, 250, 250);
 }
 
-void API::addCommand(String path, ConfigRoot *config, std::initializer_list<String> keys_to_censor_in_debug_report, std::function<void(void)> callback, bool is_action)
+void API::addCommand(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor_in_debug_report, std::function<void(void)> callback, bool is_action)
 {
     if (already_registered(path, "command"))
         return;
 
-    commands.push_back({path, config, callback, keys_to_censor_in_debug_report, is_action, ""});
+    commands.push_back({path, config, callback, keys_to_censor_in_debug_report, is_action});
     auto commandIdx = commands.size() - 1;
 
     for (auto *backend : this->backends) {
@@ -95,7 +112,7 @@ void API::addCommand(String path, ConfigRoot *config, std::initializer_list<Stri
     }
 }
 
-void API::addState(String path, ConfigRoot *config, std::initializer_list<String> keys_to_censor, uint32_t interval_ms)
+void API::addState(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor, uint32_t interval_ms)
 {
     if (already_registered(path, "state"))
         return;
@@ -108,10 +125,10 @@ void API::addState(String path, ConfigRoot *config, std::initializer_list<String
     }
 }
 
-bool API::addPersistentConfig(String path, ConfigRoot *config, std::initializer_list<String> keys_to_censor, uint32_t interval_ms)
+bool API::addPersistentConfig(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor, uint32_t interval_ms)
 {
-    if (path.length() > 29) {
-        logger.printfln("The maximum allowed config path length is 29 bytes. Got %u bytes instead.", path.length());
+    if (path.length() > 63) {
+        logger.printfln("The maximum allowed config path length is 63 bytes. Got %u bytes instead.", path.length());
         return false;
     }
 
@@ -120,15 +137,48 @@ bool API::addPersistentConfig(String path, ConfigRoot *config, std::initializer_
         return false;
     }
 
-    addState(path, config, keys_to_censor, interval_ms);
-    addCommand(path + String("_update"), config, keys_to_censor, [path, config]() {
+    // It is okay to leak this: Configs cannot be deregistered.
+    // The [path]_modified config has to live forever
+    ConfigRoot *conf_modified = new ConfigRoot(Config::Object({
+        // 0 - Config not modified since boot, config has default values (i.e. does not exist in flash)
+        // 1 - Config modified since boot,     config has default values (i.e. does not exist in flash)
+        // 2 - Config not modified since boot, config is changed from defaults (i.e. exists in flash)
+        // 3 - Config modified since boot,     config is changed from defaults (i.e. exists in flash)
+        {"modified", Config::Uint8(0)}
+    }));
+
+    {
+        // If the config is written to flash, we assume that it is not the default configuration.
+        // This does not have to be the case, however then we allow resetting the config once
+        // before reporting that it how has the default values. This is good enough (tm).
+        auto path_copy = path;
+        path_copy.replace('/', '_');
+        String filename = String("/config/") + path_copy;
+
+        if (LittleFS.exists(filename)) {
+            conf_modified->get("modified")->updateUint(2);
+        }
+
+        String conf_modified_path = path + "_modified";
+        addState(conf_modified_path, conf_modified, {}, interval_ms);
+
+        addState(path, config, keys_to_censor, interval_ms);
+    }
+
+    addCommand(path + "_update", config, keys_to_censor, [path, config, conf_modified]() {
         API::writeConfig(path, config);
+        conf_modified->get("modified")->updateUint(3);
+    }, false);
+
+    addCommand(path + "_reset", Config::Null(), {}, [path, conf_modified]() {
+        API::removeConfig(path);
+        conf_modified->get("modified")->updateUint(1);
     }, false);
 
     return true;
 }
 
-void API::addRawCommand(String path, std::function<String(char *, size_t)> callback, bool is_action)
+void API::addRawCommand(const String &path, std::function<String(char *, size_t)> callback, bool is_action)
 {
     if (already_registered(path, "raw command"))
         return;
@@ -141,6 +191,19 @@ void API::addRawCommand(String path, std::function<String(char *, size_t)> callb
     }
 }
 
+void API::addResponse(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor_in_debug_report, std::function<void(IChunkedResponse *, Ownership *, uint32_t)> callback)
+{
+    if (already_registered(path, "response"))
+        return;
+
+    responses.push_back({path, config, callback, keys_to_censor_in_debug_report});
+    auto responseIdx = responses.size() - 1;
+
+    for (auto *backend : this->backends) {
+        backend->addResponse(responseIdx, responses[responseIdx]);
+    }
+}
+
 bool API::hasFeature(const char *name)
 {
     for (int i = 0; i < features.count(); ++i)
@@ -149,7 +212,7 @@ bool API::hasFeature(const char *name)
     return false;
 }
 
-void API::writeConfig(String path, ConfigRoot *config)
+void API::writeConfig(const String &path, ConfigRoot *config)
 {
     String path_copy = path;
     path_copy.replace('/', '_');
@@ -172,39 +235,38 @@ void API::writeConfig(String path, ConfigRoot *config)
     LittleFS.rename(tmp_path, cfg_path);
 }
 
-void API::blockCommand(String path, String reason)
-{
-    for (auto &reg : commands) {
-        if (reg.path != path) {
-            continue;
-        }
+void API::removeConfig(const String &path) {
+    String path_copy = path;
+    path_copy.replace('/', '_');
+    String cfg_path = String("/config/") + path_copy;
+    String tmp_path = String("/config/.") + path_copy;
 
-        reg.blockedReason = reason;
+    if (LittleFS.exists(tmp_path)) {
+        LittleFS.remove(tmp_path);
+    }
+
+    if (LittleFS.exists(cfg_path)) {
+        LittleFS.remove(cfg_path);
     }
 }
 
-void API::unblockCommand(String path)
-{
-    blockCommand(path, "");
-}
-
-String API::getCommandBlockedReason(size_t commandIdx)
-{
-    return this->commands[commandIdx].blockedReason;
+void API::removeAllConfig() {
+    remove_directory("/config");
 }
 
 /*
 void API::addTemporaryConfig(String path, Config *config, std::initializer_list<String> keys_to_censor, uint32_t interval_ms, std::function<void(void)> callback)
 {
     addState(path, config, keys_to_censor, interval_ms);
-    addCommand(path + String("_update"), config, callback);
+    addCommand(path + "_update", config, callback);
 }
 */
 
-bool API::restorePersistentConfig(String path, ConfigRoot *config)
+bool API::restorePersistentConfig(const String &path, ConfigRoot *config)
 {
-    path.replace('/', '_');
-    String filename = String("/config/") + path;
+    String path_copy = path;
+    path_copy.replace('/', '_');
+    String filename = String("/config/") + path_copy;
 
     if (!LittleFS.exists(filename)) {
         return false;
@@ -216,7 +278,7 @@ bool API::restorePersistentConfig(String path, ConfigRoot *config)
     file.close();
 
     if (error != "") {
-        logger.printfln("Failed to restore persistent config %s: %s", path.c_str(), error.c_str());
+        logger.printfln("Failed to restore persistent config %s: %s", path_copy.c_str(), error.c_str());
     }
 
     return error == "";
@@ -279,25 +341,32 @@ void API::registerDebugUrl(WebServer *server)
             result += reg.config->to_string_except(reg.keys_to_censor_in_debug_report);
         }
 
+        for (auto &reg : responses) {
+            result += ",\n \"";
+            result += reg.path;
+            result += "\": ";
+            result += reg.config->to_string_except(reg.keys_to_censor_in_debug_report);
+        }
+
         result += "}";
 
-        request.send(200, "application/json; charset=utf-8", result.c_str());
+        return request.send(200, "application/json; charset=utf-8", result.c_str());
     });
 
     this->addState("info/features", &features, {}, 1000);
-    this->addState("info/version", &version, {}, 10000);
+    this->addState("info/version", &version, {}, 1000);
 }
 
-void API::registerBackend(IAPIBackend *backend)
+size_t API::registerBackend(IAPIBackend *backend)
 {
+    size_t backendIdx = backends.size();
+
     backends.push_back(backend);
+
+    return backendIdx;
 }
 
-void API::loop()
-{
-}
-
-String API::callCommand(String path, Config::ConfUpdate payload)
+String API::callCommand(const String &path, const Config::ConfUpdate &payload)
 {
     for (CommandRegistration &reg : commands) {
         if (reg.path != path) {
@@ -316,7 +385,7 @@ String API::callCommand(String path, Config::ConfUpdate payload)
     return String("Unknown command ") + path;
 }
 
-Config *API::getState(String path, bool log_if_not_found)
+Config *API::getState(const String &path, bool log_if_not_found)
 {
     for (auto &reg : states) {
         if (reg.path != path) {
@@ -347,15 +416,6 @@ void API::addFeature(const char *name)
     features.get(features.count() - 1)->updateString(name);
 }
 
-void API::wifiAvailable()
-{
-    task_scheduler.scheduleOnce([this]() {
-        for (auto *backend: this->backends) {
-            backend->wifiAvailable();
-        }
-    }, 0);
-}
-
 bool API::already_registered(const String &path, const char *api_type)
 {
     for (auto &reg : this->states) {
@@ -374,6 +434,12 @@ bool API::already_registered(const String &path, const char *api_type)
         if (reg.path != path)
             continue;
         logger.printfln("Can't register %s %s. Already registered as raw command!", api_type, path.c_str());
+        return true;
+    }
+    for (auto &reg : this->responses) {
+        if (reg.path != path)
+            continue;
+        logger.printfln("Can't register %s %s. Already registered as response!", api_type, path.c_str());
         return true;
     }
 

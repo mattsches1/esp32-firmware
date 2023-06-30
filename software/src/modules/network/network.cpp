@@ -24,23 +24,21 @@
 #include "task_scheduler.h"
 
 #include <ESPmDNS.h>
-#include "NetBIOS.h"
 
-extern API api;
-extern TaskScheduler task_scheduler;
-extern char local_uid_str[7];
+extern char local_uid_str[32];
 
-Network::Network()
+void Network::pre_setup()
 {
     config = Config::Object({
         {"hostname", Config::Str("replaceme", 0, 32)},
-        {"enable_mdns", Config::Bool(true)}
+        {"enable_mdns", Config::Bool(true)},
+        {"web_server_port", Config::Uint16(80)}
     });
 }
 
 void Network::setup()
 {
-    String default_hostname = String(BUILD_HOST_PREFIX) + String("-") + String(local_uid_str);
+    String default_hostname = String(BUILD_HOST_PREFIX) + "-" + local_uid_str;
 
     if (!api.restorePersistentConfig("network/config", &config)) {
         config.get("hostname")->updateString(default_hostname);
@@ -51,20 +49,15 @@ void Network::setup()
 
 void Network::register_urls()
 {
-    api.addPersistentConfig("network/config", &config, {}, 10000);
+    api.addPersistentConfig("network/config", &config, {}, 1000);
 
     if (!config.get("enable_mdns")->asBool())
         return;
 
-    if (!MDNS.begin(config.get("hostname")->asCStr())) {
+    if (!MDNS.begin(config.get("hostname")->asEphemeralCStr())) {
         logger.printfln("Error setting up mDNS responder!");
     } else {
         logger.printfln("mDNS responder started");
     }
     MDNS.addService("http", "tcp", 80);
-    NBNS.begin(config.get("hostname")->asCStr());
-}
-
-void Network::loop()
-{
 }

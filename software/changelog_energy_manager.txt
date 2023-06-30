@@ -1,2 +1,104 @@
-2022-31-01: 1.0.0 (0b2c2459d)
+2023-03-02: 1.0.0 (9899e34b)
 - Initial release
+
+2023-03-16: 1.0.1 (2bfdca33)
+- Add energy analysis
+- Add magenta LED blink for configuration errors
+- Add aggressive/conservative control behaviour modes
+- Add phase switching state to status page
+- Add internal states to debug view
+- Add core dump to debug report
+- Improve charge mode selector buttons
+- Remove stale RSSI and IP values if WiFi connection is lost
+- Improve translations
+- Make sure guaranteed power for Min + PV mode can't be set to less than the required amount to charge one vehicle
+- Remove (unsupported!) SDM72CTM from UI
+- Make managed chargers on status page clickable links
+- Check if configured charger hosts have duplicates
+- Filter out mDNS responses not created by WARP Chargers
+- Initialize meter/values if API meter is selected
+- Fix negative and large energy plot values
+- Fix length check of text and password inputs
+- Fix event log spam
+- Fix error feedback of text inputs
+- Fix WiFi station passphase placeholder text
+- Fix deletion of WiFI station passphrase
+- Fix missing meter values on UI
+
+2023-05-16: 1.0.2 (48162334)
+- Add fill to meter plot
+- Add cloud filter
+- Add PWA-style bookmark support
+- Add more specific configuration error messages
+- Add month graph to energy analysis
+- Add statistics to energy analysis
+- Add separate minimum current for one- and three-phase-charging
+- Add vehicle type specific minimum current setting
+- Use energy manager bricklet's RTC
+- Improve WiFi reception by disabling HT40 mode and 11b
+- Make web interface listen port configurable
+- Make energy meter initialization more robust
+- Make static IP configuration of ethernet interface more reliable
+- Improve translations
+- Log connection duration when ethernet, WiFi, MQTT or WireGuard connection is lost
+- Relax MQTT message timeout
+- Remove NetBIOS support
+- Update timezone database
+- Increase DNS cache size
+- Re-resolve controlled charger hostnames when unresponsive
+- Improve charge manager performance when controlling ten chargers
+- Improve ethernet/WiFi robustness
+- Fix charge manager distribution log access if verbose not requested
+- Fix removal of controlled charger in charge manager sub-page
+- Fix broken status page links if charge manager config is changed but not applied
+- Fix ethernet log messages
+- Fix authentication sub-page UI
+- Fix charge manager scan modal UI
+- Fix switching on/off too often right after start-up.
+- Add "external control" phase switching mode
+
+2023-06-05: 1.0.3 (928294b2)
+- Add single-phase PV/three-phase fast charge mode
+- Show phase switching state if externally controlled
+- Check for overlapping networks between ethernet, WiFi or WireGuard IPs
+- Improve translations
+- Immediately start WiFI AP if no WiFi configured and ethernet disabled or not plugged in
+- Improve zero line visibility
+- Consistently scale all 48h graphs to at least 1500 W
+- Reduce minimal height of month overview to 10 kWh
+- Don't log if optional devices are missing
+- Clarify event log messages
+- Fix energy manager protocol generation
+- Fix wrong minimum current being applied when single-phase charging
+- Fix sudden charging stop at low power
+- Fix unstable switch-on during partly cloudy weather
+- Fix charger data of third and more chargers not being saved
+- Fix overlapping bars in month overview
+- Fix first and last bar in month overview being cut off
+
+2023-06-06: 1.0.4 (6dad76e9)
+- Fix initialization error if meter is directly connected to energy manager
+- Fix factory reset
+- Fix race condition in web server initialization
+
+2023-06-07: 1.0.5 (52d9fc1a)
+- Fix infinitly growing energy analysis graph on status page in Safari browser
+- Fix zero height energy analysis graph in older browsers
+
+2023-06-23: 1.0.6 (0771049a)
+- Log device found/not found message at most once
+- Improve translations
+- Fix charge manager handling of low priority chargers.
+- Handle chargers that only support less than the minimum current as low priority
+- Fix ESP crash when accessing API concurrently
+- Fix web interface errors caused by wrong web socket message order
+- Fix race condition in MQTT initialization
+- Improve charge management efficiency by using line currents if available
+- Fix non-UTF-8 web socket payload by clamping sampled meter values into expected range
+- Add status bar to energy analysis day view
+- Block firmware updates if a vehicle is connected to a controlled charger and a contactor is installed
+- Fix stacked series order in day view
+- Fix wrong meter history calculation if samples arrive faster than every 500 ms
+- Limit debug protocol to last 20000 lines
+- Fix Y axis jump on double click in graphs
+- Auto-scale graph Y axis based on tick text width

@@ -19,11 +19,9 @@
 
 #pragma once
 
-#include "ArduinoJson.h"
-
 #include "config.h"
 
-#define MAX_CONNECT_ATTEMPT_INTERVAL_MS (5 * 60 * 1000)
+#include "module.h"
 
 enum class WifiState {
     NOT_CONFIGURED,
@@ -32,37 +30,38 @@ enum class WifiState {
     CONNECTED
 };
 
-class Wifi {
+class Wifi final : public IModule
+{
 public:
-    Wifi();
-    void setup();
-    void register_urls();
-    void loop();
-
-    bool initialized = false;
+    Wifi(){}
+    void pre_setup() override;
+    void setup() override;
+    void register_urls() override;
 
     bool was_connected = false;
 
-    WifiState get_connection_state();
+    WifiState get_connection_state() const;
+    bool is_sta_enabled() const;
 
 private:
     void apply_soft_ap_config_and_start();
     bool apply_sta_config_and_connect();
+    bool apply_sta_config_and_connect(WifiState current_state);
 
     int get_ap_state();
 
+    void start_scan();
     void check_for_scan_completion();
     String get_scan_results();
 
-    ConfigRoot wifi_ap_config;
-    ConfigRoot wifi_sta_config;
-    ConfigRoot wifi_state;
+    ConfigRoot ap_config;
+    ConfigRoot sta_config;
+    ConfigRoot state;
 
-    ConfigRoot wifi_scan_config;
-
-    ConfigRoot wifi_ap_config_in_use;
-    ConfigRoot wifi_sta_config_in_use;
+    ConfigRoot ap_config_in_use;
+    ConfigRoot sta_config_in_use;
 
     bool soft_ap_running = false;
-    uint32_t connect_attempt_interval_ms;
+
+    uint32_t last_connected_ms = 0;
 };

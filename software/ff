@@ -6,9 +6,8 @@ import sys
 import signal
 import subprocess
 import serial
+import time
 
-def sigint(self, sig):
-    sys.exit(0)
 
 colors = {"off":"\x1b[00m",
           "blue":   "\x1b[34m",
@@ -23,7 +22,6 @@ def red(s):
 def green(s):
     return colors["green"]+s+colors["off"]
 
-signal.signal(signal.SIGINT, sigint)
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-p", "--port")
@@ -36,8 +34,10 @@ args = parser.parse_args()
 def get_latest_fw(fw_type=''):
     files = os.listdir("build")
     files = [x for x in files if x.endswith("_merged.bin") and (fw_type == '' or x.startswith(fw_type + "_firmware"))]
-    latest = max(files, key=lambda x: int(x.split("_")[-2], 16), default=None)
+    latest = max(files, key=lambda x: int(x.replace("-NIGHTLY", "").replace("-WITH-WIFI-PASSPHRASE-DO-NOT-DISTRIBUTE", "").split("_firmware_")[1].split("_")[3], 16), default=None)
     if latest is None:
+        if os.path.exists(fw_type):
+            return fw_type
         print("Failed to find a firmware containing the string {}".format(fw_type))
         sys.exit(0)
     return os.path.join("build", latest)
@@ -60,15 +60,22 @@ else:
 
 if args.erase:
     print(red("Erasing flash on port {}".format(port)))
-    os.system("esptool.py --port {} --chip esp32 erase_flash".format(port))
+    os.system("pio pkg exec esptool.py -- --port {} --chip esp32 erase_flash".format(port))
 
 if not args.serial_only:
     print(green("Flashing firmware {} to port {}".format(firmware, port)))
 
-    os.system("esptool.py --port {} --chip esp32 --baud 921600 --before default_reset --after hard_reset write_flash --flash_mode dio --flash_freq 40m --flash_size 16MB 0x1000 {}".format(port, firmware))
+    os.system("pio pkg exec esptool.py -- --port {} --chip esp32 --baud 921600 --before default_reset --after hard_reset write_flash --flash_mode dio --flash_freq 40m --flash_size 16MB 0x1000 {}".format(port, firmware))
 
 if not args.no_serial:
-   with serial.Serial(port, 115200, timeout=1) as ser:
-        while ser.is_open:
-            sys.stdout.buffer.write(ser.read())
-            sys.stdout.flush()
+    while True:
+        try:
+            time.sleep(0.1)
+            with serial.Serial(port, 115200, timeout=1) as ser:
+                while ser.is_open:
+                    sys.stdout.buffer.write(ser.read())
+                    sys.stdout.flush()
+        except KeyboardInterrupt:
+            sys.exit(0)
+        except:
+            pass

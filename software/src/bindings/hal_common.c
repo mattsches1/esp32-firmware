@@ -67,6 +67,10 @@ int tf_hal_common_prepare(TF_HAL *hal, uint8_t port_count, uint32_t port_discove
     return TF_E_OK;
 }
 
+#ifdef TF_IGNORE_DEVICE_IDS
+static uint16_t ignored_device_ids[] = {TF_IGNORE_DEVICE_IDS};
+#endif
+
 void tf_hal_enumerate_handler(TF_HAL *hal, uint8_t port_id, TF_PacketBuffer *payload) {
     TF_HALCommon *hal_common = tf_hal_get_common(hal);
     char uid_str[8]; tf_packet_buffer_pop_n(payload, (uint8_t *)uid_str, 8);
@@ -89,6 +93,16 @@ void tf_hal_enumerate_handler(TF_HAL *hal, uint8_t port_id, TF_PacketBuffer *pay
     if (tf_hal_get_tfp(hal, &uid_num, NULL, NULL, false) != NULL) {
         return; // Device already known
     }
+
+#ifdef TF_IGNORE_DEVICE_IDS
+    for(size_t i = 0; i < sizeof(ignored_device_ids)/sizeof(ignored_device_ids[0]); ++i) {
+        if (device_id == ignored_device_ids[i]) {
+            tf_hal_log_info("Ignoring device %s of type %d at port %c\n", uid_str, device_id, tf_hal_get_port_name(hal, port_id));
+            return;
+        }
+    }
+#endif
+
 
     tf_hal_log_info("Found device %s of type %d at port %c\n", uid_str, device_id, tf_hal_get_port_name(hal, port_id));
 
@@ -388,7 +402,7 @@ int tf_hal_get_device_info(TF_HAL *hal, uint16_t index, char ret_uid_str[7], cha
         *ret_port_name = tf_hal_get_port_name(hal, hal_common->tfps[index].spitfp->port_id);
     }
 
-    if (ret_port_name != NULL) {
+    if (ret_device_id != NULL) {
         *ret_device_id = hal_common->tfps[index].device_id;
     }
 
@@ -417,8 +431,9 @@ static TF_TFPHeader enumerate_request_header = {
 #endif
 
 int tf_hal_tick(TF_HAL *hal, uint32_t timeout_us) {
+    tf_hal_callback_tick(hal, timeout_us);
+
 #if TF_NET_ENABLE != 0
-    uint32_t deadline_us = tf_hal_current_time_us(hal) + timeout_us;
     TF_HALCommon *hal_common = tf_hal_get_common(hal);
     TF_Net *net = hal_common->net;
     uint8_t ignored_error_code;
@@ -432,28 +447,47 @@ int tf_hal_tick(TF_HAL *hal, uint32_t timeout_us) {
             if (hal_common->tfps[i].send_enumerate_request
              && hal_common->tfps[i].spitfp->send_buf[0] == 0) {
                 tf_tfp_inject_packet(&hal_common->tfps[i], &enumerate_request_header, enumerate_request);
-                // TODO: What timeout to use here? If decided, use return value to check for the timeout, maybe increase an error count
-                result = tf_tfp_send_packet(&hal_common->tfps[i], false, deadline_us, &ignored_error_code, &ignored_length);
 
-                if (result & TF_TICK_PACKET_SENT) {
-                    hal_common->tfps[i].send_enumerate_request = false;
+                // If we have to send a packet to a bricklet, allow blocking for 5 ms.
+                // This is the SPITFP message timeout
+                // If a bricklet takes longer to respond, we have to resend this message.
+                // This means that tf_hal_tick can block
+                uint32_t inner_deadline_us = tf_hal_current_time_us(hal) + 5000;
+
+                // If this is a retransmission, we have to (manually) make sure, the packet has the same SPITFP seq num as the last time.
+                // This is necessary here, but not in the (generated) bindings because here we only allow blocking at most one SPITFP timeout.
+                int8_t seq_num = hal_common->tfps[i].spitfp_timeout_counter > 0 ? hal_common->tfps[i].spitfp_last_seq_num : TF_NEW_PACKET;
+                result = tf_tfp_send_packet(&hal_common->tfps[i], false, inner_deadline_us, &ignored_error_code, &ignored_length, seq_num);
+                result = tf_tfp_finish_send(&hal_common->tfps[i], result, inner_deadline_us);
+                bool timeout = (result & TF_E_TIMEOUT) == TF_E_TIMEOUT;
+                if (timeout) {
+                    ++hal_common->tfps[i].spitfp_timeout_counter;
+                    hal_common->tfps[i].spitfp_last_seq_num = (int8_t)hal_common->tfps[i].spitfp->last_sequence_number_sent;
+                    if (hal_common->tfps[i].spitfp_timeout_counter == 10)
+                        // We've tried 10 times to send a packet to this port without response.
+                        // Drop the packet to allow progress in the future.
+                        timeout = false;
                 }
 
-                (void)! tf_tfp_finish_send(&hal_common->tfps[i], result, deadline_us); // ignore result for now: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=66425#c34
+                if (!timeout) {
+                    hal_common->tfps[i].spitfp_timeout_counter = 0;
+                    hal_common->tfps[i].spitfp_last_seq_num = TF_NEW_PACKET;
+                }
+
+                hal_common->tfps[i].send_enumerate_request = timeout;
             }
         }
 
         TF_TFPHeader header;
         int packet_id = -1;
 
-        while (!tf_hal_deadline_elapsed(hal, deadline_us) && tf_net_get_available_tfp_header(net, &header, &packet_id)) {
+        if (tf_net_get_available_tfp_header(net, &header, &packet_id)) {
             uint8_t pid = (uint8_t)packet_id;
 
             // We should never get callback packets from the network side of things. Drop them.
             if (header.seq_num == 0) {
                 tf_net_drop_packet(net, pid);
-
-                continue;
+                return TF_E_OK;
             }
 
             // Handle enumerate requests
@@ -470,7 +504,7 @@ int tf_hal_tick(TF_HAL *hal, uint32_t timeout_us) {
 
                 tf_net_drop_packet(net, pid);
 
-                continue;
+                return TF_E_OK;
             }
 
             bool device_found = false;
@@ -494,10 +528,34 @@ int tf_hal_tick(TF_HAL *hal, uint32_t timeout_us) {
                 tf_net_get_packet(net, pid, buf);
                 tf_tfp_inject_packet(&hal_common->tfps[i], &header, buf);
 
-                // TODO: What timeout to use here? If decided, use return value to check for the timeout, maybe increase an error count
-                result = tf_tfp_send_packet(&hal_common->tfps[i], false, deadline_us, &ignored_error_code, &ignored_length);
-                (void)! tf_tfp_finish_send(&hal_common->tfps[i], result, deadline_us); // ignore result for now: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=66425#c34
-                dispatched = true;
+                // If we have to send a packet to a bricklet, allow blocking for 5 ms.
+                // This is the SPITFP message timeout
+                // If a bricklet takes longer to respond, we have to resend this message.
+                // This means that tf_hal_tick can block
+                uint32_t inner_deadline_us = tf_hal_current_time_us(hal) + 5000;
+
+                // If this is a retransmission, we have to (manually) make sure, the packet has the same SPITFP seq num as the last time.
+                // This is necessary here, but not in the (generated) bindings because here we only allow blocking at most one SPITFP timeout.
+                int8_t seq_num = hal_common->tfps[i].spitfp_timeout_counter > 0 ? hal_common->tfps[i].spitfp_last_seq_num : TF_NEW_PACKET;
+                result = tf_tfp_send_packet(&hal_common->tfps[i], false, inner_deadline_us, &ignored_error_code, &ignored_length, seq_num);
+                result = tf_tfp_finish_send(&hal_common->tfps[i], result, inner_deadline_us);
+
+                bool timeout = (result & TF_E_TIMEOUT) == TF_E_TIMEOUT;
+                if (timeout) {
+                    ++hal_common->tfps[i].spitfp_timeout_counter;
+                    hal_common->tfps[i].spitfp_last_seq_num = (int8_t)hal_common->tfps[i].spitfp->last_sequence_number_sent;
+                    if (hal_common->tfps[i].spitfp_timeout_counter == 10)
+                        // We've tried 10 times to send a packet to this port without response.
+                        // Drop the packet to allow progress in the future.
+                        timeout = false;
+                }
+
+                if (!timeout) {
+                    hal_common->tfps[i].spitfp_timeout_counter = 0;
+                    hal_common->tfps[i].spitfp_last_seq_num = TF_NEW_PACKET;
+                }
+
+                dispatched = !timeout;
 
                 break;
             }
@@ -525,8 +583,6 @@ int tf_hal_tick(TF_HAL *hal, uint32_t timeout_us) {
         }
     }
 #endif
-
-    tf_hal_callback_tick(hal, timeout_us);
 
     return TF_E_OK;
 }

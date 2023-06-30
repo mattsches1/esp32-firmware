@@ -19,14 +19,14 @@
 
 #pragma once
 
-class ESP32Brick {
+#include "config.h"
+
+#include "module.h"
+
+class ESP32Brick final : public IModule
+{
 public:
-    ESP32Brick();
-    void setup();
-    void register_urls();
-    void loop();
-
-    bool initialized = false;
-
-private:
+    ESP32Brick(){}
+    void setup() override;
+    void loop() override;
 };

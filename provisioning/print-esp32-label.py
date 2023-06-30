@@ -8,9 +8,6 @@ import socket
 
 BASE58 = '123456789abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ'
 
-PRINTER_HOST = '192.168.178.242'
-PRINTER_PORT = 9100
-
 QR_CODE_FORMAT = 'W288,29,5,2,M,8,4,{0},0\r'
 QR_CODE_LENGTH = 49
 
@@ -20,9 +17,55 @@ PASSPHRASE_PLACEHOLDER = b'ZZZZ-ZZZZ-ZZZZ-ZZZZ'
 
 COPIES_FORMAT = '^C{0}\r'
 
+
+def get_tf_printer_host(task):
+    import re
+    import os
+    import sys
+    import tkinter.messagebox
+
+    path = '~/tf_printer_host.txt'
+    x = re.compile(r'^([A-Za-z0-9_-]+)\s+([0-9\.]+)$')
+
+    try:
+        with open(os.path.expanduser(path), 'r', encoding='utf-8') as f:
+            for line in f.readlines():
+                line = line.strip()
+
+                if len(line) == 0 or line.startswith('#'):
+                    continue
+
+                m = x.match(line)
+
+                if m == None:
+                    message = 'WARNING: Invalid line in {0}: {1}'.format(path, repr(line))
+
+                    print(message)
+                    tkinter.messagebox.showerror(title=path, message=message)
+
+                    continue
+
+                other_task = m.group(1)
+                other_host = m.group(2)
+
+                if other_task != task:
+                    continue
+
+                return other_host
+    except FileNotFoundError:
+        pass
+
+    message = 'ERROR: Printer host for task {0} not found in {1}'.format(task, path)
+
+    print(message)
+    tkinter.messagebox.showerror(title=path, message=message)
+
+    sys.exit(1)
+
+
 def print_esp32_label(ssid, passphrase, copies, stdout):
     # check SSID
-    if re.match('^(esp32|warp|warp2)-[{0}]{{3,6}}$'.format(BASE58), ssid) == None:
+    if re.match('^(esp32|warp|warp2|wem)-[{0}]{{3,6}}$'.format(BASE58), ssid) == None:
         raise Exception('Invalid SSID: {0}'.format(ssid))
 
     # check passphrase
@@ -73,8 +116,9 @@ def print_esp32_label(ssid, passphrase, copies, stdout):
         sys.stdout.buffer.write(data)
         sys.stdout.buffer.flush()
     else:
-        with socket.create_connection((PRINTER_HOST, PRINTER_PORT)) as s:
+        with socket.create_connection((get_tf_printer_host('esp32'), 9100)) as s:
             s.send(data)
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -87,6 +131,7 @@ def main():
     args = parser.parse_args()
 
     print_esp32_label(args.ssid, args.passphrase, args.copies, args.stdout)
+
 
 if __name__ == '__main__':
     main()

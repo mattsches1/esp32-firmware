@@ -1,0 +1,29 @@
+{
+    "charge_limits": {
+        "content": {
+            "overridden": "(active)",
+            "configured": "(configured)",
+            "left": " left",
+            "override_energy": "Energy limit",
+            "override_duration": "Time limit",
+            "duration": "Charging duration limit",
+            "duration_muted": "May be overwritten for a charge on the status page.",
+            "energy": "Charging energy limit",
+            "energy_muted": "May be overwritten for a charge on the status page.",
+            "unlimited": "Unlimited",
+            "min15": "15 Minutes",
+            "min30": "30 Minutes",
+            "min45": "45 Minutes",
+            "h1": "1 Hour",
+            "h2": "2 Hours",
+            "h3": "3 Hours",
+            "h4": "4 Hours",
+            "h6": "6 Hours",
+            "h8": "8 Hours",
+            "h12": "12 Hours"
+        },
+        "script": {
+            "override_failed": "Override failed"
+        }
+    }
+}

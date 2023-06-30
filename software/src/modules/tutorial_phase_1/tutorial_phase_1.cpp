@@ -23,9 +23,7 @@
 
 #include "event_log.h"
 
-extern EventLog logger;
-
-TutorialPhase1::TutorialPhase1()
+void TutorialPhase1::pre_setup()
 {
 }
 

@@ -1,5 +1,5 @@
 /*
-2022a;2022-03-29T07:20:08.109907
+2023c;2023-04-17T11:04:15.530032
 */
 /* esp32-firmware
  * Copyright (C) 2020-2021 Erik Fleckstein <erik@tinkerforge.com>
@@ -93,7 +93,7 @@ static const TableValue Africa_vals[] = {
     {true, {"CAT-2"}},
     {true, {"WAT-1"}},
     {true, {"CAT-2"}},
-    {true, {"EET-2"}},
+    {true, {"EET-2EEST,M4.5.5/0,M10.5.4/24"}},
     {true, {"<+01>-1"}},
     {true, {"CET-1CEST,M3.5.0,M10.5.0/3"}},
     {true, {"GMT0"}},
@@ -252,6 +252,7 @@ static const char * const America_keys[] = {
     "Cayman",
     "Chicago",
     "Chihuahua",
+    "Ciudad_Juarez",
     "Coral_Harbour",
     "Cordoba",
     "Costa_Rica",
@@ -382,7 +383,7 @@ static const TableValue America_vals[] = {
     {true, {"EST5"}},
     {true, {"HST10HDT,M3.2.0,M11.1.0"}},
     {true, {"<-03>3"}},
-    {true, {"CST6CDT,M4.1.0,M10.5.0"}},
+    {true, {"CST6"}},
     {true, {"AST4"}},
     {true, {"<-03>3"}},
     {true, {"CST6"}},
@@ -399,7 +400,8 @@ static const TableValue America_vals[] = {
     {true, {"<-03>3"}},
     {true, {"EST5"}},
     {true, {"CST6CDT,M3.2.0,M11.1.0"}},
-    {true, {"MST7MDT,M4.1.0,M10.5.0"}},
+    {true, {"CST6"}},
+    {true, {"MST7MDT,M3.2.0,M11.1.0"}},
     {true, {"EST5"}},
     {true, {"<-03>3"}},
     {true, {"CST6"}},
@@ -420,7 +422,7 @@ static const TableValue America_vals[] = {
     {true, {"EST5EDT,M3.2.0,M11.1.0"}},
     {true, {"<-03>3"}},
     {true, {"AST4ADT,M3.2.0,M11.1.0"}},
-    {true, {"<-03>3<-02>,M3.5.0/-2,M10.5.0/-1"}},
+    {true, {"<-02>2<-01>,M3.5.0/-1,M10.5.0/0"}},
     {true, {"AST4ADT,M3.2.0,M11.1.0"}},
     {true, {"EST5EDT,M3.2.0,M11.1.0"}},
     {true, {"AST4"}},
@@ -452,15 +454,15 @@ static const TableValue America_vals[] = {
     {true, {"AST4"}},
     {true, {"AST4"}},
     {true, {"CST6CDT,M3.2.0,M11.1.0"}},
-    {true, {"MST7MDT,M4.1.0,M10.5.0"}},
+    {true, {"MST7"}},
     {true, {"<-03>3"}},
     {true, {"CST6CDT,M3.2.0,M11.1.0"}},
-    {true, {"CST6CDT,M4.1.0,M10.5.0"}},
+    {true, {"CST6"}},
     {true, {"AKST9AKDT,M3.2.0,M11.1.0"}},
-    {true, {"CST6CDT,M4.1.0,M10.5.0"}},
+    {true, {"CST6"}},
     {true, {"<-03>3<-02>,M3.2.0,M11.1.0"}},
     {true, {"AST4ADT,M3.2.0,M11.1.0"}},
-    {true, {"CST6CDT,M4.1.0,M10.5.0"}},
+    {true, {"CST6"}},
     {true, {"<-03>3"}},
     {true, {"EST5EDT,M3.2.0,M11.1.0"}},
     {true, {"AST4"}},
@@ -470,8 +472,8 @@ static const TableValue America_vals[] = {
     {true, {"AKST9AKDT,M3.2.0,M11.1.0"}},
     {true, {"<-02>2"}},
     {false, {.sub_table=&North_Dakota}},
-    {true, {"<-03>3<-02>,M3.5.0/-2,M10.5.0/-1"}},
-    {true, {"MST7MDT,M3.2.0,M11.1.0"}},
+    {true, {"<-02>2<-01>,M3.5.0/-1,M10.5.0/0"}},
+    {true, {"CST6CDT,M3.2.0,M11.1.0"}},
     {true, {"EST5"}},
     {true, {"EST5EDT,M3.2.0,M11.1.0"}},
     {true, {"<-03>3"}},
@@ -518,7 +520,7 @@ static const TableValue America_vals[] = {
     {true, {"MST7MDT,M3.2.0,M11.1.0"}},
 };
 
-static const Table America = {America_keys, America_vals, 145};
+static const Table America = {America_keys, America_vals, 146};
 
 static const char * const Antarctica_keys[] = {
     "Casey",
@@ -667,7 +669,7 @@ static const char * const Asia_keys[] = {
 static const TableValue Asia_vals[] = {
     {true, {"<+03>-3"}},
     {true, {"<+06>-6"}},
-    {true, {"EET-2EEST,M2.5.4/24,M10.5.5/1"}},
+    {true, {"<+03>-3"}},
     {true, {"<+12>-12"}},
     {true, {"<+05>-5"}},
     {true, {"<+05>-5"}},
@@ -689,15 +691,15 @@ static const TableValue Asia_vals[] = {
     {true, {"CST-8"}},
     {true, {"<+0530>-5:30"}},
     {true, {"<+06>-6"}},
-    {true, {"EET-2EEST,M3.5.5/0,M10.5.5/0"}},
+    {true, {"<+03>-3"}},
     {true, {"<+06>-6"}},
     {true, {"<+09>-9"}},
     {true, {"<+04>-4"}},
     {true, {"<+05>-5"}},
     {true, {"EET-2EEST,M3.5.0/3,M10.5.0/4"}},
-    {true, {"EET-2EEST,M3.4.4/72,M10.4.4/25"}},
+    {true, {"EET-2EEST,M3.4.4/50,M10.4.4/50"}},
     {true, {"CST-8"}},
-    {true, {"EET-2EEST,M3.4.4/72,M10.4.4/25"}},
+    {true, {"EET-2EEST,M3.4.4/50,M10.4.4/50"}},
     {true, {"<+07>-7"}},
     {true, {"HKT-8"}},
     {true, {"<+07>-7"}},
@@ -747,7 +749,7 @@ static const TableValue Asia_vals[] = {
     {true, {"CST-8"}},
     {true, {"<+05>-5"}},
     {true, {"<+04>-4"}},
-    {true, {"<+0330>-3:30<+0430>,J79/24,J263/24"}},
+    {true, {"<+0330>-3:30"}},
     {true, {"IST-2IDT,M3.4.4/26,M10.5.0"}},
     {true, {"<+06>-6"}},
     {true, {"<+06>-6"}},
@@ -957,6 +959,7 @@ static const char * const Europe_keys[] = {
     "Kaliningrad",
     "Kiev",
     "Kirov",
+    "Kyiv",
     "Lisbon",
     "Ljubljana",
     "London",
@@ -1022,7 +1025,8 @@ static const TableValue Europe_vals[] = {
     {true, {"GMT0BST,M3.5.0/1,M10.5.0"}},
     {true, {"EET-2"}},
     {true, {"EET-2EEST,M3.5.0/3,M10.5.0/4"}},
-    {true, {"<+03>-3"}},
+    {true, {"MSK-3"}},
+    {true, {"EET-2EEST,M3.5.0/3,M10.5.0/4"}},
     {true, {"WET0WEST,M3.5.0/1,M10.5.0"}},
     {true, {"CET-1CEST,M3.5.0,M10.5.0/3"}},
     {true, {"GMT0BST,M3.5.0/1,M10.5.0"}},
@@ -1057,14 +1061,14 @@ static const TableValue Europe_vals[] = {
     {true, {"CET-1CEST,M3.5.0,M10.5.0/3"}},
     {true, {"CET-1CEST,M3.5.0,M10.5.0/3"}},
     {true, {"EET-2EEST,M3.5.0/3,M10.5.0/4"}},
-    {true, {"<+03>-3"}},
+    {true, {"MSK-3"}},
     {true, {"CET-1CEST,M3.5.0,M10.5.0/3"}},
     {true, {"CET-1CEST,M3.5.0,M10.5.0/3"}},
     {true, {"EET-2EEST,M3.5.0/3,M10.5.0/4"}},
     {true, {"CET-1CEST,M3.5.0,M10.5.0/3"}},
 };
 
-static const Table Europe = {Europe_keys, Europe_vals, 63};
+static const Table Europe = {Europe_keys, Europe_vals, 64};
 
 static const char * const Indian_keys[] = {
     "Antananarivo",
@@ -1153,7 +1157,7 @@ static const TableValue Pacific_vals[] = {
     {true, {"<+11>-11"}},
     {true, {"<+13>-13"}},
     {true, {"<+13>-13"}},
-    {true, {"<+12>-12<+13>,M11.2.0,M1.2.3/99"}},
+    {true, {"<+12>-12"}},
     {true, {"<+12>-12"}},
     {true, {"<-06>6"}},
     {true, {"<-09>9"}},

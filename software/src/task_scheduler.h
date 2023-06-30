@@ -31,8 +31,6 @@
 
 #include "tools.h"
 
-#include "ArduinoJson.h"
-
 struct Task {
     std::function<void(void)> fn;
     uint32_t next_deadline_ms;
@@ -42,23 +40,29 @@ struct Task {
     Task(std::function<void(void)> fn, uint32_t first_run_delay_ms, uint32_t delay_ms, bool once);
 };
 
-bool compare(const Task &a, const Task &b);
+bool compare(const Task *a, const Task *b);
 
-class TaskScheduler {
+class TaskScheduler
+{
 public:
     TaskScheduler() : tasks(&compare)
     {
     }
+    void pre_setup();
     void setup();
     void register_urls();
     void loop();
 
     bool initialized = false;
 
-    void scheduleOnce(std::function<void(void)> &&fn, uint32_t delay);
-    void scheduleWithFixedDelay(std::function<void(void)> &&fn, uint32_t first_delay, uint32_t delay);
+    void scheduleOnce(std::function<void(void)> &&fn, uint32_t delay_ms);
+    void scheduleWithFixedDelay(std::function<void(void)> &&fn, uint32_t first_delay_ms, uint32_t delay_ms);
 
 private:
     std::mutex task_mutex;
-    std::priority_queue<Task, std::vector<Task>, decltype(&compare)> tasks;
+    std::priority_queue<Task *, std::vector<Task *>, decltype(&compare)> tasks;
 };
+
+// Make global variable available everywhere because it is not declared in modules.h.
+// Definition is in task_scheduler.cpp.
+extern TaskScheduler task_scheduler;

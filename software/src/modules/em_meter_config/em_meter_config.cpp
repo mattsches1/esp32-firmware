@@ -19,28 +19,17 @@
 
 #include "em_meter_config.h"
 
-#include "bindings/errors.h"
+//#include "bindings/errors.h"
 
 #include "api.h"
 #include "event_log.h"
-#include "task_scheduler.h"
-#include "tools.h"
-#include "web_server.h"
 #include "modules.h"
 
-extern EventLog logger;
-
-extern TaskScheduler task_scheduler;
-extern WebServer server;
-
-extern API api;
-
-EMMeterConfig::EMMeterConfig()
+void EMMeterConfig::pre_setup()
 {
     // States
     config = Config::Object({
-        {"meter_type", Config::Uint8(0)}
-    });
+        {"meter_source", Config::Uint8(0)}    });
 }
 
 void EMMeterConfig::setup()
@@ -49,7 +38,9 @@ void EMMeterConfig::setup()
 
     config_in_use = config;
 
-    // config_in_use.get("meter_type")->asUint8()
+    if (config_in_use.get("meter_source")->asUint() == 100) {
+        meter.updateMeterState(2, METER_TYPE_CUSTOM_BASIC);
+    }
 
     initialized = true;
 }
@@ -57,8 +48,4 @@ void EMMeterConfig::setup()
 void EMMeterConfig::register_urls()
 {
     api.addPersistentConfig("energy_manager/meter_config", &config, {}, 1000);
-}
-
-void EMMeterConfig::loop()
-{
 }

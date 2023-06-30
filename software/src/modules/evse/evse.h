@@ -25,6 +25,9 @@
 #include "device_module.h"
 #include "evse_bricklet_firmware_bin.embedded.h"
 
+#define CHARGING_SLOT_COUNT 14
+#define CHARGING_SLOT_COUNT_SUPPORTED_BY_EVSE 20
+
 #define CHARGING_SLOT_INCOMING_CABLE 0
 #define CHARGING_SLOT_OUTGOING_CABLE 1
 #define CHARGING_SLOT_SHUTDOWN_INPUT 2
@@ -34,6 +37,11 @@
 #define CHARGING_SLOT_USER 6
 #define CHARGING_SLOT_CHARGE_MANAGER 7
 #define CHARGING_SLOT_EXTERNAL 8
+#define CHARGING_SLOT_MODBUS_TCP 9
+#define CHARGING_SLOT_MODBUS_TCP_ENABLE 10
+#define CHARGING_SLOT_OCPP 11
+#define CHARGING_SLOT_CHARGE_LIMITS 12
+#define CHARGING_SLOT_REQUIRE_METER 13
 
 #define IEC_STATE_A 0
 #define IEC_STATE_B 1
@@ -47,6 +55,8 @@
 #define CHARGER_STATE_CHARGING 3
 #define CHARGER_STATE_ERROR 4
 
+#define DATA_STORE_PAGE_CHARGE_TRACKER 0
+
 class EVSE : public DeviceModule<TF_EVSE,
                                  evse_bricklet_firmware_bin_data,
                                  evse_bricklet_firmware_bin_length,
@@ -55,10 +65,11 @@ class EVSE : public DeviceModule<TF_EVSE,
                                  tf_evse_reset,
                                  tf_evse_destroy> {
 public:
-    EVSE();
-    void setup();
-    void register_urls();
-    void loop();
+    EVSE() : DeviceModule("evse", "EVSE", "EVSE", std::bind(&EVSE::setup_evse, this)){}
+    void pre_setup() override;
+    void setup() override;
+    void register_urls() override;
+    void loop() override;
 
     void update_all_data();
 
@@ -69,40 +80,69 @@ public:
 
     void set_user_current(uint16_t current);
 
+    void set_modbus_current(uint16_t current);
+    void set_modbus_enabled(bool enabled);
+
+    void set_require_meter_blocking(bool blocking);
+    void set_require_meter_enabled(bool enabled);
+    bool get_require_meter_blocking();
+    bool get_require_meter_enabled();
+
+    void set_charge_limits_slot(uint16_t current, bool enabled);
+    //void set_charge_time_restriction_slot(uint16_t current, bool enabled);
+
+    void set_ocpp_current(uint16_t current);
+    uint16_t get_ocpp_current();
+
     bool apply_slot_default(uint8_t slot, uint16_t current, bool enabled, bool clear);
     void apply_defaults();
 
+    void factory_reset();
+
+    void set_data_storage(uint8_t page, const uint8_t *data);
+    void get_data_storage(uint8_t page, uint8_t *data);
+    void set_indicator_led(int16_t indication, uint16_t duration, uint8_t *ret_status);
+
+    void check_debug();
+
     bool debug = false;
 
-    ConfigRoot evse_state;
-    ConfigRoot evse_hardware_configuration;
-    ConfigRoot evse_low_level_state;
-    ConfigRoot evse_button_state;
-    ConfigRoot evse_slots;
-    ConfigRoot evse_indicator_led;
-    ConfigRoot evse_stop_charging;
-    ConfigRoot evse_start_charging;
-    ConfigRoot evse_auto_start_charging;
-    ConfigRoot evse_auto_start_charging_update;
-    ConfigRoot evse_global_current;
-    ConfigRoot evse_global_current_update;
-    ConfigRoot evse_management_enabled;
-    ConfigRoot evse_management_enabled_update;
-    ConfigRoot evse_user_current;
-    ConfigRoot evse_user_enabled;
-    ConfigRoot evse_user_enabled_update;
-    ConfigRoot evse_external_enabled;
-    ConfigRoot evse_external_enabled_update;
-    ConfigRoot evse_external_defaults;
-    ConfigRoot evse_external_defaults_update;
-    ConfigRoot evse_management_current;
-    ConfigRoot evse_management_current_update;
-    ConfigRoot evse_external_current;
-    ConfigRoot evse_external_current_update;
-    ConfigRoot evse_external_clear_on_disconnect;
-    ConfigRoot evse_external_clear_on_disconnect_update;
-    ConfigRoot evse_user_calibration;
+    ConfigRoot state;
+    ConfigRoot hardware_configuration;
+    ConfigRoot low_level_state;
+    ConfigRoot button_state;
+    ConfigRoot slots;
+    ConfigRoot indicator_led;
+    ConfigRoot auto_start_charging;
+    ConfigRoot auto_start_charging_update;
+    ConfigRoot global_current;
+    ConfigRoot global_current_update;
+    ConfigRoot management_enabled;
+    ConfigRoot management_enabled_update;
+    ConfigRoot user_current;
+    ConfigRoot user_enabled;
+    ConfigRoot user_enabled_update;
+    ConfigRoot external_enabled;
+    ConfigRoot external_enabled_update;
+    ConfigRoot external_defaults;
+    ConfigRoot external_defaults_update;
+    ConfigRoot management_current;
+    ConfigRoot management_current_update;
+    ConfigRoot external_current;
+    ConfigRoot external_current_update;
+    ConfigRoot external_clear_on_disconnect;
+    ConfigRoot external_clear_on_disconnect_update;
+    ConfigRoot user_calibration;
+    ConfigRoot modbus_enabled;
+    ConfigRoot modbus_enabled_update;
+    ConfigRoot ocpp_enabled;
+    ConfigRoot ocpp_enabled_update;
+    ConfigRoot boost_mode;
+    ConfigRoot boost_mode_update;
+    ConfigRoot require_meter_enabled;
+    ConfigRoot require_meter_enabled_update;
 
     uint32_t last_current_update = 0;
     bool shutdown_logged = false;
+    uint32_t last_debug_check = 0;
 };

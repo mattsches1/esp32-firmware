@@ -24,8 +24,6 @@
 #include "api.h"
 #include "config.h"
 
-#define MAX_CONNECT_ATTEMPT_INTERVAL_MS (5 * 60 * 1000)
-
 enum class MqttConnectionState {
     NOT_CONFIGURED,
     NOT_CONNECTED,
@@ -44,37 +42,42 @@ struct MqttState {
     uint32_t last_send_ms;
 };
 
-class Mqtt : public IAPIBackend {
+class Mqtt final : public IAPIBackend
+{
 public:
-    Mqtt();
-    void setup();
-    void register_urls();
-    void loop();
+    Mqtt(){}
+    void pre_setup() override;
+    void setup() override;
+    void register_urls() override;
+    void register_events() override;
     void connect();
 
-    void publish(String path, String payload);
-    void subscribe(String path, std::function<void(char *, size_t)> callback, bool forbid_retained);
+    void publish_with_prefix(const String &path, const String &payload);
+    void subscribe_with_prefix(const String &path, std::function<void(char *, size_t)> callback, bool forbid_retained);
+    void publish(const String &topic, const String &payload, bool retain);
+    void subscribe(const String &topic, std::function<void(char *, size_t)> callback, bool forbid_retained);
 
     // IAPIBackend implementation
     void addCommand(size_t commandIdx, const CommandRegistration &reg) override;
     void addState(size_t stateIdx, const StateRegistration &reg) override;
     void addRawCommand(size_t rawCommandIdx, const RawCommandRegistration &reg) override;
-    bool pushStateUpdate(size_t stateIdx, String payload, String path) override;
-    void pushRawStateUpdate(String payload, String path) override;
-    void wifiAvailable() override;
-
-    bool initialized = false;
+    void addResponse(size_t responseIdx, const ResponseRegistration &reg) override;
+    bool pushStateUpdate(size_t stateIdx, const String &payload, const String &path) override;
+    void pushRawStateUpdate(const String &payload, const String &path) override;
 
     void onMqttConnect();
     void onMqttMessage(char *topic, size_t topic_len, char *data, size_t data_len, bool retain);
     void onMqttDisconnect();
 
-    ConfigRoot mqtt_config;
-    ConfigRoot mqtt_state;
+    ConfigRoot config;
+    ConfigRoot state;
 
-    ConfigRoot mqtt_config_in_use;
+    ConfigRoot config_in_use;
 
     std::vector<MqttCommand> commands;
     std::vector<MqttState> states;
     esp_mqtt_client_handle_t client;
+
+    uint32_t last_connected_ms = 0;
+    bool was_connected = false;
 };

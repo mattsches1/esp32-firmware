@@ -21,14 +21,27 @@
 
 #include "config.h"
 
-class NTP {
-public:
-    NTP();
-    void setup();
-    void register_urls();
-    void loop();
+#include <mutex>
 
-    bool initialized = false;
+#include "module.h"
+
+class NTP final : public IModule
+{
+private:
+    struct timeval last_sync{};
+
+    String ntp_server1;
+    String ntp_server2;
+
+public:
+    NTP(){}
+    void pre_setup() override;
+    void setup() override;
+    void register_urls() override;
+    void set_synced();
+
+    std::mutex mtx;
+    uint32_t sync_counter = 0;
 
     ConfigRoot config;
     ConfigRoot state;

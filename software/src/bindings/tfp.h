@@ -17,6 +17,7 @@
 #include "macros.h"
 #include "packet_buffer.h"
 #include "tfp_header.h"
+#include "config.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -41,6 +42,10 @@ typedef struct TF_TFP {
     TF_TFP_CallbackHandler cb_handler;
 
     uint16_t device_id;
+#if TF_NET_ENABLE != 0
+    uint8_t spitfp_timeout_counter;
+    int8_t spitfp_last_seq_num;
+#endif
 } TF_TFP;
 
 void tf_tfp_create(TF_TFP *tfp, uint32_t uid_num, uint16_t device_id, TF_SPITFP *spitfp) TF_ATTRIBUTE_NONNULL_ALL;
@@ -49,7 +54,7 @@ void tf_tfp_prepare_send(TF_TFP *tfp, uint8_t fid, uint8_t payload_size, bool re
 uint8_t *tf_tfp_get_send_payload_buffer(TF_TFP *tfp) TF_ATTRIBUTE_NONNULL_ALL;
 TF_PacketBuffer *tf_tfp_get_receive_buffer(TF_TFP *tfp) TF_ATTRIBUTE_NONNULL_ALL;
 
-int tf_tfp_send_packet(TF_TFP *tfp, bool response_expected, uint32_t deadline_us, uint8_t *error_code, uint8_t *length) TF_ATTRIBUTE_NONNULL_ALL TF_ATTRIBUTE_WARN_UNUSED_RESULT;
+int tf_tfp_send_packet(TF_TFP *tfp, bool response_expected, uint32_t deadline_us, uint8_t *error_code, uint8_t *length, int8_t seq_num) TF_ATTRIBUTE_NONNULL_ALL TF_ATTRIBUTE_WARN_UNUSED_RESULT;
 void tf_tfp_packet_processed(TF_TFP *tfp) TF_ATTRIBUTE_NONNULL_ALL;
 int tf_tfp_finish_send(TF_TFP *tfp, int previous_result, uint32_t deadline_us) TF_ATTRIBUTE_NONNULL_ALL TF_ATTRIBUTE_WARN_UNUSED_RESULT;
 

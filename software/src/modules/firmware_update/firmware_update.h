@@ -19,17 +19,21 @@
 
 #pragma once
 
+#include "config.h"
+
 #include <stdint.h>
+
+#include "module.h"
 #include "web_server.h"
 
-class FirmwareUpdate {
-public:
-    FirmwareUpdate();
-    void setup();
-    void register_urls();
-    void loop();
+void factory_reset(bool restart_esp = true);
 
-    bool initialized = false;
+class FirmwareUpdate final : public IModule
+{
+public:
+    FirmwareUpdate(){}
+    void setup() override;
+    void register_urls() override;
 
     bool firmware_update_running = false;
 
@@ -51,4 +55,5 @@ private:
     uint32_t checksum = 0;
     uint32_t checksum_offset = 0;
     bool update_aborted = false;
+    bool info_found = false;
 };
