@@ -1,0 +1,97 @@
+{
+    "phase_switcher": {
+        "status": {
+            "available_charging_power": "Verfügbare Ladeleistung",
+            "active_phases": "Aktive Phasen",
+            "no_phase": "Keine",
+            "one_phase": "Eine",
+            "two_phases": "Zwei",
+            "three_phases": "Drei"
+        },
+        "navbar": {
+            "phase_switcher": "Phasen&shy;umschaltung"
+        },
+        "content": {
+            "phase_switcher": "Phasen&shy;umschaltung",
+            "state": "Status",
+            "sequencer_state": "Status",
+            "charging_power" : {
+                "title": "Ladeleistung",
+                "description": "Angefordert / Tatsächlich"
+            },
+            "requested_phases": "Angeforderte Phasen",
+            "contactor_state": "Schützprüfung",
+            "contactor_state_ok": "OK",
+            "contactor_state_error": "Fehler",
+
+            "configuration": "Konfiguration",
+            "phase_switcher_enabled": "Phasenumschaltung aktivieren",
+            "phase_switcher_enabled_desc": "Aktiviert die automatische Phasenumschaltung und die Ladestromregelung über die zur Verfügung stehende Leistung.",
+
+            "operating_mode" : "Betriebsart",
+            "one_phase_static" : "Nur einphasig",
+            "two_phases_static" : "Nur zweiphasig",
+            "three_phases_static" : "Nur dreiphasig",
+            "one_two_phases_dynamic" : "Automatische Umschaltung ein-/zweiphasig",
+            "one_three_phases_dynamic" : "Automatische Umschaltung ein-/dreiphasig",
+            "one_two_three_phases_dynamic" : "Automatische Umschaltung ein-/zwei-/dreiphasig",
+
+            "delay_time" : {
+                "title": "Verzögerungszeit",
+                "description": "Zeit, für die die Umschaltschwelle mindestens unter-/überschritten sein muss"
+            },
+            "minimum_duration" : {
+                "title": "Mindestdauer",
+                "description": "Zeit, für die der aktuelle Schaltzustand mindestens beibehalten wird, bevor wieder umgeschaltet wird"
+            },
+            "pause_time" : {
+                "title": "Pausenzeit",
+                "description": "Zeit, für die das Laden bei einer Umschaltung unterbrochen wird"
+            },
+
+            "reboot_title": "Neu starten um Konfiguration anzuwenden",
+            "reboot_content": "Die geänderten Einstellungen werden nur nach einem Neustart angewendet. Jetzt neu starten?",
+            "abort": "Abbrechen",
+            "reboot": "Neu starten",
+            "save": "Speichern",
+
+            "low_level_state": "Low-Level-Zustand",
+            "low_level_state_show": "Anzeigen / Verstecken",
+            "channel_states": {
+                "title": "Kanalzustände",
+                "description": "Zustand der E/A-Kanäle (links=Ausgänge, rechts=Eingänge)"
+            },
+            "channel_low": "Low",
+            "channel_high": "High",
+            "on_delay_values":  {
+                "title": "Einschaltverzögerung",
+                "description": "Für ein-/zwei-/dreiphasiges Laden"
+            },
+            "off_delay_values":  {
+                "title": "Ausschaltverzögerung",
+                "description": "Für ein-/zwei-/dreiphasiges Laden"
+            },
+
+            "meter": "Stromzähler",
+            "actual_charging_power": "Aktuelle Ladeleistung"
+
+        },
+        "script": {
+            "save_failed": "Speichern der Konfiguration für die automatische Phasenumschaltung fehlgeschlagen.",
+            "reboot_content_changed": "Einstellungen Phasenumschaltung",
+            "sequencer_states" : {
+                "0" : "Inaktiv",
+                "1" : "Standby",
+                "5" : "Breche EVSE Start ab",
+                "10" : "Warte auf EVSE Start",
+                "20" : "Ladevorgang aktiv",
+                "25" : "Schnellladen aktiv",
+                "30" : "Warte auf EVSE Stopp",
+                "40" : "Pausiere vor Phasenumschaltung",
+                "50" : "Ladevorgang durch EVSE gestoppt"
+            },
+            "time": "Uhrzeit",
+            "power": "Leistung (Watt)"
+        }
+    }
+}

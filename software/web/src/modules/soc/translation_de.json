@@ -1,0 +1,85 @@
+{
+    "soc": {
+        "status": {
+            "soc": "Ladestand"
+        },
+        "navbar": {
+            "soc": "Ladestand"
+        },
+        "content": {
+            "soc": "Ladestand",
+            "refresh": "Aktualisieren",
+            "state": "Status",
+            "sequencer_state": {
+                "title": "Abfrage",
+                "description": "Schritt / Zeit seit letzter Aktualisierung / Status"
+            },
+            "last_request_status": {
+                "ok" : "OK",
+                "error" : "Fehler"
+            },
+            "ignore_once": "Einmalig ignorieren",
+            "ignore_once_desc": "Ignoriert die Ladegrenze einmalig für den nächsten Ladezyklus",
+
+            "configuration": "Konfiguration",
+            "enabled": "Automatischer Ladestopp",
+            "enabled_desc": "Stoppt den Ladevorgang bei Erreichen des eingestellten Ladestands",
+            "user_name": "Benutzername",
+            "password": "Passwort",
+            "pin": "PIN",
+            "unchanged": "unverändert",
+            "vin": {
+                "title": "VIN",
+                "description": "Fahrzeugidentnummer"
+            },
+            "vin_list": "VINs",
+            "vin_list_search": "Suche",
+            "vin_list_searching": "Suche...",
+            "soc_setpoint" : {
+                "title": "Sollwert Ladestand",
+                "description": "Ladestand, bei dem der Ladevorgang beendet wird"
+            },
+            "update_rate_when_charging" : {
+                "title": "Aktualisierung wenn aktiv",
+                "description": "Abfrageintervall für den Ladestand, während ein Ladevorigang aktiv ist"
+            },
+            "update_rate_when_idle" : {
+                "title": "Aktualisierung wenn inaktiv",
+                "description": "Abfrageintervall für den Ladestand, wenn kein Ladevorgang aktiv ist"
+            },
+            "chart" : "Ladestandsverlauf",
+
+            "reboot_title": "Neu starten um Konfiguration anzuwenden",
+            "reboot_content": "Die geänderten Einstellungen werden nur nach einem Neustart angewendet. Jetzt neu starten?",
+            "abort": "Abbrechen",
+            "reboot": "Neu starten",
+            "save": "Speichern"
+        },
+        "script": {
+            "save_failed": "Speichern der Konfiguration für die Abfrage des Ladestands fehlgeschlagen.",
+            "reboot_content_changed": "Einstellungen Ladestand",
+            "sequencer_states" : {
+                "0" : "Standby",
+                "10" : "Init",
+                "20" : "Login 1",
+                "30" : "Login 2",
+                "40" : "Login 3",
+                "50" : "Login 4",
+                "55" : "Hole Datum",
+                "60" : "Hole VINS",
+                "70" : "Hole Fahrzeugzustand",
+                "80" : "Hole PIN Freigabe",
+                "90" : "Aktualisierung",
+                "100" : "Warte auf EVSE Stopp"
+            },
+            "vin_list_init_failed": "Suche nach VINs fehlgeschlagen. Konnte Suche nicht starten.",
+            "vin_list_results_failed": "Suche nach VINs fehlgeschlagen. Konnte Ergebnisse nicht abholen.",
+            "vin_list_select_vin": "Gefundene VINs",
+            "no_vin_found": "Keine VINs gefunden",
+            "time": "Uhrzeit",
+            "soc": "Ladestand",
+            "ignore_once_update_failed": "Setzen der Option zum Ignorieren des Ladelimits fehlgeschlagen."
+
+        }
+    }
+}

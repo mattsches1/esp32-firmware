@@ -1,0 +1,96 @@
+{
+    "phase_switcher": {
+        "status": {
+            "available_charging_power": "Available charging power",
+            "active_phases": "Active phases",
+            "no_phase": "None",
+            "one_phase": "One",
+            "two_phases": "Two",
+            "three_phases": "Three"
+        },
+        "navbar": {
+            "phase_switcher": "Phase Switcher"
+        },
+        "content": {
+            "phase_switcher": "Phase Switcher",
+            "state": "State",
+            "sequencer_state" :"State",
+            "charging_power" : {
+                "title": "Charging power",
+                "description": "Available / Actual"
+            },
+            "requested_phases": "Requested phases",
+            "contactor_state": "Contactor check",
+            "contactor_state_ok": "OK",
+            "contactor_state_error": "Error",
+  
+            "configuration": "Configuration",
+            "phase_switcher_enabled": "Enable phase switcher",
+            "phase_switcher_enabled_desc": "Activates the automatic switching between one or several phases and the charging current calculation via the available power.",
+
+            "operating_mode" : "Operating mode",
+            "one_phase_static" : "single phase only",
+            "two_phases_static" : "two-phase only",
+            "three_phases_static" : "three-phase only",
+            "one_two_phases_dynamic" : "automatic switching one/two phases",
+            "one_three_phases_dynamic" : "automatic switching one/three phases",
+            "one_two_three_phases_dynamic" : "automatic switching one/two/three phases",
+
+            "delay_time" : {
+                "title": "Delay time",
+                "description": "Time for which the available power needs to be above/below the switching point"
+            },
+            "minimum_duration" : {
+                "title": "Minimum duration",
+                "description": "Time for which the current switching state is at least kept before switching again"
+            },
+            "pause_time" : {
+                "title": "Pause time",
+                "description": "Time for which the charging is interrupted when switching phases"
+            },
+
+            "reboot_title": "Restart to apply configuration",
+            "reboot_content": "The modified configuration will only be applied after a restart. Reboot now?",
+            "abort": "Abort",
+            "reboot": "Reboot",
+            "save": "Save",
+
+            "low_level_state": "Low Level State",
+            "low_level_state_show": "Show / Hide",
+            "channel_states": {
+                "title": "Channel states",
+                "description": "States of I/O channels (left=output, right=input)"
+            },
+            "channel_low": "Low",
+            "channel_high": "High",
+            "on_delay_values":  {
+                "title": "On delay",
+                "description": "For charging with one/two/three phases"
+            },
+            "off_delay_values":  {
+                "title": "Off delay",
+                "description": "For charging with one/two/three phases"
+            },
+
+            "meter": "Energy Meter",
+            "actual_charging_power": "Actual charging power"
+        },
+        "script": {
+            "save_failed": "Failed to save the phase switcher configuration",
+            "reboot_content_changed": "Phase switcher settings",
+            "sequencer_states" : {
+                "0" : "Inactive",
+                "1" : "Standby",
+                "5" : "Cancelling EVSE start",
+                "10" : "Waiting for EVSE start",
+                "20" : "Charging active",
+                "25" : "Quick charging active",
+                "30" : "Waiting for EVSE stop",
+                "40" : "Pausing before switching phases",
+                "50" : "Charging stopped by EVSE"
+            },
+            "time": "Time of day",
+            "power": "Power (Watt)"
+        }
+    }
+}

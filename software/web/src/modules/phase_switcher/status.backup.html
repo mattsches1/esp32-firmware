@@ -1,0 +1,33 @@
+<div id="status-phase_switcher">
+    <div class="form-group row">
+        <div class="col-sm-4">
+            <label for="phase_switcher_state_available_charging_power" class="col-form-label">
+                <span class="form-label" data-i18n="phase_switcher.status.available_charging_power"></span>
+            </label>
+        </div>
+        <div class="col-lg-8 col-xl-4">
+            <input id="phase_switcher_state_available_charging_power" class="form-control" type="text" placeholder="..." readonly>
+        </div>
+    </div>
+
+    <div class="form-group row">
+        <div class="col-sm-4">
+            <label for="phase_switcher_state_no_phase" class="col-form-label">
+                <span class="form-label" data-i18n="phase_switcher.status.active_phases"></span>
+            </label>
+        </div>
+        <div class="col-lg-8 col-xl-4">
+            <div id="phase_switcher_state_btn_group_active_phases" class="btn-group flex-wrap" role="group"
+                style="width: 100%">
+                <button id="phase_switcher_state_no_phase" type="button"
+                    class="btn btn-outline-primary" disabled  data-i18n="phase_switcher.status.no_phase"></button>
+                <button id="phase_switcher_state_one_phase" type="button"
+                    class="btn btn-outline-primary" disabled  data-i18n="phase_switcher.status.one_phase"></button>
+                <button id="phase_switcher_state_two_phases" type="button" class="btn btn-outline-primary"
+                    disabled data-i18n="phase_switcher.status.two_phases"></button>
+                <button id="phase_switcher_state_three_phases" type="button" class="btn btn-outline-primary"
+                    disabled data-i18n="phase_switcher.status.three_phases"></button>
+            </div>
+        </div>
+    </div>
+</div>

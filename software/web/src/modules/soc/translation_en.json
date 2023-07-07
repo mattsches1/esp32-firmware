@@ -1,0 +1,84 @@
+{
+    "soc": {
+        "status": {
+            "soc": "State of Charge (SOC)"
+        },
+        "navbar": {
+            "soc": "State of Charge"
+        },
+        "content": {
+            "soc": "State of Charge",
+            "refresh": "Refresh",
+            "state": "State",
+            "sequencer_state": {
+                "title": "Request",
+                "description": "Step / Time since last update / Status"
+            },
+            "last_request_status": {
+                "ok" : "OK",
+                "error" : "Error"
+            },
+            "ignore_once": "Ignore once",
+            "ignore_once_desc": "Ignore the SOC limit once for the current charging cycle",
+
+            "configuration": "Configuration",
+            "enabled": "Stop at target SOC",
+            "enabled_desc": "Stops charging as soon as the configured state of charge has been reached",
+            "user_name": "User name",
+            "password": "Password",
+            "pin": "PIN",
+            "unchanged": "unchanged",
+            "vin": {
+                "title": "VIN",
+                "description": "Vehicle Identification Number"
+            },
+            "vin_list": "VINs",
+            "vin_list_search": "Search",
+            "vin_list_searching": "Searching...",
+            "soc_setpoint" : {
+                "title": "SOC Setpoint",
+                "description": "Charging is stopped as soon as this state of charge is reached"
+            },
+            "update_rate_when_charging" : {
+                "title": "Update rate when charging",
+                "description": "Update rate of the SOC while a vehicle is being charged"
+            },
+            "update_rate_when_idle" : {
+                "title": "Update rate when idle",
+                "description": "Update rate of the SOC if no vehicle is being charged"
+            },
+            "chart" : "SOC History",
+
+            "reboot_title": "Restart to apply configuration",
+            "reboot_content": "The modified configuration will only be applied after a restart. Reboot now?",
+            "abort": "Abort",
+            "reboot": "Reboot",
+            "save": "Save"
+        },
+        "script": {
+            "save_failed": "Failed to save the state of charge configuration",
+            "reboot_content_changed": "State of charge settings",
+            "sequencer_states" : {
+                "0" : "Idle",
+                "10" : "Init",
+                "20" : "Login 1",
+                "30" : "Login 2",
+                "40" : "Login 3",
+                "50" : "Login 4",
+                "55" : "Getting date",
+                "60" : "Getting vehicles",
+                "70" : "Getting vehicle status",
+                "80" : "Getting PIN auth",
+                "90" : "Deep refresh",
+                "100" : "Waiting for EVSE stop"
+            },
+            "vin_list_init_failed": "Searching for VINS failed. Could not start search.",
+            "vin_list_results_failed": "Searching for VINs failed. Could not retrieve results.",
+            "vin_list_select_vin": "Found VINs",
+            "no_vin_found": "No VINs found",
+            "time": "Time",
+            "soc": "State of Charge",
+            "ignore_once_update_failed": "Failed to set ignore once option."
+        }
+    }
+}

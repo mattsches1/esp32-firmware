@@ -1,0 +1,185 @@
+<div class="tab-pane fade" role="tabpanel" aria-labelledby="sidebar-soc" id="soc">
+    <div id="soc_header" class="sticky-under-top"></div>
+
+    <!-- State -->
+    <div
+        class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+        <span class="h3" data-i18n="soc.content.state"></span>
+    </div>
+
+    <div class="form-group row">
+        <label for="soc_content_soc" class="col-lg-3 col-xl-2 col-form-label form-label" data-i18n="soc.content.soc"></label>
+        <div class="col-lg-9 col-xl-6 input-group">
+            <input id="soc_content_soc" class="form-control" type="text" placeholder="..." readonly>
+            <div class="input-group-append">
+                <button id="soc_refresh" class="btn btn-primary" type="button" data-i18n="soc.content.refresh"></button>
+            </div>
+        </div>  
+    </div>
+
+    <div class="form-group row ">
+        <label for="soc_sequencer_state" class="col-lg-3 col-xl-2 col-form-label">
+            <span class="form-label pr-2" data-i18n="soc.content.sequencer_state.title"></span>
+            <span class="text-muted" data-i18n="soc.content.sequencer_state.description"></span>
+        </label>
+        <div class="col-lg-9 col-xl-6 row pr-0 mb-1">
+            <div class="col-4 pr-0">
+                <input id="soc_sequencer_state" class="form-control" type="text" placeholder="..." readonly>
+            </div>
+            <div class="col-4 pr-0">
+                <input id="soc_time_since_state_change" class="form-control" type="text" placeholder="..." readonly>
+            </div>
+
+            <div id="soc_content_btn_group_last_request_status" class="col-4 btn-group flex-wrap pr-0 align-items-start" role="group" style="width: 100%">
+                <button type="button" class="col-6 btn btn-outline-success" disabled data-i18n="soc.content.last_request_status.ok"></button>
+                <button type="button" class="col-6 btn btn-outline-danger pr-0" disabled data-i18n="soc.content.last_request_status.error"></button>
+            </div>
+        </div>
+    </div>  
+
+    <div class="form-group row">
+        <label for="soc_ignore_once" class="col-lg-3 col-xl-2 col-form-label form-label" data-i18n="soc.content.ignore_once"></label>
+        <div class="col-lg-9 col-xl-6">
+            <div class="borderless-form-control custom-control custom-switch">
+                <input type="checkbox" class="custom-control-input" id="soc_ignore_once">
+                <label class="custom-control-label" for="soc_ignore_once" data-i18n="soc.content.ignore_once_desc"></label>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- Configuration -->
+    <div
+        class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+        <span class="h3" data-i18n="soc.content.configuration"></span>
+    </div>
+
+    <form id="soc_config_form" class="needs-validation" novalidate>
+
+        <div class="form-group row">
+            <label for="soc_config_enabled" class="col-lg-3 col-xl-2 col-form-label form-label" data-i18n="soc.content.enabled"></label>
+            <div class="col-lg-9 col-xl-6">
+                <div class="borderless-form-control custom-control custom-switch">
+                    <input type="checkbox" class="custom-control-input" id="soc_config_enabled">
+                    <label class="custom-control-label" for="soc_config_enabled" data-i18n="soc.content.enabled_desc"></label>
+                </div>
+            </div>
+        </div>
+
+        <div class="form-group row">
+            <label for="soc_config_user_name" class="col-lg-3 col-xl-2 col-form-label form-label" data-i18n="soc.content.user_name"></label>
+            <div class="col-lg-9 col-xl-6">
+                <input id="soc_config_user_name" class="form-control" type="text" required>
+            </div>
+        </div>
+
+        <div class="form-group row" id="soc_fca_password_form">
+            <label for="soc_config_password" class="col-lg-3 col-xl-2 col-form-label form-label" data-i18n="soc.content.password"></label>
+            <div class="col-lg-9 col-xl-6">
+                <div class="input-group">
+                    <input type="password" id="soc_config_password" class="form-control" value="" placeholder="" data-i18n="soc.content.unchanged" data-i18n-attr="placeholder"/>
+                    <div class="input-group-append">
+                        <div class="input-group-text custom-control custom-switch" style="padding-left: 2.5rem;">
+                            <input id="soc_show_password" type="checkbox" class="custom-control-input" aria-label="Show password">
+                            <label class="custom-control-label" for="soc_show_password" style="line-height: 20px;"><span data-feather="eye"></span></label>
+                        </div>
+                        <div class="input-group-text custom-control custom-switch" style="padding-left: 2.5rem;">
+                            <input id="soc_clear_password" type="checkbox" class="custom-control-input" aria-label="Clear password">
+                            <label class="custom-control-label" for="soc_clear_password" style="line-height: 20px;"><span data-feather="trash-2"></span></label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="form-group row" id="soc_fca_pin_form">
+            <label for="soc_config_pin" class="col-lg-3 col-xl-2 col-form-label form-label" data-i18n="soc.content.pin"></label>
+            <div class="col-lg-9 col-xl-6">
+                <div class="input-group">
+                    <input type="password" id="soc_config_pin" class="form-control" value="" placeholder="" data-i18n="soc.content.unchanged" data-i18n-attr="placeholder"/>
+                    <div class="input-group-append">
+                        <div class="input-group-text custom-control custom-switch" style="padding-left: 2.5rem;">
+                            <input id="soc_show_pin" type="checkbox" class="custom-control-input" aria-label="Show PIN">
+                            <label class="custom-control-label" for="soc_show_pin" style="line-height: 20px;"><span data-feather="eye"></span></label>
+                        </div>
+                        <div class="input-group-text custom-control custom-switch" style="padding-left: 2.5rem;">
+                            <input id="soc_clear_pin" type="checkbox" class="custom-control-input" aria-label="Clear PIN">
+                            <label class="custom-control-label" for="soc_clear_pin" style="line-height: 20px;"><span data-feather="trash-2"></span></label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="form-group row">
+            <div class="col-lg-3 col-xl-2">
+                <label for="soc_config_vin" class="col-form-label">
+                    <span class="form-label pr-2" data-i18n="soc.content.vin.title"></span>
+                    <span class="text-muted" data-i18n="soc.content.vin.description"></span>
+                </label>
+            </div>  
+            <div class="col-lg-9 col-xl-6 input-group">
+                <input id="soc_config_vin" class="form-control" type="text">
+                <!-- <div id="soc_vin_list_dropdown" class="input-group-append dropdown">
+                    <button id="soc_vin_list_button" class="form-control btn btn-primary rounded-right dropdown-toggle" type="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false" data-i18n="soc.content.vin_list_search" style="color: white !important;"></button>
+                    <div class="dropdown-menu  dropdown-menu-right" aria-labelledby="dropdownMenuButton" style="box-shadow: 0rem 0.25rem 0.5rem rgba(0, 0, 0, 0.2);">
+                        <h6 id="soc_vin_list_title" class="dropdown-header" data-i18n="soc.content.vin_list"></h6>
+                        <div id="soc_vin_list_spinner" class="text-center">
+                            <div class="spinner-border" style="width: 3rem; height: 3rem;" role="status">
+                                <span class="sr-only" data-i18n="soc.content.vin_list_searching"></span>
+                            </div>
+                        </div>
+                        <div id="soc_vin_list_results" hidden>
+
+                        </div>
+                    </div>
+                </div> -->
+            </div>
+        </div>
+
+        <div class="form-group row">
+            <label for="soc_config_setpoint" class="col-lg-3 col-xl-2 col-form-label">
+                <span class="form-label pr-2" data-i18n="soc.content.soc_setpoint.title"></span>
+                <span class="text-muted" data-i18n="soc.content.soc_setpoint.description"></span>
+            </label>
+            <div class="col-lg-9 col-xl-6 input-group">
+                <input id="soc_config_setpoint" class="form-control" type="number" min="10" max="100" step="1" required>
+                <div class="input-group-append">
+                    <div class="input-group-text form-control">%</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="form-group row">
+            <label for="soc_config_update_rate_when_charging" class="col-lg-3 col-xl-2 col-form-label">
+                <span class="form-label pr-2" data-i18n="soc.content.update_rate_when_charging.title"></span>
+                <span class="text-muted" data-i18n="soc.content.update_rate_when_charging.description"></span>
+            </label>
+            <div class="col-lg-9 col-xl-6 input-group">
+                <input id="soc_config_update_rate_when_charging" class="form-control" type="number" min="60" max="3600" step="1" required>
+                <div class="input-group-append">
+                    <div class="input-group-text form-control">s</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="form-group row">
+            <label for="soc_config_update_rate_when_idle" class="col-lg-3 col-xl-2 col-form-label">
+                <span class="form-label pr-2" data-i18n="soc.content.update_rate_when_idle.title"></span>
+                <span class="text-muted" data-i18n="soc.content.update_rate_when_idle.description"></span>
+            </label>
+            <div class="col-lg-9 col-xl-6 input-group">
+                <input id="soc_config_update_rate_when_idle" class="form-control" type="number" min="60" max="36000" step="1" required>
+                <div class="input-group-append">
+                    <div class="input-group-text form-control">s</div>
+                </div>
+            </div>
+        </div>
+    </form> 
+
+    <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+        <span class="h3" data-i18n="soc.content.chart"></span>
+    </div>
+    <div id="soc_chart" class="ct-chart ct-golden-section col-lg-12 col-xl-8"></div>
+
+</div>
