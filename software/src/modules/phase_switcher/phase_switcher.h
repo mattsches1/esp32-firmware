@@ -126,7 +126,7 @@ private:
     void contactor_check();
     void update_all_data();
     void update_history();
-
+    
     QuadRelayBricklet quad_relay_bricklet = QuadRelayBricklet(
             TF_INDUSTRIAL_QUAD_RELAY_V2_DEVICE_IDENTIFIER,
             "industrial quad relay bricklet",
@@ -169,6 +169,10 @@ private:
     IEC61851State iec61851_state;
     uint8_t auto_start_charging;
     bool contactor_error;
+
+    // ValueHistory power_hist;
+
+    // micros_t last_value_change = 0_usec;
 
 
     TF_Ringbuffer<int16_t,

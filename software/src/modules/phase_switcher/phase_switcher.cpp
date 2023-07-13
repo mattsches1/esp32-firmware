@@ -210,8 +210,12 @@ void PhaseSwitcher::register_urls()
     if (!initialized)
         return;
 
+    api.addPersistentConfig("phase_switcher/config", &api_config, {}, 1000);
+
     api.addState("phase_switcher/state", &api_state, {}, 1000);
  
+    api.addState("phase_switcher/low_level_state", &api_low_level_state, {}, 1000);
+
     api.addCommand("phase_switcher/available_charging_power", &api_available_charging_power, {}, [this](){
         if (enabled && !quick_charging_active){
             set_available_charging_power(api_available_charging_power.get("power")->asUint());
@@ -221,10 +225,6 @@ void PhaseSwitcher::register_urls()
     api.addCommand("phase_switcher/start_quick_charging", Config::Null(), {}, [this](){
         start_quick_charging();
     }, true);
-
-    api.addPersistentConfig("phase_switcher/config", &api_config, {}, 1000);
-
-    api.addState("phase_switcher/low_level_state", Config::Null(), {}, 1000);
 
     server.on("/phase_switcher/requested_power_history", HTTP_GET, [this](WebServerRequest request) {
         if (!initialized) {

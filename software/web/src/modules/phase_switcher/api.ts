@@ -24,3 +24,12 @@ export interface low_level_state {
     current_on_delay_time: Uint32Array,
     current_off_delay_time: Uint32Array
 }
+
+export interface history {
+    offset: number,
+    samples: number[],
+}
+
+export interface history_samples {
+    samples: number[],
+}

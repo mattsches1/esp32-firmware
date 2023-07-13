@@ -21,43 +21,439 @@ import $ from "../../ts/jq";
 import * as util from "../../ts/util";
 import * as API from "../../ts/api";
 
-import { h, render, Fragment } from "preact";
+import { h, render, createRef, Fragment, Component, ComponentChild } from "preact";
 import { translate_unchecked, __ } from "../../ts/translation";
 
 import { ConfigComponent } from "../../ts/components/config_component";
 import { ConfigForm } from "../../ts/components/config_form";
 import { FormRow } from "../../ts/components/form_row";
 import { InputNumber } from "../../ts/components/input_number";
-import { InputSelect } from "src/ts/components/input_select";
+import { InputSelect } from "../../ts/components/input_select";
 import { InputText } from "../../ts/components/input_text";
 import { Switch } from "../../ts/components/switch";
-import { SubPage } from "src/ts/components/sub_page";
-import { CollapsedSection } from "src/ts/components/collapsed_section";
+import { SubPage } from "../../ts/components/sub_page";
+import { CollapsedSection } from "../../ts/components/collapsed_section";
+import { IndicatorGroup } from "../../ts/components/indicator_group";
+import uPlot from 'uplot';
 
 type PhaseSwitcherConfig = API.getType['phase_switcher/config'];
-type PhaseSwitcherState = API.getType['phase_switcher/state'];
-type PhaseSwitcherLowLevelState = API.getType['phase_switcher/low_level_state'];
 
-export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, PhaseSwitcherConfig & PhaseSwitcherState & PhaseSwitcherLowLevelState> {
+interface PhaseSwitcherState {
+    state: API.getType['phase_switcher/state'];
+    low_level_state: API.getType['phase_switcher/low_level_state'];
+}
+
+interface UplotData {
+    timestamps: number[];
+    samples: number[];
+}
+
+interface UplotWrapperProps {
+    id: string;
+    class: string;
+    sidebar_id: string;
+    show: boolean;
+    legend_time_with_seconds: boolean;
+    x_height: number;
+    x_include_date: boolean;
+    y_min?: number;
+    y_max?: number;
+    y_diff_min?: number;
+}
+
+class UplotWrapper extends Component<UplotWrapperProps, {}> {
+    uplot: uPlot;
+    data: UplotData;
+    pending_data: UplotData;
+    visible: boolean = false;
+    div_ref = createRef();
+    observer: ResizeObserver;
+    y_min: number = 0;
+    y_max: number = 0;
+
+    shouldComponentUpdate() {
+        return false;
+    }
+
+    componentDidMount() {
+        if (this.uplot) {
+            return;
+        }
+
+        // FIXME: special hack for status page that is visible by default
+        //        and doesn't receive an initial shown event because of that
+        this.visible = this.props.sidebar_id === "status";
+
+        // We have to use jquery here or else the events don't fire?
+        // This can be removed once the sidebar is ported to preact.
+        $(`#sidebar-${this.props.sidebar_id}`).on('shown.bs.tab', () => {
+            this.visible = true;
+
+            if (this.pending_data !== undefined) {
+                this.set_data(this.pending_data);
+            }
+        });
+
+        $(`#sidebar-${this.props.sidebar_id}`).on('hidden.bs.tab', () => {
+            this.visible = false;
+        });
+
+        let get_size = () => {
+            let div = this.div_ref.current;
+            let aspect_ratio = parseFloat(getComputedStyle(div).aspectRatio);
+
+            if (isNaN(aspect_ratio)) {
+                aspect_ratio = 2;
+            }
+
+            return {
+                width: div.clientWidth,
+                height: Math.floor((div.clientWidth + (window.innerWidth - document.documentElement.clientWidth)) / aspect_ratio),
+            }
+        }
+
+        let options = {
+            ...get_size(),
+            pxAlign: 0,
+            cursor: {
+                drag: {
+                    x: false, // disable zoom
+                },
+            },
+            series: [
+                {
+                    label: __("meter.script.time"),
+                    value: (self: uPlot, rawValue: number) => {
+                        if (rawValue !== null) {
+                            if (this.props.legend_time_with_seconds) {
+                                return util.timestamp_sec_to_date(rawValue)
+                            }
+                            else {
+                                return util.timestamp_min_to_date((rawValue / 60), '???');
+                            }
+                        }
+
+                        return null;
+                    },
+                },
+                {
+                    show: true,
+                    pxAlign: 0,
+                    spanGaps: false,
+                    label: __("meter.script.power"),
+                    value: (self: uPlot, rawValue: number) => util.hasValue(rawValue) ? util.toLocaleFixed(rawValue) + " W" : null,
+                    stroke: "rgb(0, 123, 255)",
+                    fill: "rgb(0, 123, 255, 0.1)",
+                    width: 2,
+                    points: {
+                        show: false,
+                    },
+                },
+            ],
+            axes: [
+                {
+                    size: this.props.x_height,
+                    incrs: [
+                        60,
+                        60 * 2,
+                        3600,
+                        3600 * 2,
+                        3600 * 4,
+                        3600 * 6,
+                        3600 * 8,
+                        3600 * 12,
+                        3600 * 24,
+                    ],
+                    values: (self: uPlot, splits: number[], axisIdx: number, foundSpace: number, foundIncr: number) => {
+                        let values: string[] = new Array(splits.length);
+                        let last_year: string = null;
+                        let last_month_and_day: string = null;
+
+                        for (let i = 0; i < splits.length; ++i) {
+                            let date = new Date(splits[i] * 1000);
+                            let value = date.toLocaleString([], {hour: '2-digit', minute: '2-digit'});
+
+                            if (this.props.x_include_date && foundIncr >= 3600) {
+                                let year = date.toLocaleString([], {year: 'numeric'});
+                                let month_and_day = date.toLocaleString([], {month: '2-digit', day: '2-digit'});
+
+                                if (year != last_year) {
+                                    value += '\n' + date.toLocaleString([], {year: 'numeric', month: '2-digit', day: '2-digit'});
+                                    last_year = year;
+                                    last_month_and_day = month_and_day;
+                                }
+
+                                if (month_and_day != last_month_and_day) {
+                                    value += '\n' + date.toLocaleString([], {month: '2-digit', day: '2-digit'});
+                                    last_month_and_day = month_and_day;
+                                }
+                            }
+
+                            values[i] = value;
+                        }
+
+                        return values;
+                    },
+                },
+                {
+                    label: __("meter.script.power") + " [Watt]",
+                    labelSize: 20,
+                    labelGap: 2,
+                    labelFont: 'bold 14px system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"',
+                    size: (self: uPlot, values: string[], axisIdx: number, cycleNum: number): number => {
+                        let size = 0;
+
+                        if (values) {
+                            self.ctx.save();
+                            self.ctx.font = self.axes[axisIdx].font;
+
+                            for (let i = 0; i < values.length; ++i) {
+                                size = Math.max(size, self.ctx.measureText(values[i]).width);
+                            }
+
+                            self.ctx.restore();
+                        }
+
+                        return Math.ceil(size / devicePixelRatio) + 20;
+                    },
+                    values: (self: uPlot, splits: number[]) => {
+                        let values: string[] = new Array(splits.length);
+
+                        for (let digits = 0; digits <= 3; ++digits) {
+                            let last_value: string = null;
+                            let unique = true;
+
+                            for (let i = 0; i < splits.length; ++i) {
+                                values[i] = util.toLocaleFixed(splits[i], digits);
+
+                                if (last_value == values[i]) {
+                                    unique = false;
+                                }
+
+                                last_value = values[i];
+                            }
+
+                            if (unique) {
+                                break;
+                            }
+                        }
+
+                        return values;
+                    },
+                }
+            ],
+            scales: {
+                y: {
+                    range: (self: uPlot, initMin: number, initMax: number, scaleKey: string): uPlot.Range.MinMax => {
+                        return uPlot.rangeNum(this.y_min, this.y_max, {min: {}, max: {}});
+                    }
+                },
+            },
+            padding: [null, 20, null, 5] as uPlot.Padding,
+            plugins: [
+                {
+                    hooks: {
+                        setSeries: (self: uPlot, seriesIdx: number, opts: uPlot.Series) => {
+                            this.update_internal_data();
+                        },
+                        drawAxes: [
+                            (self: uPlot) => {
+                                let ctx = self.ctx;
+
+                                ctx.save();
+
+                                let s  = self.series[0];
+                                let xd = self.data[0];
+                                let [i0, i1] = s.idxs;
+                                let x0 = self.valToPos(xd[i0], 'x', true) - self.axes[0].ticks.size;
+                                let y0 = self.valToPos(0, 'y', true);
+                                let x1 = self.valToPos(xd[i1], 'x', true);
+                                let y1 = self.valToPos(0, 'y', true);
+
+                                const lineWidth = 2;
+                                const offset = (lineWidth % 2) / 2;
+
+                                ctx.translate(offset, offset);
+
+                                ctx.beginPath();
+                                ctx.lineWidth = lineWidth;
+                                ctx.strokeStyle = 'rgb(0,0,0,0.2)';
+                                ctx.moveTo(x0, y0);
+                                ctx.lineTo(x1, y1);
+                                ctx.stroke();
+
+                                ctx.translate(-offset, -offset);
+
+                                ctx.restore();
+                            }
+                        ],
+                    },
+                },
+            ],
+        };
+
+        let div = this.div_ref.current;
+        this.uplot = new uPlot(options, [], div);
+
+        let resize = () => {
+            let size = get_size();
+
+            if (size.width == 0 || size.height == 0) {
+                return;
+            }
+
+            this.uplot.setSize(size);
+        };
+
+        try {
+            this.observer = new ResizeObserver(() => {
+                resize();
+            });
+
+            this.observer.observe(div);
+        } catch (e) {
+            setInterval(() => {
+                resize();
+            }, 500);
+
+            window.addEventListener("resize", e => {
+                resize();
+            });
+        }
+
+        if (this.pending_data !== undefined) {
+            this.set_data(this.pending_data);
+        }
+    }
+
+    render(props?: UplotWrapperProps, state?: Readonly<{}>, context?: any): ComponentChild {
+        // the plain div is neccessary to make the size calculation stable in safari. without this div the height continues to grow
+        return <div><div ref={this.div_ref} id={props.id} class={props.class} style={`display: ${props.show ? 'block' : 'none'};`} /></div>;
+    }
+
+    set_show(show: boolean) {
+        this.div_ref.current.style.display = show ? 'block' : 'none';
+    }
+
+    update_internal_data() {
+        let y_min: number = this.props.y_min;
+        let y_max: number = this.props.y_max;
+
+        for (let i = 0; i < this.data.samples.length; ++i) {
+            let value = this.data.samples[i];
+
+            if (value !== null) {
+                if (y_min === undefined || value < y_min) {
+                    y_min = value;
+                }
+
+                if (y_max === undefined || value > y_max) {
+                    y_max = value;
+                }
+            }
+        }
+
+        if (y_min === undefined && y_max === undefined) {
+            y_min = 0;
+            y_max = 0;
+        }
+        else if (y_min === undefined) {
+            y_min = y_max;
+        }
+        else if (y_max === undefined) {
+            y_max = y_min;
+        }
+
+        let y_diff_min = this.props.y_diff_min;
+
+        if (y_diff_min !== undefined) {
+            let y_diff = y_max - y_min;
+
+            if (y_diff < y_diff_min) {
+                let y_center = y_min + y_diff / 2;
+
+                let new_y_min = Math.floor(y_center - y_diff_min / 2);
+                let new_y_max = Math.ceil(y_center + y_diff_min / 2);
+
+                if (new_y_min < 0 && y_min >= 0) {
+                    // avoid negative range, if actual minimum is positive
+                    y_min = 0;
+                    y_max = y_diff_min;
+                } else {
+                    y_min = new_y_min;
+                    y_max = new_y_max;
+                }
+            }
+        }
+
+        this.y_min = y_min;
+        this.y_max = y_max;
+
+        this.uplot.setData([this.data.timestamps, this.data.samples]);
+    }
+
+    set_data(data: UplotData) {
+        if (!this.uplot || !this.visible) {
+            this.pending_data = data;
+            return;
+        }
+
+        this.data = data;
+        this.pending_data = undefined;
+
+        this.update_internal_data();
+    }
+}
+
+function calculate_history_data(offset: number, samples: number[]): UplotData {
+    const HISTORY_MINUTE_INTERVAL = 4;
+
+    let data: UplotData = {timestamps: new Array(samples.length), samples: samples};
+    let now = Date.now();
+    let step = HISTORY_MINUTE_INTERVAL * 60 * 1000;
+    // (samples.length - 1) because step defines the gaps between two samples.
+    // with N samples there are (N - 1) gaps, while the lastest/newest sample is
+    // offset milliseconds old. there might be no data point on a full hour
+    // interval. to get nice aligned ticks nudge the ticks by at most half of a
+    // sampling interval
+    let start = Math.round((now - (samples.length - 1) * step - offset) / step) * step;
+
+    for(let i = 0; i < samples.length; ++i) {
+        data.timestamps[i] = (start + i * step) / 1000;
+    }
+
+    return data;
+}
+
+function array_append<T>(a: Array<T>, b: Array<T>, tail: number): Array<T> {
+    a.push(...b);
+
+    return a.slice(-tail);
+}
+
+export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, PhaseSwitcherConfig & PhaseSwitcherState> {
+    history_data: UplotData;
+    uplot_wrapper_history_ref = createRef();
+
     constructor() {
         super('phase_switcher/config',
                 __("phase_switcher.script.save_failed"),
                 __("phase_switcher.script.reboot_content_changed"));
 
         util.addApiEventListener('phase_switcher/state', () => {
-            this.setState({...API.get('phase_switcher/state')});
+            this.setState({state: API.get('phase_switcher/state')});
         });
 
         util.addApiEventListener('phase_switcher/low_level_state', () => {
-            this.setState({...API.get('phase_switcher/state')});
+            this.setState({low_level_state: API.get('phase_switcher/low_level_state')});
         });
 
     }
 
-    render(props: {}, state: Readonly<PhaseSwitcherConfig & PhaseSwitcherState & PhaseSwitcherLowLevelState>) {
-        if (!util.render_allowed())
+    render(props: {}, api_data: Readonly<PhaseSwitcherConfig & PhaseSwitcherState>) {
+        if (!util.render_allowed() || !API.hasFeature("phase_switcher"))
             return <></>
-        
+
         return (
             <SubPage>
                 <ConfigForm id="phase_switcher_config_form" 
@@ -68,7 +464,7 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
                             isModified={this.isModified()}>
                     <FormRow label={__("phase_switcher.content.phase_switcher_enabled")}>
                         <Switch desc={__("phase_switcher.content.phase_switcher_enabled_desc")}
-                                checked={state.enabled}
+                                checked={api_data.enabled}
                                 onClick={this.toggle('enabled')}/>
                     </FormRow>
 
@@ -82,7 +478,7 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
                                     ["13", __("phase_switcher.content.one_three_phases_dynamic")],
                                     ["123", __("phase_switcher.content.one_two_three_phases_dynamic")],
                                 ]}
-                                value={this.state.operating_mode}
+                                value={api_data.operating_mode}
                                 onValue={(v) => {
                                     this.setState({operating_mode: Number(v)});
                                 }}/>
@@ -92,27 +488,114 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
                         <div class="row mx-n1">
                             <div class="mb-1 col-4 px-1">
                                 <InputNumber required
-                                            className="col"
                                             min={10}
                                             max={3600}
                                             unit="s"
-                                            value={state.delay_time_more_phases}
+                                            value={api_data.delay_time_more_phases}
                                             onValue={this.set("delay_time_more_phases")}/>
                             </div>
                             <div class="mb-1 col-4 px-1">
                                 <InputNumber required
-                                            className="col"
                                             min={10}
                                             max={3600}
                                             unit="s"
-                                            value={state.delay_time_less_phases}
+                                            value={api_data.delay_time_less_phases}
                                             onValue={this.set("delay_time_less_phases")}/>
                             </div>
                             <div class="mb-1 col-4 px-1">
-                                <InputText value={util.format_timespan(state.delay_time)}/>
+                                <InputText value={util.format_timespan(api_data.state.delay_time)}/>
                             </div>
                         </div>
                     </FormRow>
+
+                    <FormRow label={__("phase_switcher.content.minimum_duration.title")} label_muted={__("phase_switcher.content.minimum_duration.description")}>
+                        <div class="row mx-n1">
+                            <div class="mb-1 col-6 px-1">
+                                <InputNumber required
+                                            min={10}
+                                            max={3600}
+                                            unit="s"
+                                            value={api_data.minimum_duration}
+                                            onValue={this.set("minimum_duration")}/>
+                            </div>
+                            <div class="mb-1 col-6 px-1">
+                                <InputText value={util.format_timespan(api_data.state.sequencer_state == 20 ? api_data.state.time_since_state_change : 0)}/>
+                            </div>
+                        </div>
+                    </FormRow>
+
+                    <FormRow label={__("phase_switcher.content.pause_time.title")} label_muted={__("phase_switcher.content.pause_time.description")}>
+                        <div class="row mx-n1">
+                            <div class="mb-1 col-6 px-1">
+                                <InputNumber required
+                                            min={10}
+                                            max={3600}
+                                            unit="s"
+                                            value={api_data.pause_time}
+                                            onValue={this.set("pause_time")}/>
+                            </div>
+                            <div class="mb-1 col-6 px-1">
+                                <InputText value={util.format_timespan(api_data.state.sequencer_state == 40 ? api_data.state.time_since_state_change : 0)}/>
+                            </div>
+                        </div>
+                    </FormRow>
+
+                    {/* Low Level State */}
+                    <CollapsedSection label={__("phase_switcher.content.low_level_state")}>
+                        <FormRow label={__("phase_switcher.content.channel_states.title")} label_muted={__("phase_switcher.content.channel_states.description")}>
+                            <div class="row mx-n1">
+                                <div class="mb-1 col-6 px-1">
+                                    {api_data.low_level_state.output_channels.map((x, j) => (
+                                        <IndicatorGroup vertical key={j} class="mb-1 col-3 px-1"
+                                            value={x ? 0 : 1} //intentionally inverted: the high button is the first
+                                            items={[
+                                                ["primary", __("phase_switcher.content.channel_high")],
+                                                ["secondary",   __("phase_switcher.content.channel_low")]
+                                            ]}/>
+                                    ))}
+                                </div>
+                                <div class="mb-1 col-6 px-1">
+                                    {api_data.low_level_state.input_channels.map((x, j) => (
+                                        <IndicatorGroup vertical key={j} class="mb-1 col-3 px-1"
+                                            value={x ? 0 : 1} //intentionally inverted: the high button is the first
+                                            items={[
+                                                ["primary", __("phase_switcher.content.channel_high")],
+                                                ["secondary",   __("phase_switcher.content.channel_low")]
+                                            ]}/>
+                                    ))}
+                                </div>
+                            </div>
+                        </FormRow>
+
+                        <FormRow label={__("phase_switcher.content.on_delay_values.title")} label_muted={__("phase_switcher.content.on_delay_values.description")}>
+                            <div class="row mx-n1">
+                                <div class="mb-1 col-4 px-1">
+                                    <InputText value={api_data.low_level_state.current_on_delay_time[0] + " s"}/>
+                                </div>
+                                <div class="mb-1 col-4 px-1">
+                                    <InputText value={api_data.low_level_state.current_on_delay_time[1] + " s"}/>
+                                </div>
+                                <div class="mb-1 col-4 px-1">
+                                    <InputText value={api_data.low_level_state.current_on_delay_time[2] + " s"}/>
+                                </div>
+                            </div>
+                        </FormRow>
+
+                        <FormRow label={__("phase_switcher.content.off_delay_values.title")} label_muted={__("phase_switcher.content.off_delay_values.description")}>
+                            <div class="row mx-n1">
+                                <div class="mb-1 col-4 px-1">
+                                    <InputText value={api_data.low_level_state.current_off_delay_time[0] + " s"}/>
+                                </div>
+                                <div class="mb-1 col-4 px-1">
+                                    <InputText value={api_data.low_level_state.current_off_delay_time[1] + " s"}/>
+                                </div>
+                                <div class="mb-1 col-4 px-1">
+                                    <InputText value={api_data.low_level_state.current_off_delay_time[2] + " s"}/>
+                                </div>
+                            </div>
+                        </FormRow>
+
+                    </CollapsedSection>
                 </ConfigForm>
             </SubPage>
         );
