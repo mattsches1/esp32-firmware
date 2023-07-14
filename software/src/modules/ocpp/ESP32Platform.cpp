@@ -754,13 +754,8 @@ void platform_unlock_cable(int32_t connectorId)
 void platform_set_charging_current(int32_t connectorId, uint32_t milliAmps)
 {
     uint16_t current = (uint16_t)std::min(32000u, (uint32_t)milliAmps);
-#if MODULE_EVSE_AVAILABLE()
-    if (evse.get_ocpp_current() != current)
-        evse.set_ocpp_current(current);
-#elif MODULE_EVSE_V2_AVAILABLE()
-    if (evse_v2.get_ocpp_current() != current)
-        evse_v2.set_ocpp_current(current);
-#endif
+    if (evse_common.get_ocpp_current() != current)
+        evse_common.set_ocpp_current(current);
 }
 
 #define PATH_PREFIX String("/ocpp/")
@@ -816,11 +811,8 @@ void platform_reset(bool hard) {
         At receipt of a hard reset the Charge Point SHALL restart (all) the hardware, it is not required to gracefully stop
         ongoing transaction.
         */
-#if MODULE_EVSE_AVAILABLE()
-        evse.reset();
-#endif
-#if MODULE_EVSE_V2_AVAILABLE()
-        evse_v2.reset();
+#if MODULE_EVSE_COMMON_AVAILABLE()
+        evse_common.reset();
 #endif
 #if MODULE_MODBUS_METER_AVAILABLE()
         modbus_meter.reset();

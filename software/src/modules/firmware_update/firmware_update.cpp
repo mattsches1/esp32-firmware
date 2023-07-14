@@ -18,6 +18,7 @@
  */
 
 #include "firmware_update.h"
+#include "module_dependencies.h"
 
 #include <Arduino.h>
 
@@ -29,7 +30,6 @@
 #include "task_scheduler.h"
 #include "tools.h"
 #include "build.h"
-#include "modules.h"
 #include "web_server.h"
 
 #include "./crc32.h"
@@ -37,8 +37,6 @@
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
-
-extern const char *DISPLAY_NAME;
 
 extern bool firmware_update_allowed;
 extern int8_t green_led_pin;
@@ -75,11 +73,8 @@ void factory_reset(bool restart_esp)
             tskIDLE_PRIORITY,
             &xTaskBuffer);
 
-#if MODULE_EVSE_AVAILABLE()
-    evse.factory_reset();
-#endif
-#if MODULE_EVSE_V2_AVAILABLE()
-    evse_v2.factory_reset();
+#if MODULE_EVSE_COMMON_AVAILABLE()
+    evse_common.factory_reset();
 #endif
 
     LittleFS.end();
@@ -163,9 +158,9 @@ String FirmwareUpdate::check_firmware_info(bool firmware_info_found, bool detect
             return "{\"error\":\"firmware_update.script.info_page_corrupted\"}";
         }
 
-        if (strncmp(DISPLAY_NAME, info.firmware_name, ARRAY_SIZE(info.firmware_name)) != 0) {
+        if (strncmp(BUILD_DISPLAY_NAME, info.firmware_name, ARRAY_SIZE(info.firmware_name)) != 0) {
             if (log) {
-                logger.printfln("Failed to update: Firmware is for a %.*s but this is a %s!", static_cast<int>(ARRAY_SIZE(info.firmware_name)), info.firmware_name, DISPLAY_NAME);
+                logger.printfln("Failed to update: Firmware is for a %.*s but this is a %s!", static_cast<int>(ARRAY_SIZE(info.firmware_name)), info.firmware_name, BUILD_DISPLAY_NAME);
             }
             return "{\"error\":\"firmware_update.script.wrong_firmware_type\"}";
         }
@@ -279,7 +274,7 @@ void FirmwareUpdate::register_urls()
         }
 
         bool firmware_update_allowed_check_required = true;
-#if MODULE_ENERGY_MANAGER_AVAILABLE() && !(MODULE_EVSE_AVAILABLE() || MODULE_EVSE_V2_AVAILABLE())
+#if MODULE_ENERGY_MANAGER_AVAILABLE() && !MODULE_EVSE_COMMON_AVAILABLE()
         firmware_update_allowed_check_required = energy_manager.disallow_fw_update_with_vehicle_connected();
 #endif
         if (firmware_update_allowed_check_required && !firmware_update_allowed) {
@@ -377,14 +372,12 @@ void FirmwareUpdate::register_urls()
 
         task_scheduler.scheduleOnce([](){
             logger.printfln("Config reset requested");
-#if MODULE_EVSE_AVAILABLE()
-            evse.factory_reset();
-#endif
-#if MODULE_EVSE_V2_AVAILABLE()
-            evse_v2.factory_reset();
+
+#if MODULE_EVSE_COMMON_AVAILABLE()
+        evse_common.factory_reset();
 #endif
 
-#if MODULE_USERS_AVAILABLE()
+#if MODULE_USERS_AVAILABLE() && MODULE_CHARGE_TRACKER_AVAILABLE()
             for(int i = 0; i < users.config.get("users")->count(); ++i) {
                 uint8_t id = users.config.get("users")->get(i)->get("id")->asUint();
                 if (id == 0) // skip anonymous user

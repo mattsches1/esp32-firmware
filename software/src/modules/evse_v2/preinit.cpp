@@ -124,13 +124,15 @@ void evse_v2_button_recovery_handler() {
             logger.printfln("Running stage 0: Resetting network configuration and disabling web interface login");
 
             mount_or_format_spiffs();
-            if (api.restorePersistentConfig("users/config", &users.config))
+            if (api.restorePersistentConfig("users/config", &users.config)) {
                 users.config.get("http_auth_enabled")->updateBool(false);
-            api.writeConfig("users/config", &users.config);
+                api.writeConfig("users/config", &users.config);
+            }
 
             api.removeConfig("ethernet/config");
             api.removeConfig("wifi/sta_config");
             api.removeConfig("wifi/ap_config");
+            LittleFS.end();
             logger.printfln("Stage 0 done");
             break;
         // Stage 1 - ESP crashed when booting after stage 0. Remove all configuration
@@ -138,6 +140,7 @@ void evse_v2_button_recovery_handler() {
             logger.printfln("Running stage 1: Removing configuration but keeping charge log.");
             mount_or_format_spiffs();
             api.removeAllConfig();
+            LittleFS.end();
             logger.printfln("Stage 1 done");
             break;
         // Stage 2 - ESP still crashed. Format data partition. (This also removes tracked charges and the username file)

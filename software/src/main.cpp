@@ -1,5 +1,5 @@
 /* esp32-firmware
- * Copyright (C) 2020-2021 Erik Fleckstein <erik@tinkerforge.com>
+ * Copyright (C) 2020-2023 Erik Fleckstein <erik@tinkerforge.com>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -18,13 +18,13 @@
  */
 
 #include <Arduino.h>
-#include <WiFi.h>
 
 #include <stdio.h>
 #include <string.h>
 
 #include "index_html.embedded.h"
 
+#include "bindings/hal_common.h"
 #include "api.h"
 #include "event_log.h"
 #include "task_scheduler.h"
@@ -34,16 +34,9 @@
 #include "modules_main.h"
 #include "tools.h"
 
-#ifndef TF_ESP_PREINIT
-#define TF_ESP_PREINIT
-#endif
-
-#define TFJSON_IMPLEMENTATION
-#include "TFJson.h"
+#include "gcc_warnings.h"
 
 BootStage boot_stage = BootStage::STATIC_INITIALIZATION;
-
-const char* DISPLAY_NAME = BUILD_DISPLAY_NAME;
 
 struct loop_chain {
     struct loop_chain *next;
@@ -55,6 +48,8 @@ static struct loop_chain *loop_chain = nullptr;
 static bool is_module_loop_overridden(const IModule *imodule) {
 #if defined(__GNUC__)
     #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Wold-style-cast"
+    #pragma GCC diagnostic ignored "-Wpedantic"
     #pragma GCC diagnostic ignored "-Wpmf-conversions"
     // GCC pointer to member function magic
     // http://www.cs.fsu.edu/~baker/ada/gnat/html/gcc_6.html#SEC151
@@ -160,26 +155,28 @@ void setup(void) {
     boot_stage = BootStage::PRE_INIT;
     Serial.begin(BUILD_MONITOR_SPEED);
 
-    logger.setup();
+    logger.pre_init();
 
     logger.printfln("    **** TINKERFORGE " BUILD_DISPLAY_NAME_UPPER " V%s ****", build_version_full_str());
-    logger.printfln("         %dK RAM SYSTEM   %d HEAP BYTES FREE", ESP.getHeapSize() / 1024, ESP.getFreeHeap());
+    logger.printfln("         %uK RAM SYSTEM   %u HEAP BYTES FREE", ESP.getHeapSize() / 1024, ESP.getFreeHeap());
     logger.printfln("READY.");
 
     logger.printfln("Last reset reason was: %s", tf_reset_reason());
 
+    std::vector<IModule*> imodules;
+    modules_get_imodules(&imodules);
+
     config_pre_init();
 
-    TF_ESP_PREINIT
+    for (IModule *imodule : imodules) {
+        imodule->pre_init();
+    }
 
     if(!mount_or_format_spiffs()) {
         logger.printfln("Failed to mount SPIFFS.");
     }
 
     boot_stage = BootStage::PRE_SETUP;
-
-    std::vector<IModule*> imodules;
-    modules_get_imodules(&imodules);
 
     task_scheduler.pre_setup();
     api.pre_setup();
@@ -225,7 +222,7 @@ void setup(void) {
     struct loop_chain **next_chain_ptr = &loop_chain;
     for (IModule *imodule : imodules) {
         if (is_module_loop_overridden(imodule)) {
-            *next_chain_ptr = (struct loop_chain*)malloc(sizeof(struct loop_chain));
+            *next_chain_ptr = static_cast<struct loop_chain*>(malloc(sizeof(struct loop_chain)));
             (*next_chain_ptr)->imodule = imodule;
             next_chain_ptr = &(*next_chain_ptr)->next;
         }

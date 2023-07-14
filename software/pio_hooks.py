@@ -7,6 +7,7 @@ if sys.hexversion < 0x3060000:
     sys.exit(1)
 
 from collections import namedtuple
+import configparser
 import functools
 import os
 import shutil
@@ -15,7 +16,6 @@ import time
 import re
 import json
 import glob
-import io
 import gzip
 from base64 import b64encode
 from zlib import crc32
@@ -56,31 +56,6 @@ class FlavoredName(object):
                                           functools.reduce(lambda l, r: l + '_' + r if (l[-1].isdigit() and r[0].isdigit()) else l + r, words))
 
             return self.cache[key]
-
-def specialize_template(template_filename, destination_filename, replacements, check_completeness=True, remove_template=False):
-    lines = []
-    replaced = set()
-
-    with open(template_filename, 'r', encoding='utf-8') as f:
-        for line in f.readlines():
-            for key in replacements:
-                replaced_line = line.replace(key, replacements[key])
-
-                if replaced_line != line:
-                    replaced.add(key)
-
-                line = replaced_line
-
-            lines.append(line)
-
-    if check_completeness and replaced != set(replacements.keys()):
-        raise Exception('Not all replacements for {0} have been applied. Missing are {1}'.format(template_filename, ', '.join(set(replacements.keys() - replaced))))
-
-    with open(destination_filename, 'w', encoding='utf-8') as f:
-        f.writelines(lines)
-
-    if remove_template:
-        os.remove(template_filename)
 
 # use "with ChangedDirectory('/path/to/abc')" instead of "os.chdir('/path/to/abc')"
 class ChangedDirectory(object):
@@ -253,6 +228,15 @@ def repair_rtc_dir():
     except:
         pass
 
+def find_backend_module_space(backend_modules, name_space):
+    index = 0
+    for backend_module in backend_modules:
+        if backend_module.space == name_space:
+            return backend_module, index
+        index += 1
+
+    return None, -1
+
 def find_branding_module(frontend_modules):
     branding_module = None
 
@@ -391,29 +375,30 @@ def main():
 
     write_firmware_info(display_name, *version, timestamp)
 
-    with open(os.path.join('src', 'build.h'), 'w', encoding='utf-8') as f:
-        f.write('#pragma once\n')
-        f.write('#include <stdint.h>\n')
-        f.write('#define OLDEST_VERSION_MAJOR {}\n'.format(oldest_version[0]))
-        f.write('#define OLDEST_VERSION_MINOR {}\n'.format(oldest_version[1]))
-        f.write('#define OLDEST_VERSION_PATCH {}\n'.format(oldest_version[2]))
-        f.write('#define BUILD_VERSION_MAJOR {}\n'.format(version[0]))
-        f.write('#define BUILD_VERSION_MINOR {}\n'.format(version[1]))
-        f.write('#define BUILD_VERSION_PATCH {}\n'.format(version[2]))
-        f.write('#define BUILD_VERSION_STRING "{}.{}.{}"\n'.format(*version))
-        f.write('#define BUILD_HOST_PREFIX "{}"\n'.format(host_prefix))
-        f.write('#define BUILD_NAME_{}\n'.format(name.upper()))
-        f.write('#define BUILD_CONFIG_TYPE "{}"\n'.format(config_type))
-        f.write('#define BUILD_DISPLAY_NAME "{}"\n'.format(display_name))
-        f.write('#define BUILD_DISPLAY_NAME_UPPER "{}"\n'.format(display_name.upper()))
-        f.write('#define BUILD_REQUIRE_FIRMWARE_INFO {}\n'.format(require_firmware_info))
-        f.write('#define BUILD_MONITOR_SPEED {}\n'.format(monitor_speed))
-        f.write('uint32_t build_timestamp(void);\n')
-        f.write('const char *build_timestamp_hex_str(void);\n')
-        f.write('const char *build_version_full_str(void);\n')
-        f.write('const char *build_info_str(void);\n')
-        f.write('const char *build_filename_str(void);')
-        f.write('const char *build_commit_id_str(void);')
+    build_lines = []
+    build_lines.append('#pragma once')
+    build_lines.append('#include <stdint.h>')
+    build_lines.append('#define OLDEST_VERSION_MAJOR {}'.format(oldest_version[0]))
+    build_lines.append('#define OLDEST_VERSION_MINOR {}'.format(oldest_version[1]))
+    build_lines.append('#define OLDEST_VERSION_PATCH {}'.format(oldest_version[2]))
+    build_lines.append('#define BUILD_VERSION_MAJOR {}'.format(version[0]))
+    build_lines.append('#define BUILD_VERSION_MINOR {}'.format(version[1]))
+    build_lines.append('#define BUILD_VERSION_PATCH {}'.format(version[2]))
+    build_lines.append('#define BUILD_VERSION_STRING "{}.{}.{}"'.format(*version))
+    build_lines.append('#define BUILD_HOST_PREFIX "{}"'.format(host_prefix))
+    build_lines.append('#define BUILD_NAME_{}'.format(name.upper()))
+    build_lines.append('#define BUILD_CONFIG_TYPE "{}"'.format(config_type))
+    build_lines.append('#define BUILD_DISPLAY_NAME "{}"'.format(display_name))
+    build_lines.append('#define BUILD_DISPLAY_NAME_UPPER "{}"'.format(display_name.upper()))
+    build_lines.append('#define BUILD_REQUIRE_FIRMWARE_INFO {}'.format(require_firmware_info))
+    build_lines.append('#define BUILD_MONITOR_SPEED {}'.format(monitor_speed))
+    build_lines.append('uint32_t build_timestamp(void);')
+    build_lines.append('const char *build_timestamp_hex_str(void);')
+    build_lines.append('const char *build_version_full_str(void);')
+    build_lines.append('const char *build_info_str(void);')
+    build_lines.append('const char *build_filename_str(void);')
+    build_lines.append('const char *build_commit_id_str(void);')
+    util.write_file_if_different(os.path.join('src', 'build.h'), '\n'.join(build_lines))
 
     firmware_basename = '{}_firmware{}{}_{}_{:x}{}'.format(
         name,
@@ -423,15 +408,17 @@ def main():
         timestamp,
         dirty_suffix,
     )
-    with open(os.path.join('src', 'build.cpp'), 'w', encoding='utf-8') as f:
-        f.write('#include "build.h"\n')
-        f.write('uint32_t build_timestamp(void) {{ return {}; }}\n'.format(timestamp))
-        f.write('const char *build_timestamp_hex_str(void) {{ return "{:x}"; }}\n'.format(timestamp))
-        f.write('const char *build_version_full_str(void) {{ return "{}.{}.{}-{:x}"; }}\n'.format(*version, timestamp))
-        f.write('const char *build_info_str(void) {{ return "git url: {}, git branch: {}, git commit id: {}"; }}\n'.format(git_url, branch_name, git_commit_id))
-        f.write('const char *build_filename_str(void){{return "{}"; }}\n'.format(firmware_basename))
-        f.write('const char *build_commit_id_str(void){{return "{}"; }}\n'.format(git_commit_id))
 
+    build_lines = []
+    build_lines.append('#include "build.h"')
+    build_lines.append('uint32_t build_timestamp(void) {{ return {}; }}'.format(timestamp))
+    build_lines.append('const char *build_timestamp_hex_str(void) {{ return "{:x}"; }}'.format(timestamp))
+    build_lines.append('const char *build_version_full_str(void) {{ return "{}.{}.{}-{:x}"; }}'.format(*version, timestamp))
+    build_lines.append('const char *build_info_str(void) {{ return "git url: {}, git branch: {}, git commit id: {}"; }}'.format(git_url, branch_name, git_commit_id))
+    build_lines.append('const char *build_filename_str(void){{return "{}"; }}'.format(firmware_basename))
+    build_lines.append('const char *build_commit_id_str(void){{return "{}"; }}'.format(git_commit_id))
+    util.write_file_if_different(os.path.join('src', 'build.cpp'), '\n'.join(build_lines))
+    del build_lines
 
     with open(os.path.join(env.subst('$BUILD_DIR'), 'firmware_basename'), 'w', encoding='utf-8') as f:
         f.write(firmware_basename)
@@ -479,17 +466,123 @@ def main():
 
     backend_mods_upper = [x.upper for x in backend_modules]
 
-    specialize_template("modules.h.template", os.path.join("src", "modules.h"), {
+    util.specialize_template("modules.h.template", os.path.join("src", "modules.h"), {
         '{{{module_includes}}}': '\n'.join(['#include "modules/{0}/{0}.h"'.format(x.under) for x in backend_modules]),
         '{{{module_defines}}}': '\n'.join(['#define MODULE_{}_AVAILABLE() {}'.format(x, "1" if x in backend_mods_upper else "0") for x in all_mods]),
         '{{{module_extern_decls}}}': '\n'.join(['extern {} {};'.format(x.camel, x.under) for x in backend_modules]),
     })
 
-    specialize_template("modules.cpp.template", os.path.join("src", "modules.cpp"), {
+    util.specialize_template("modules.cpp.template", os.path.join("src", "modules.cpp"), {
         '{{{module_decls}}}': '\n'.join(['{} {};'.format(x.camel, x.under) for x in backend_modules]),
+        '{{{imodule_count}}}': str(len(backend_modules)),
         '{{{imodule_vector}}}': '\n    '.join(['imodules->push_back(&{});'.format(x.under) for x in backend_modules]),
         '{{{module_init_config}}}': ',\n        '.join('{{"{0}", Config::Bool({0}.initialized)}}'.format(x.under) for x in backend_modules if not x.under.startswith("hidden_")),
     })
+
+    print("Generating module_dependencies.h from module.ini", flush=True)
+    for backend_module in backend_modules:
+        mod_path = os.path.join('src', 'modules', backend_module.under)
+        info_path = os.path.join(mod_path, 'module.ini')
+        header_path = os.path.join(mod_path, 'module_dependencies.h')
+
+        if os.path.exists(info_path):
+            config = configparser.ConfigParser()
+            config.read(info_path)
+            if config.has_section('Dependencies'):
+                required_mods = []
+                available_optional_mods = []
+                all_optional_mods_upper = []
+
+                allow_nonexist = config['Dependencies'].getboolean('AllowNonexist', False)
+
+                requires = config['Dependencies'].get('Requires', "")
+                requires = requires.splitlines()
+                requires.append(backend_module.space)
+                old_len = len(requires)
+                requires = list(dict.fromkeys(requires))
+                if len(requires) != old_len:
+                    print(f"List of required modules for module '{backend_module.space}' contains duplicates.", file=sys.stderr)
+                for req_name in requires:
+                    req_module, _ = find_backend_module_space(backend_modules, req_name)
+                    if not req_module:
+                        if '_'.join(req_name.split(' ')).upper() in all_mods:
+                            print(f"Module '{backend_module.space}' requires module '{req_name}', which is available but not enabled for this environment.", file=sys.stderr)
+                        else:
+                            print(f"Module '{backend_module.space}' requires module '{req_name}', which does not exist.", file=sys.stderr)
+                        exit(1)
+                    required_mods.append(req_module)
+
+                optional = config['Dependencies'].get('Optional')
+                if optional is not None:
+                    optional = optional.splitlines()
+                    old_len = len(optional)
+                    optional = list(dict.fromkeys(optional))
+                    if len(optional) != old_len:
+                        print(f"List of optional modules for module '{backend_module.space}' contains duplicates.", file=sys.stderr)
+                    for opt_name in optional:
+                        opt_name_upper = '_'.join(opt_name.split(' ')).upper()
+                        opt_module, _ = find_backend_module_space(backend_modules, opt_name)
+                        if not opt_module:
+                            if not allow_nonexist and opt_name_upper not in all_mods:
+                                print(f"Optional module '{opt_name}' wanted by module '{backend_module.space}' does not exist.", file=sys.stderr)
+                                exit(1)
+                        else:
+                            if opt_module in required_mods:
+                                print(f"Optional module '{opt_name}' wanted by module '{backend_module.space}' is already listed as required.", file=sys.stderr)
+                                exit(1)
+                            available_optional_mods.append(opt_module)
+                        all_optional_mods_upper.append(opt_name_upper)
+
+                cur_module_index = backend_modules.index(backend_module)
+
+                after = config['Dependencies'].get('After')
+                if after is not None:
+                    after = after.splitlines()
+                    old_len = len(after)
+                    after = list(dict.fromkeys(after))
+                    if len(after) != old_len:
+                        print(f"List of 'After' modules for module '{backend_module.space}' contains duplicates.", file=sys.stderr)
+                    for after_name in after:
+                        _, index = find_backend_module_space(backend_modules, after_name)
+                        if index < 0:
+                            if not allow_nonexist and '_'.join(after_name.split(' ')).upper() not in all_mods:
+                                print(f"Module '{after_name}' in 'After' list of module '{backend_module.space}' does not exist.", file=sys.stderr)
+                                exit(1)
+                        elif index > cur_module_index:
+                            print(f"Module '{backend_module.space}' must be loaded after module '{after_name}'.", file=sys.stderr)
+                            exit(1)
+
+                before = config['Dependencies'].get('Before')
+                if before is not None:
+                    before = before.splitlines()
+                    old_len = len(before)
+                    before = list(dict.fromkeys(before))
+                    if len(before) != old_len:
+                        print(f"List of 'Before' modules for module '{backend_module.space}' contains duplicates.", file=sys.stderr)
+                    for before_name in before:
+                        _, index = find_backend_module_space(backend_modules, before_name)
+                        if index < 0:
+                            if not allow_nonexist and '_'.join(before_name.split(' ')).upper() not in all_mods:
+                                print(f"Module '{before_name}' in 'Before' list of module '{backend_module.space}' does not exist.", file=sys.stderr)
+                                exit(1)
+                        elif index < cur_module_index:
+                            print(f"Module '{backend_module.space}' must be loaded before module '{before_name}'.", file=sys.stderr)
+                            exit(1)
+
+                dep_mods = required_mods + available_optional_mods
+
+                header_content  = '// WARNING: This file is generated.\n\n'
+                header_content += '#pragma once\n\n'
+                header_content += ''.join(['#define MODULE_{}_AVAILABLE() {}\n'.format(x, "1" if x in backend_mods_upper else "0") for x in all_optional_mods_upper])
+                header_content += ''.join([f'#include "modules/{x.under}/{x.under}.h"\n' for x in dep_mods])
+                header_content += ''.join([f'extern {x.camel} {x.under};\n' for x in dep_mods])
+
+                if config['Dependencies'].getboolean('ModuleList', False):
+                    header_content += '\n'
+                    header_content += '#include "config.h"\n'
+                    header_content += 'extern Config modules;\n'
+
+                util.write_file_if_different(header_path, header_content)
 
     # Handle frontend modules
     navbar_entries = []
@@ -585,14 +678,13 @@ def main():
         print('Error: Translation missing')
         sys.exit(1)
 
-    with open(os.path.join('web', 'src', 'ts', 'translation.json'), 'w', encoding='utf-8') as f:
-        data = json.dumps(translation, indent=4, ensure_ascii=False)
-        data = data.replace('{{{display_name}}}', display_name)
-        data = data.replace('{{{manual_url}}}', manual_url)
-        data = data.replace('{{{apidoc_url}}}', apidoc_url)
-        data = data.replace('{{{firmware_url}}}', firmware_url)
-
-        f.write(data)
+    translation_data = json.dumps(translation, indent=4, ensure_ascii=False)
+    translation_data = translation_data.replace('{{{display_name}}}', display_name)
+    translation_data = translation_data.replace('{{{manual_url}}}', manual_url)
+    translation_data = translation_data.replace('{{{apidoc_url}}}', apidoc_url)
+    translation_data = translation_data.replace('{{{firmware_url}}}', firmware_url)
+    util.write_file_if_different(os.path.join('web', 'src', 'ts', 'translation.json'), translation_data)
+    del translation_data
 
     with open(os.path.join(branding_module, 'favicon.png'), 'rb') as f:
         favicon = b64encode(f.read()).decode('ascii')
@@ -608,7 +700,7 @@ def main():
         if color.endswith(';'):
             color = color[:-1]
 
-    specialize_template(os.path.join("web", "index.html.template"), os.path.join("web", "src", "index.html"), {
+    util.specialize_template(os.path.join("web", "index.html.template"), os.path.join("web", "src", "index.html"), {
         '{{{favicon}}}': favicon,
         '{{{logo_base64}}}': logo_base64,
         '{{{navbar}}}': '\n                        '.join(navbar_entries),
@@ -617,25 +709,25 @@ def main():
         '{{{theme_color}}}': color
     })
 
-    specialize_template(os.path.join("web", "main.ts.template"), os.path.join("web", "src", "main.ts"), {
+    util.specialize_template(os.path.join("web", "main.ts.template"), os.path.join("web", "src", "main.ts"), {
         '{{{module_imports}}}': '\n'.join(['import * as {0} from "./modules/{0}/main";'.format(x) for x in main_ts_entries]),
         '{{{modules}}}': ', '.join([x for x in main_ts_entries]),
         '{{{preact_debug}}}': 'import "preact/debug";' if frontend_debug else ''
     })
 
-    specialize_template(os.path.join("web", "main.scss.template"), os.path.join("web", "src", "main.scss"), {
+    util.specialize_template(os.path.join("web", "main.scss.template"), os.path.join("web", "src", "main.scss"), {
         '{{{module_pre_imports}}}': '\n'.join(['@import "{0}";'.format(x.replace('\\', '/')) for x in pre_scss_paths]),
         '{{{module_post_imports}}}': '\n'.join(['@import "{0}";'.format(x.replace('\\', '/')) for x in post_scss_paths])
     })
 
-    specialize_template(os.path.join("web", "api_defs.ts.template"), os.path.join("web", "src", "ts", "api_defs.ts"), {
+    util.specialize_template(os.path.join("web", "api_defs.ts.template"), os.path.join("web", "src", "ts", "api_defs.ts"), {
         '{{{imports}}}': '\n'.join(api_imports),
         '{{{module_interface}}}': ',\n    '.join('{}: boolean'.format(x.under) for x in backend_modules),
         '{{{config_map_entries}}}': '\n    '.join(api_config_map_entries),
         '{{{api_cache_entries}}}': '\n    '.join(api_cache_entries),
     })
 
-    specialize_template(os.path.join("web", "branding.ts.template"), os.path.join("web", "src", "ts", "branding.ts"), {
+    util.specialize_template(os.path.join("web", "branding.ts.template"), os.path.join("web", "src", "ts", "branding.ts"), {
         '{{{logo_base64}}}': logo_base64,
         '{{{branding}}}': branding,
     })
@@ -684,7 +776,7 @@ def main():
 
     translation_str += '} as const\n'
 
-    specialize_template(os.path.join("web", "translation.tsx.template"), os.path.join("web", "src", "ts", "translation.tsx"), {
+    util.specialize_template(os.path.join("web", "translation.tsx.template"), os.path.join("web", "src", "ts", "translation.tsx"), {
         '{{{translation}}}': translation_str,
     })
 
@@ -801,7 +893,12 @@ def main():
             pass
 
         with ChangedDirectory('web'):
-            subprocess.check_call([env.subst('$PYTHONEXE'), "-u", "build.py"] + ([] if not frontend_debug else ['--js-source-map', '--css-source-map']))
+            try:
+                subprocess.check_call([env.subst('$PYTHONEXE'), "-u", "build.py"] + ([] if not frontend_debug else ['--js-source-map', '--css-source-map']))
+            except subprocess.CalledProcessError as e:
+                if e.returncode != 42:
+                    print(e, file=sys.stderr)
+                exit(1)
 
         with open('web/build/main.min.css', 'r', encoding='utf-8') as f:
             css = f.read()

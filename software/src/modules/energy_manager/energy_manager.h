@@ -170,7 +170,7 @@ class EnergyManager : public DeviceModule<TF_WARPEnergyManager,
                                           tf_warp_energy_manager_destroy>
 {
 public:
-    EnergyManager() : DeviceModule("energy_manager", "WARP Energy Manager", "Energy Manager", std::bind(&EnergyManager::setup_energy_manager, this)){}
+    EnergyManager() : DeviceModule("energy_manager", "WARP Energy Manager", "Energy Manager", [this](){this->setup_energy_manager();}) {}
     void pre_setup() override;
     void setup() override;
     void register_urls() override;
@@ -253,7 +253,7 @@ private:
     InputPin *input3;
     InputPin *input4;
 
-    uint32_t last_debug_check                    = 0;
+    uint32_t last_debug_keep_alive                    = 0;
     bool     printed_not_seen_all_chargers       = false;
     bool     printed_seen_all_chargers           = false;
     bool     uptime_past_hysteresis              = false;

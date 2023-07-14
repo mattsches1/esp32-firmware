@@ -34,15 +34,19 @@ void config_pre_init();
 void config_post_setup();
 
 struct ConfigRoot;
+struct ConfStringSlot;
+struct ConfFloatSlot;
+struct ConfIntSlot;
+struct ConfUintSlot;
+struct ConfArraySlot;
+struct ConfObjectSlot;
+struct ConfUnionSlot;
+
+struct ConfUnionPrototype;
 
 struct Config {
     struct ConfString {
-        struct Slot {
-            String val = "";
-            uint16_t minChars = 0;
-            uint16_t maxChars = 0;
-            bool inUse = false;
-        };
+        using Slot = ConfStringSlot;
     private:
         uint16_t idx;
         Slot *getSlot();
@@ -63,11 +67,7 @@ struct Config {
     };
 
     struct ConfFloat {
-        struct Slot {
-            float val = 0;
-            float min = 0;
-            float max = 0;
-        };
+        using Slot = ConfFloatSlot;
     private:
         uint16_t idx;
         Slot *getSlot();
@@ -88,14 +88,9 @@ struct Config {
     };
 
     struct ConfInt {
-        struct Slot {
-            int32_t val = 0;
-            int32_t min = 0;
-            int32_t max = 0;
-        };
+        using Slot = ConfIntSlot;
     private:
         uint16_t idx;
-
         Slot *getSlot();
 
     public:
@@ -114,14 +109,9 @@ struct Config {
     };
 
     struct ConfUint {
-        struct Slot {
-            uint32_t val = 0;
-            uint32_t min = 0;
-            uint32_t max = 0;
-        };
+        using Slot = ConfUintSlot;
     private:
         uint16_t idx;
-
         Slot *getSlot();
 
     public:
@@ -148,16 +138,9 @@ struct Config {
     };
 
     struct ConfArray {
-        struct Slot {
-            std::vector<Config> val;
-            Config *prototype;
-            uint32_t minElements : 12, maxElements : 12;
-            int8_t variantType;
-            bool inUse = false;
-        };
+        using Slot = ConfArraySlot;
     private:
         uint16_t idx;
-
         Slot *getSlot();
 
     public:
@@ -178,13 +161,9 @@ struct Config {
     };
 
     struct ConfObject {
-        struct Slot {
-            std::vector<std::pair<String, Config>> val;
-            bool inUse = false;
-        };
+        using Slot = ConfObjectSlot;
     private:
         uint16_t idx;
-
         Slot *getSlot();
 
     public:
@@ -204,8 +183,34 @@ struct Config {
         ConfObject& operator=(const ConfObject &cpy);
     };
 
+    struct ConfUnion {
+        using Slot = ConfUnionSlot;
+    private:
+        uint16_t idx;
+        Slot *getSlot();
+
+    public:
+        static bool slotEmpty(size_t i);
+        static constexpr const char *variantName = "ConfUnion";
+
+        uint8_t getTag() const;
+        bool changeUnionVariant(uint8_t tag);
+
+        Config *getVal();
+        const Config *getVal() const;
+        const Slot *getSlot() const;
+
+        ConfUnion(const Config &val, uint8_t tag, uint8_t prototypes_len, const ConfUnionPrototype prototypes[]);
+        ConfUnion(const ConfUnion &cpy);
+        ~ConfUnion();
+
+        ConfUnion& operator=(const ConfUnion &cpy);
+    };
+
+
     struct ConfUpdateArray;
     struct ConfUpdateObject;
+    struct ConfUpdateUnion;
 
     typedef strict_variant::variant<
         std::nullptr_t, // DON'T MOVE THIS!
@@ -215,7 +220,8 @@ struct Config {
         int32_t,
         bool,
         ConfUpdateArray,
-        ConfUpdateObject
+        ConfUpdateObject,
+        ConfUpdateUnion
     > ConfUpdate;
     // This is necessary as we can't use get to distinguish between
     // a get<std::nullptr_t>() that returned nullptr because the variant
@@ -234,6 +240,11 @@ struct Config {
         std::vector<std::pair<String, ConfUpdate>> elements;
     };
 
+    struct ConfUpdateUnion {
+        uint8_t tag;
+        ConfUpdate &value;
+    };
+
 
     struct ConfVariant {
         struct Empty{uint8_t x;};
@@ -245,7 +256,8 @@ struct Config {
             UINT,
             BOOL,
             ARRAY,
-            OBJECT
+            OBJECT,
+            UNION
         };
         Tag tag = Tag::EMPTY;
         uint8_t updated;
@@ -259,16 +271,18 @@ struct Config {
             ConfBool b;
             ConfArray a;
             ConfObject o;
+            ConfUnion un;
             ~Val() {}
         } val;
 
-        ConfVariant(ConfString s) : tag(Tag::STRING), updated(0xFF), val() {new(&val.s) ConfString{s};}
-        ConfVariant(ConfFloat f)  : tag(Tag::FLOAT),  updated(0xFF), val() {new(&val.f) ConfFloat{f};}
-        ConfVariant(ConfInt i)    : tag(Tag::INT),    updated(0xFF), val() {new(&val.i) ConfInt{i};}
-        ConfVariant(ConfUint u)   : tag(Tag::UINT),   updated(0xFF), val() {new(&val.u) ConfUint{u};}
-        ConfVariant(ConfBool b)   : tag(Tag::BOOL),   updated(0xFF), val() {new(&val.b) ConfBool{b};}
-        ConfVariant(ConfArray a)  : tag(Tag::ARRAY),  updated(0xFF), val() {new(&val.a) ConfArray{a};}
-        ConfVariant(ConfObject o) : tag(Tag::OBJECT), updated(0xFF), val() {new(&val.o) ConfObject{o};}
+        ConfVariant(ConfString s) : tag(Tag::STRING), updated(0xFF), val() {new(&val.s)  ConfString{s};}
+        ConfVariant(ConfFloat f)  : tag(Tag::FLOAT),  updated(0xFF), val() {new(&val.f)  ConfFloat{f};}
+        ConfVariant(ConfInt i)    : tag(Tag::INT),    updated(0xFF), val() {new(&val.i)  ConfInt{i};}
+        ConfVariant(ConfUint u)   : tag(Tag::UINT),   updated(0xFF), val() {new(&val.u)  ConfUint{u};}
+        ConfVariant(ConfBool b)   : tag(Tag::BOOL),   updated(0xFF), val() {new(&val.b)  ConfBool{b};}
+        ConfVariant(ConfArray a)  : tag(Tag::ARRAY),  updated(0xFF), val() {new(&val.a)  ConfArray{a};}
+        ConfVariant(ConfObject o) : tag(Tag::OBJECT), updated(0xFF), val() {new(&val.o)  ConfObject{o};}
+        ConfVariant(ConfUnion un) : tag(Tag::UNION),  updated(0xFF), val() {new(&val.un) ConfUnion{un};}
 
         ConfVariant() : tag(Tag::EMPTY), updated(0xFF), val() {}
 
@@ -300,6 +314,9 @@ struct Config {
                     break;
                 case ConfVariant::Tag::OBJECT:
                     new(&val.o) ConfObject(cpy.val.o);
+                    break;
+                case ConfVariant::Tag::UNION:
+                    new(&val.un) ConfUnion(cpy.val.un);
                     break;
             }
             this->tag = cpy.tag;
@@ -339,6 +356,9 @@ struct Config {
                 case ConfVariant::Tag::OBJECT:
                     new(&val.o) ConfObject(cpy.val.o);
                     break;
+                case ConfVariant::Tag::UNION:
+                    new(&val.un) ConfUnion(cpy.val.un);
+                    break;
             }
             this->tag = cpy.tag;
             this->updated = cpy.updated;
@@ -372,6 +392,9 @@ struct Config {
                 case ConfVariant::Tag::OBJECT:
                     val.o.~ConfObject();
                     break;
+                case ConfVariant::Tag::UNION:
+                    val.un.~ConfUnion();
+                    break;
             }
         }
 
@@ -399,6 +422,8 @@ struct Config {
                 return visitor(v.val.a);
             case ConfVariant::Tag::OBJECT:
                 return visitor(v.val.o);
+            case ConfVariant::Tag::UNION:
+                return visitor(v.val.un);
         }
 #ifdef __GNUC__
         __builtin_unreachable();
@@ -424,6 +449,8 @@ struct Config {
                 return visitor(v.val.a);
             case ConfVariant::Tag::OBJECT:
                 return visitor(v.val.o);
+            case ConfVariant::Tag::UNION:
+                return visitor(v.val.un);
         }
 #ifdef __GNUC__
         __builtin_unreachable();
@@ -454,6 +481,8 @@ struct Config {
             return (int)ConfVariant::Tag::ARRAY;
         if (std::is_same<T, ConfObject>())
             return (int)ConfVariant::Tag::OBJECT;
+        if (std::is_same<T, ConfUnion>())
+            return (int)ConfVariant::Tag::UNION;
         return -1;
     }
 
@@ -492,6 +521,8 @@ struct Config {
                         int variantType);
 
     static Config Object(std::initializer_list<std::pair<String, Config>> obj);
+
+    static Config Union(Config value, uint8_t tag, const ConfUnionPrototype prototypes[], uint8_t prototypes_len);
 
     static ConfigRoot *Null();
 
@@ -551,36 +582,25 @@ struct Config {
             const Config *conf;
     };
 
+    // for ConfUnion
+    Wrap get();
+
+    // for ConfObject
     Wrap get(const String &s);
 
+    // for ConfArray
     Wrap get(uint16_t i);
 
+    // for ConfUnion
+    const ConstWrap get() const;
+
+    // for ConfObject
     const ConstWrap get(const String &s) const;
 
+    // for ConfArray
     const ConstWrap get(uint16_t i) const;
 
-    Wrap add()
-    {
-        if (!this->is<Config::ConfArray>()) {
-            logger.printfln("Tried to add to a node that is not an array!");
-            delay(100);
-            return Wrap(nullptr);
-        }
-
-        std::vector<Config> &children = this->asArray();
-
-        const auto &arr = value.val.a;
-
-        const auto max_elements = arr.getSlot()->maxElements;
-        if (children.size() >= max_elements) {
-            logger.printfln("Tried to add to an ConfArray that already has the max allowed number of elements (%u).", max_elements);
-            delay(100);
-            return Wrap(nullptr);
-        }
-
-        children.push_back(*arr.getSlot()->prototype);
-        return Wrap(&children.back());
-    }
+    Wrap add();
 
     bool removeLast()
     {
@@ -656,6 +676,15 @@ struct Config {
             return std::vector<Config>::iterator();
         }
         return this->asArray().end();
+    }
+
+    uint8_t getTag() const {
+        if (!this->is<Config::ConfUnion>()) {
+            logger.printfln("Tried to get tag of a node that is not a union!");
+            delay(100);
+            return -1;
+        }
+        return this->get<ConfUnion>()->getTag();
     }
 
     template<typename ConfigT>
@@ -822,14 +851,14 @@ public:
     size_t json_size(bool zero_copy) const;
     size_t max_string_length() const;
 
+    DynamicJsonDocument to_json(const std::vector<String> &keys_to_censor) const;
+
     void save_to_file(File &file);
 
     void write_to_stream(Print &output);
-    void write_to_stream_except(Print &output, const std::initializer_list<String> &keys_to_censor);
     void write_to_stream_except(Print &output, const std::vector<String> &keys_to_censor);
 
     String to_string() const;
-    String to_string_except(const std::initializer_list<String> &keys_to_censor) const;
     String to_string_except(const std::vector<String> &keys_to_censor) const;
 };
 
@@ -865,73 +894,7 @@ private:
     String update_from_visitor(T visitor);
 };
 
-/*void test() {
-    Config value = Config::Object({
-        {"ssid", Config::Str("", 32)},
-        {"bssid", Config::Array({
-                Config::Uint8(0),
-                Config::Uint8(1),
-                Config::Uint8(2),
-                Config::Uint8(3),
-                Config::Uint8(4),
-                Config::Uint8(5)
-                },
-                Config::Uint8(0),
-                6,
-                6,
-                Config::type_id<Config::ConfUint>()
-            )
-        },
-        {"bssid_lock", Config::Bool(false)},
-        {"passphrase", Config::Str("", 64, [](const Config::ConfString &s) -> String {
-                return s.value.length() == 0 ||
-                    (s.value.length() >= 8 && s.value.length() <= 63) || //FIXME: check if there are only ASCII characters here.
-                    (s.value.length() == 64) ? "" : "passphrase must be of length zero, or 8 to 63, or 64 if PSK."; //FIXME: check if there are only hex digits here.
-            })
-        },
-        {"ip", Config::Uint32(0)},
-        {"gateway", Config::Uint32(0)},
-        {"subnet", Config::Uint32(0)},
-        {"dns", Config::Uint32(0)},
-        {"dns2", Config::Uint32(0)},
-    });
-    bool result = strict_variant::apply_visitor(recursive_validator{}, value.value);
-    Serial.println(result);
-
-    const char* json = "{\"ssid\":\"01234567890123456789012345678901\",\"bssid\":[0,1,2,3,4,5],\"bssid_lock\":true,\"passphrase\":\"01234567\",\"ip\":0,\"gateway\":0,\"subnet\":0,\"dns\":0,\"dns2\":0}";
-    const size_t capacity = JSON_ARRAY_SIZE(6) + JSON_OBJECT_SIZE(9) + 120;
-    DynamicJsonDocument doc(capacity);
-    deserializeJson(doc, json);
-
-    String error = strict_variant::apply_visitor(Config::from_json{doc.as<JsonVariant>()}, value.value);
-
-    Serial.println(error);
-    Serial.println(value.value.get<Config::ConfObject>()->value[0].second.value.get<Config::ConfString>()->value);
-
-
-    Serial.printf("Capacity is %d, visited capacity is %d\n", capacity, value.json_size());
-
-    DynamicJsonDocument doc2(value.json_size());
-
-    JsonVariant var;
-    if(value.is<Config::ConfObject>()) {
-        var = doc2.to<JsonObject>();
-    } else if(value.is<Config::ConfArray>()) {
-        var = doc2.to<JsonArray>();
-    } else {
-        var = doc2.as<JsonVariant>();
-    }
-    strict_variant::apply_visitor(to_json{var}, value.value);
-
-    //empty doc
-    //root is obj? doc.to<JsonObject>()
-    //root is arr? doc.to<JsonArray>()
-
-    uint32_t bssidSecondByte = *value.get("bssid")->get(1)->asUint();
-
-    serializeJson(doc2, Serial);
-    Serial.println("");
-    Serial.println(doc2.capacity());
-    Serial.println(doc2.memoryUsage());
-}
-*/
+struct ConfUnionPrototype {
+    uint8_t tag;
+    const Config config;
+};

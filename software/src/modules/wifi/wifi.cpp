@@ -18,6 +18,7 @@
  */
 
 #include "wifi.h"
+#include "module_dependencies.h"
 
 #include <WiFi.h>
 #include <esp_wifi.h>
@@ -28,7 +29,6 @@
 #include "event_log.h"
 #include "web_server.h"
 
-#include "modules.h"
 #include "build.h"
 #include "tools.h"
 
@@ -430,7 +430,7 @@ void Wifi::setup()
     WiFi.onEvent([this](arduino_event_id_t event, arduino_event_info_t info) {
             this->was_connected = true;
 
-            logger.printfln("Wifi connected to %s", WiFi.SSID().c_str());
+            logger.printfln("Wifi connected to %s, BSSID %s", WiFi.SSID().c_str(), WiFi.BSSIDstr().c_str());
             last_connected_ms = millis();
             state.get("connection_start")->updateUint(last_connected_ms);
         },
@@ -445,8 +445,7 @@ void Wifi::setup()
 
             auto ip = WiFi.localIP().toString();
             auto subnet = WiFi.subnetMask();
-            logger.printfln("Wifi MAC address: %s", WiFi.macAddress().c_str());
-            logger.printfln("Wifi got IP address: %s/%u. Connected to BSSID %s", ip.c_str(), WiFiGenericClass::calculateSubnetCIDR(subnet), WiFi.BSSIDstr().c_str());
+            logger.printfln("Wifi got IP address: %s/%u. Own MAC address: %s", ip.c_str(), WiFiGenericClass::calculateSubnetCIDR(subnet), WiFi.macAddress().c_str());
             state.get("sta_ip")->updateString(ip);
             state.get("sta_subnet")->updateString(subnet.toString());
             state.get("sta_bssid")->updateString(WiFi.BSSIDstr());
@@ -481,7 +480,7 @@ void Wifi::setup()
 #if MODULE_NETWORK_AVAILABLE()
     WiFi.setHostname(network.config.get("hostname")->asEphemeralCStr());
 #else
-    WiFi.setHostname((String(BUILD_HOST_PREFIX) + "-" + local_uid_str)).c_str();
+    WiFi.setHostname((String(BUILD_HOST_PREFIX) + "-" + local_uid_str).c_str());
 #endif
 
     if (enable_sta && enable_ap) {

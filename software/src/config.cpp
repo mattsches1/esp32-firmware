@@ -27,6 +27,51 @@
 
 #define SLOT_HEADROOM 20
 
+struct ConfStringSlot {
+    String val = "";
+    uint16_t minChars = 0;
+    uint16_t maxChars = 0;
+    bool inUse = false;
+};
+
+struct ConfFloatSlot {
+    float val = 0;
+    float min = 0;
+    float max = 0;
+};
+
+struct ConfIntSlot {
+    int32_t val = 0;
+    int32_t min = 0;
+    int32_t max = 0;
+};
+
+struct ConfUintSlot {
+    uint32_t val = 0;
+    uint32_t min = 0;
+    uint32_t max = 0;
+};
+
+struct ConfArraySlot {
+    std::vector<Config> val;
+    Config *prototype;
+    uint32_t minElements : 12, maxElements : 12;
+    int8_t variantType;
+    bool inUse = false;
+};
+
+struct ConfObjectSlot {
+    std::vector<std::pair<String, Config>> val;
+    bool inUse = false;
+};
+
+struct ConfUnionSlot {
+    uint8_t tag = 0;
+    uint8_t prototypes_len = 0;
+    Config val;
+    const ConfUnionPrototype * prototypes = nullptr;
+};
+
 #define UINT_SLOTS 512
 Config::ConfUint::Slot *uint_buf = nullptr;
 size_t uint_buf_size = 0;
@@ -50,6 +95,10 @@ size_t array_buf_size = 0;
 #define OBJECT_SLOTS 256
 Config::ConfObject::Slot *object_buf = nullptr;
 size_t object_buf_size = 0;
+
+#define UNION_SLOTS 32
+Config::ConfUnion::Slot *union_buf = nullptr;
+size_t union_buf_size = 0;
 
 static ConfigRoot nullconf = Config{Config::ConfVariant{}};
 
@@ -138,6 +187,12 @@ struct default_validator {
 
         return "";
     }
+
+    String operator()(const Config::ConfUnion &x) const {
+        // Tag match is already checked in from_json.
+
+        return Config::apply_visitor(default_validator{}, x.getVal()->value);
+    }
 };
 
 struct to_json {
@@ -173,7 +228,7 @@ struct to_json {
 
             if (child->is<Config::ConfObject>()) {
                 arr.createNestedObject();
-            } else if (child->is<Config::ConfArray>()) {
+            } else if (child->is<Config::ConfArray>() || child->is<Config::ConfUnion>()) {
                 arr.createNestedArray();
             } else {
                 arr.add(0);
@@ -191,10 +246,10 @@ struct to_json {
 
             if (child.is<Config::ConfObject>()) {
                 obj.createNestedObject(key);
-            } else if (child.is<Config::ConfArray>()) {
+            } else if (child.is<Config::ConfArray>() || child.is<Config::ConfUnion>()) {
                 obj.createNestedArray(key);
-            } else {
-                obj.getOrAddMember(key);
+            } else if (!obj.containsKey(key)) {
+                obj[key] = nullptr;
             }
 
             Config::apply_visitor(to_json{obj[key], keys_to_censor}, child.value);
@@ -203,6 +258,20 @@ struct to_json {
         for (const String &key : keys_to_censor)
             if (obj.containsKey(key) && !(obj[key].is<String>() && obj[key].as<String>().length() == 0))
                 obj[key] = nullptr;
+    }
+
+    void operator()(const Config::ConfUnion &x) {
+        JsonArray arr = insertHere.as<JsonArray>();
+        arr.add(x.getSlot()->tag);
+        if (x.getVal()->is<Config::ConfObject>()) {
+            arr.createNestedObject();
+        } else if (x.getVal()->is<Config::ConfArray>() || x.getVal()->is<Config::ConfUnion>()) {
+            arr.createNestedArray();
+        } else {
+            arr.add();
+        }
+
+        Config::apply_visitor(to_json{insertHere[1], keys_to_censor}, x.getVal()->value);
     }
 
     JsonVariant insertHere;
@@ -249,6 +318,14 @@ struct string_length_visitor {
         }
         return sum;
     }
+
+    size_t operator()(const Config::ConfUnion &x) {
+        size_t max_len = Config::apply_visitor(string_length_visitor{}, x.getVal()->value);
+        for (size_t i = 0; i < as_const(x).getSlot()->prototypes_len; ++i) {
+            max_len = std::max(max_len, Config::apply_visitor(string_length_visitor{}, as_const(x).getSlot()->prototypes[i].config.value));
+        }
+        return max_len + 6; // [255,]
+    }
 };
 
 struct json_length_visitor {
@@ -290,6 +367,14 @@ struct json_length_visitor {
             sum += Config::apply_visitor(json_length_visitor{zero_copy}, x.getVal()->at(i).second.value);
         }
         return sum + JSON_OBJECT_SIZE(x.getVal()->size());
+    }
+
+    size_t operator()(const Config::ConfUnion &x) {
+        size_t max_len = Config::apply_visitor(json_length_visitor{zero_copy}, x.getVal()->value);
+        for (size_t i = 0; i < as_const(x).getSlot()->prototypes_len; ++i) {
+            max_len = std::max(max_len, Config::apply_visitor(json_length_visitor{zero_copy}, as_const(x).getSlot()->prototypes[i].config.value));
+        }
+        return max_len + JSON_ARRAY_SIZE(2);
     }
 
     bool zero_copy;
@@ -368,9 +453,7 @@ struct from_json {
 
         JsonArray arr = json_node.as<JsonArray>();
 
-        // C++17 adds https://en.cppreference.com/w/cpp/utility/as_const
-        // until then we have to use this to make sure the const version of getSlot() is called.
-        const auto *prototype = ((const Config::ConfArray&)x).getSlot()->prototype;
+        const auto *prototype = as_const(x).getSlot()->prototype;
 
         x.getVal()->clear();
         for (size_t i = 0; i < arr.size(); ++i) {
@@ -449,6 +532,41 @@ struct from_json {
         }
 
         return "";
+    }
+
+    String operator()(Config::ConfUnion &x)
+    {
+        if (json_node.isNull())
+            return permit_null_updates ? "" : "Null updates not permitted.";
+
+        if (!json_node.is<JsonArray>())
+            return "JSON node was not an array.";
+
+        JsonArray arr = json_node.as<JsonArray>();
+
+        if (arr.size() != 2) {
+            return "JSON array had length != 2.";
+        }
+
+        uint8_t new_tag = x.getTag();
+
+        if (arr[0].isNull()) {
+            if (!permit_null_updates)
+                return "[0] Null updates not permitted";
+        }
+        else if (arr[0].is<uint8_t>()) {
+            new_tag = arr[0].as<uint8_t>();
+        } else {
+            return "[0] JSON node was not an unsigned integer.";
+        }
+
+
+        if (new_tag != x.getTag()) {
+            if (!x.changeUnionVariant(new_tag))
+                return "[0] Unknown union tag";
+        }
+
+        return Config::apply_visitor(from_json{arr[1], force_same_keys, permit_null_updates, false}, x.getVal()->value);
     }
 
     const JsonVariant json_node;
@@ -530,9 +648,7 @@ struct from_update {
 
         const Config::ConfUpdateArray *arr = update->get<Config::ConfUpdateArray>();
 
-        // C++17 adds https://en.cppreference.com/w/cpp/utility/as_const
-        // until then we have to use this to make sure the const version of getSlot() is called.
-        const auto *prototype = ((const Config::ConfArray&)x).getSlot()->prototype;
+        const auto *prototype = as_const(x).getSlot()->prototype;
 
         x.getVal()->clear();
         for (size_t i = 0; i < arr->elements.size(); ++i) {
@@ -577,6 +693,24 @@ struct from_update {
 
         return "";
     }
+    String operator()(Config::ConfUnion &x) {
+        if (Config::containsNull(update))
+            return "";
+
+        if (update->get<Config::ConfUpdateUnion>() == nullptr) {
+            Serial.println(update->which());
+            return "ConfUpdate node was not a union.";
+        }
+
+        const Config::ConfUpdateUnion *un = update->get<Config::ConfUpdateUnion>();
+
+        if (un->tag != as_const(x).getSlot()->tag) {
+            x.changeUnionVariant(un->tag);
+        }
+
+        return Config::apply_visitor(from_update{&un->value}, x.getVal()->value);
+    }
+
 
     const Config::ConfUpdate *update;
 };
@@ -622,6 +756,11 @@ struct is_updated {
         }
         return false;
     }
+    bool operator()(const Config::ConfUnion &x) const
+    {
+        return ((x.getVal()->value.updated & api_backend_flag) != 0) || Config::apply_visitor(is_updated{api_backend_flag}, x.getVal()->value);
+    }
+
     uint8_t api_backend_flag;
 };
 
@@ -658,6 +797,11 @@ struct set_updated_false {
             Config::apply_visitor(set_updated_false{api_backend_flag}, c.second.value);
         }
     }
+    void operator()(Config::ConfUnion &x)
+    {
+        x.getVal()->value.updated &= ~api_backend_flag;
+        Config::apply_visitor(set_updated_false{api_backend_flag}, x.getVal()->value);
+    }
     uint8_t api_backend_flag;
 };
 
@@ -682,6 +826,75 @@ static size_t nextSlot(typename T::Slot *&buf, size_t &buf_size) {
     buf_size = buf_size + SLOT_HEADROOM;
     return result;
 }
+
+
+bool Config::ConfUnion::slotEmpty(size_t i) {
+    return union_buf[i].prototypes == nullptr;
+}
+
+bool Config::ConfUnion::changeUnionVariant(uint8_t tag) {
+    auto &slot = union_buf[idx];
+    for(int i = 0; i < slot.prototypes_len; ++i) {
+        if (slot.prototypes[i].tag == tag) {
+            union_buf[idx].tag = tag;
+            slot.val = slot.prototypes[i].config;
+            return true;
+        }
+    }
+
+    return false;
+}
+uint8_t Config::ConfUnion::getTag() const { return union_buf[idx].tag; }
+
+Config* Config::ConfUnion::getVal() { return &union_buf[idx].val; }
+const Config* Config::ConfUnion::getVal() const { return &union_buf[idx].val; }
+
+const Config::ConfUnion::Slot* Config::ConfUnion::getSlot() const { return &union_buf[idx]; }
+Config::ConfUnion::Slot* Config::ConfUnion::getSlot() { return &union_buf[idx]; }
+
+Config::ConfUnion::ConfUnion(const Config &val, uint8_t tag, uint8_t prototypes_len, const ConfUnionPrototype prototypes[])
+{
+    idx = nextSlot<Config::ConfUnion>(union_buf, union_buf_size);
+
+    this->getSlot()->val = val;
+    this->getSlot()->tag = tag;
+    this->getSlot()->prototypes_len = prototypes_len;
+    this->getSlot()->prototypes = prototypes;
+}
+
+Config::ConfUnion::ConfUnion(const ConfUnion &cpy)
+{
+    idx = nextSlot<Config::ConfUnion>(union_buf, union_buf_size);
+
+    // If cpy->inUse is false, it is okay that we don't mark this slot as inUse.
+
+    // this->getSlot() is evaluated before the RHS of the assignment is copied over.
+    // This results in the LHS pointing to a deallocated array if copying the RHS
+    // resizes the slot array. Copying into a temp value (which resizes the array if necessary)
+    // and moving this value in the slot works.
+    auto tmp = *cpy.getSlot();
+    *this->getSlot() = std::move(tmp);
+}
+
+Config::ConfUnion::~ConfUnion()
+{
+    this->getSlot()->val = nullconf;
+    this->getSlot()->tag = 0;
+    this->getSlot()->prototypes_len = 0;
+    this->getSlot()->prototypes = nullptr;
+}
+
+Config::ConfUnion& Config::ConfUnion::operator=(const ConfUnion &cpy)
+{
+    if (this == &cpy) {
+        return *this;
+    }
+
+    *this->getSlot() = *cpy.getSlot();
+
+    return *this;
+}
+
 
 bool Config::ConfString::slotEmpty(size_t i) {
     return !string_buf[i].inUse;
@@ -1067,6 +1280,14 @@ Config Config::Object(std::initializer_list<std::pair<String, Config>> obj)
     return Config{ConfObject{obj}};
 }
 
+Config Config::Union(Config value, uint8_t tag, const ConfUnionPrototype prototypes[], uint8_t prototypes_len)
+{
+    if (boot_stage < BootStage::PRE_SETUP)
+        esp_system_abort("constructing configs before the pre_setup is not allowed!");
+
+    return Config{ConfUnion{value, tag, prototypes_len, prototypes}};
+}
+
 ConfigRoot *Config::Null()
 {
     // Allow constructing null configs:
@@ -1105,6 +1326,30 @@ Config Config::Int32(int32_t i)
     return Config::Int(i, std::numeric_limits<int32_t>::lowest(), std::numeric_limits<int32_t>::max());
 }
 
+Config::Wrap Config::get() {
+    if (!this->is<Config::ConfUnion>()) {
+        logger.printfln("Config is not a union!");
+        delay(100);
+        return Wrap(nullptr);
+    }
+    Wrap wrap(value.val.un.getVal());
+
+    return wrap;
+}
+
+const Config::ConstWrap Config::get() const {
+    if (!this->is<Config::ConfUnion>()) {
+        logger.printfln("Config is not a union!");
+        delay(100);
+        return ConstWrap(nullptr);
+    }
+    ConstWrap wrap(value.val.un.getVal());
+
+    return wrap;
+}
+
+
+
 Config::Wrap Config::get(const String &s)
 {
 
@@ -1118,7 +1363,7 @@ Config::Wrap Config::get(const String &s)
     return wrap;
 }
 
- Config::Wrap Config::get(uint16_t i)
+Config::Wrap Config::get(uint16_t i)
 {
 
     if (!this->is<Config::ConfArray>()) {
@@ -1230,7 +1475,6 @@ size_t Config::fillInt32Array(int32_t *arr, size_t elements)
     return fillArray<int32_t, Config::ConfInt>(arr, elements);
 }
 
-
 size_t Config::json_size(bool zero_copy) const
 {
     return Config::apply_visitor(json_length_visitor{zero_copy}, value);
@@ -1241,19 +1485,24 @@ size_t Config::max_string_length() const
     return Config::apply_visitor(string_length_visitor{}, value);
 }
 
-void Config::save_to_file(File &file)
-{
+DynamicJsonDocument Config::to_json(const std::vector<String> &keys_to_censor) const {
     DynamicJsonDocument doc(json_size(false));
 
     JsonVariant var;
     if (is<Config::ConfObject>()) {
         var = doc.to<JsonObject>();
-    } else if (is<Config::ConfArray>()) {
+    } else if (is<Config::ConfArray>() || is<Config::ConfUnion>()) {
         var = doc.to<JsonArray>();
     } else {
         var = doc.as<JsonVariant>();
     }
-    Config::apply_visitor(to_json{var, {}}, value);
+    Config::apply_visitor(::to_json{var, keys_to_censor}, value);
+    return doc;
+}
+
+void Config::save_to_file(File &file)
+{
+    auto doc = this->to_json({});
 
     if (doc.overflowed())
         logger.printfln("JSON doc overflow while writing %s!", file.name());
@@ -1262,17 +1511,7 @@ void Config::save_to_file(File &file)
 
 void Config::write_to_stream(Print &output)
 {
-    DynamicJsonDocument doc(json_size(false));
-
-    JsonVariant var;
-    if (is<Config::ConfObject>()) {
-        var = doc.to<JsonObject>();
-    } else if (is<Config::ConfArray>()) {
-        var = doc.to<JsonArray>();
-    } else {
-        var = doc.as<JsonVariant>();
-    }
-    Config::apply_visitor(to_json{var, {}}, value);
+    auto doc = this->to_json({});
 
     if (doc.overflowed())
         logger.printfln("JSON doc overflow!");
@@ -1284,42 +1523,9 @@ String Config::to_string() const
     return this->to_string_except({});
 }
 
-String Config::to_string_except(const std::initializer_list<String> &keys_to_censor) const
-{
-    DynamicJsonDocument doc(json_size(false));
-
-    JsonVariant var;
-    if (is<Config::ConfObject>()) {
-        var = doc.to<JsonObject>();
-    } else if (is<Config::ConfArray>()) {
-        var = doc.to<JsonArray>();
-    } else {
-        var = doc.as<JsonVariant>();
-    }
-    Config::apply_visitor(to_json{var, keys_to_censor}, value);
-
-
-    if (doc.overflowed())
-        logger.printfln("JSON doc overflow!");
-
-    String result;
-    serializeJson(doc, result);
-    return result;
-}
-
 String Config::to_string_except(const std::vector<String> &keys_to_censor) const
 {
-    DynamicJsonDocument doc(json_size(false));
-
-    JsonVariant var;
-    if (is<Config::ConfObject>()) {
-        var = doc.to<JsonObject>();
-    } else if (is<Config::ConfArray>()) {
-        var = doc.to<JsonArray>();
-    } else {
-        var = doc.as<JsonVariant>();
-    }
-    Config::apply_visitor(to_json{var, keys_to_censor}, value);
+    auto doc = this->to_json(keys_to_censor);
 
     if (doc.overflowed())
         logger.printfln("JSON doc overflow!");
@@ -1327,40 +1533,11 @@ String Config::to_string_except(const std::vector<String> &keys_to_censor) const
     String result;
     serializeJson(doc, result);
     return result;
-}
-
-void Config::write_to_stream_except(Print &output, const std::initializer_list<String> &keys_to_censor)
-{
-    DynamicJsonDocument doc(json_size(false));
-
-    JsonVariant var;
-    if (is<Config::ConfObject>()) {
-        var = doc.to<JsonObject>();
-    } else if (is<Config::ConfArray>()) {
-        var = doc.to<JsonArray>();
-    } else {
-        var = doc.as<JsonVariant>();
-    }
-    Config::apply_visitor(to_json{var, keys_to_censor}, value);
-
-    if (doc.overflowed())
-        logger.printfln("JSON doc overflow!");
-    serializeJson(doc, output);
 }
 
 void Config::write_to_stream_except(Print &output, const std::vector<String> &keys_to_censor)
 {
-    DynamicJsonDocument doc(json_size(false));
-
-    JsonVariant var;
-    if (is<Config::ConfObject>()) {
-        var = doc.to<JsonObject>();
-    } else if (is<Config::ConfArray>()) {
-        var = doc.to<JsonArray>();
-    } else {
-        var = doc.as<JsonVariant>();
-    }
-    Config::apply_visitor(to_json{var, keys_to_censor}, value);
+    auto doc = this->to_json(keys_to_censor);
 
     if (doc.overflowed())
         logger.printfln("JSON doc overflow!");
@@ -1509,4 +1686,26 @@ void config_post_setup() {
 Config::ConstWrap::ConstWrap(const Config *_conf)
 {
     conf = _conf;
+}
+
+Config::Wrap Config::add() {
+    if (!this->is<Config::ConfArray>()) {
+        logger.printfln("Tried to add to a node that is not an array!");
+        delay(100);
+        return Wrap(nullptr);
+    }
+
+    std::vector<Config> &children = this->asArray();
+
+    const auto &arr = value.val.a;
+
+    const auto max_elements = arr.getSlot()->maxElements;
+    if (children.size() >= max_elements) {
+        logger.printfln("Tried to add to an ConfArray that already has the max allowed number of elements (%u).", max_elements);
+        delay(100);
+        return Wrap(nullptr);
+    }
+
+    children.push_back(*arr.getSlot()->prototype);
+    return Wrap(&children.back());
 }

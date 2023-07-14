@@ -18,19 +18,15 @@
  */
 
 #include "em_pv_faker.h"
+#include "module_dependencies.h"
 
 #include "api.h"
 #include "event_log.h"
-#include "modules.h"
 #include "task_scheduler.h"
 
 #include "mqtt_client.h"
 
 #include "gcc_warnings.h"
-
-#if !MODULE_MQTT_AVAILABLE()
-#error Back-end module MQTT required
-#endif
 
 void EmPvFaker::pre_setup()
 {
@@ -66,6 +62,8 @@ void EmPvFaker::pre_setup()
 
 void EmPvFaker::setup()
 {
+    mqtt.register_consumer(this);
+
     api.restorePersistentConfig("em_pv_faker/config", &config);
 
     int32_t target_power = 0;

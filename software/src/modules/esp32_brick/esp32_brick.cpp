@@ -18,13 +18,13 @@
  */
 
 #include "esp32_brick.h"
+#include "module_dependencies.h"
 
 #include <Arduino.h>
 
 #include "tools.h"
 #include "hal_arduino_esp32_brick/hal_arduino_esp32_brick.h"
 #include "event_log.h"
-#include "modules.h"
 #include "task_scheduler.h"
 
 #if TF_LOCAL_ENABLE != 0
@@ -93,6 +93,7 @@ void ESP32Brick::setup()
 
 void ESP32Brick::loop()
 {
+#if MODULE_FIRMWARE_UPDATE_AVAILABLE()
     static bool last_btn_value = false;
     static uint32_t last_btn_change = 0;
 
@@ -110,4 +111,5 @@ void ESP32Brick::loop()
         last_btn_change = millis();
         factory_reset();
     }
+#endif
 }
