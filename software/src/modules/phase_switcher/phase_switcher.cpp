@@ -103,28 +103,7 @@ void PhaseSwitcher::setup()
         return;
     }
 
-    requested_power_history.setup();
-    charging_power_history.setup();
-    active_phases_history.setup();
-
-    requested_power_history.clear();
-    charging_power_history.clear();
-    active_phases_history.clear();
-
-    for (int i = 0; i < requested_power_history.size(); ++i) {
-        // Use negative values to mark that these are pre-filled.
-        requested_power_history.push(-1);
-    }
-
-    for (int i = 0; i < charging_power_history.size(); ++i) {
-        // Use negative values to mark that these are pre-filled.
-        charging_power_history.push(-1);
-    }
-
-    for (int i = 0; i < active_phases_history.size(); ++i) {
-        // Use negative values to mark that these are pre-filled.
-        active_phases_history.push(-1);
-    }
+    power_hist.setup();
 
     api.restorePersistentConfig("phase_switcher/config", &api_config);
     api_config_in_use = api_config;
@@ -152,11 +131,7 @@ void PhaseSwitcher::setup()
 
     task_scheduler.scheduleWithFixedDelay([this](){
         update_all_data();
-    }, 150, 250);
-
-    task_scheduler.scheduleWithFixedDelay([this](){
-        update_history();
-    }, 160, PHASE_SWITCHER_HISTORY_MINUTE_INTERVAL * 60 * 1000);
+    }, 150, 500);
 
     initialized = true;
 }
@@ -226,104 +201,12 @@ void PhaseSwitcher::register_urls()
         start_quick_charging();
     }, true);
 
-    server.on("/phase_switcher/requested_power_history", HTTP_GET, [this](WebServerRequest request) {
-        if (!initialized) {
-            return request.send(400, "text/html", "not initialized");
-        }
-
-        const size_t buf_size = PHASE_SWITCHER_RING_BUF_SIZE * 6 + 100;
-        char buf[buf_size] = {0};
-        size_t buf_written = 0;
-
-        int16_t val;
-        requested_power_history.peek(&val);
-        // Negative values are prefilled, because the ESP was booted less than 48 hours ago.
-        if (val < 0)
-            buf_written += snprintf(buf + buf_written, buf_size - buf_written, "%s", "[null");
-        else
-            buf_written += snprintf(buf + buf_written, buf_size - buf_written, "[%d", (int)val);
-
-        for (int i = 1; i < requested_power_history.used() && requested_power_history.peek_offset(&val, i) && buf_written < buf_size; ++i) {
-            // Negative values are prefilled, because the ESP was booted less than 48 hours ago.
-            if (val < 0)
-                buf_written += snprintf(buf + buf_written, buf_size - buf_written, "%s", ",null");
-            else
-                buf_written += snprintf(buf + buf_written, buf_size - buf_written, ",%d", (int)val);
-        }
-
-        if (buf_written < buf_size)
-            buf_written += snprintf(buf + buf_written, buf_size - buf_written, "%c", ']');
-
-        return request.send(200, "application/json; charset=utf-8", buf, buf_written);
-    });
-
-    server.on("/phase_switcher/charging_power_history", HTTP_GET, [this](WebServerRequest request) {
-        if (!initialized) {
-            return request.send(400, "text/html", "not initialized");
-        }
-
-        const size_t buf_size = PHASE_SWITCHER_RING_BUF_SIZE * 6 + 100;
-        char buf[buf_size] = {0};
-        size_t buf_written = 0;
-
-        int16_t val;
-        charging_power_history.peek(&val);
-        // Negative values are prefilled, because the ESP was booted less than 48 hours ago.
-        if (val < 0)
-            buf_written += snprintf(buf + buf_written, buf_size - buf_written, "%s", "[null");
-        else
-            buf_written += snprintf(buf + buf_written, buf_size - buf_written, "[%d", (int)val);
-
-        for (int i = 1; i < charging_power_history.used() && charging_power_history.peek_offset(&val, i) && buf_written < buf_size; ++i) {
-            // Negative values are prefilled, because the ESP was booted less than 48 hours ago.
-            if (val < 0)
-                buf_written += snprintf(buf + buf_written, buf_size - buf_written, "%s", ",null");
-            else
-                buf_written += snprintf(buf + buf_written, buf_size - buf_written, ",%d", (int)val);
-        }
-
-        if (buf_written < buf_size)
-            buf_written += snprintf(buf + buf_written, buf_size - buf_written, "%c", ']');
-
-        return request.send(200, "application/json; charset=utf-8", buf, buf_written);
-    });
-
-    server.on("/phase_switcher/requested_phases_history", HTTP_GET, [this](WebServerRequest request) {
-        if (!initialized) {
-            return request.send(400, "text/html", "not initialized");
-        }
-
-        const size_t buf_size = PHASE_SWITCHER_RING_BUF_SIZE * 6 + 100;
-        char buf[buf_size] = {0};
-        size_t buf_written = 0;
-
-        int16_t val;
-        active_phases_history.peek(&val);
-        // Negative values are prefilled, because the ESP was booted less than 48 hours ago.
-        if (val < 0)
-            buf_written += snprintf(buf + buf_written, buf_size - buf_written, "%s", "[null");
-        else
-            buf_written += snprintf(buf + buf_written, buf_size - buf_written, "[%d", (int)val);
-
-        for (int i = 1; i < active_phases_history.used() && active_phases_history.peek_offset(&val, i) && buf_written < buf_size; ++i) {
-            // Negative values are prefilled, because the ESP was booted less than 48 hours ago.
-            if (val < 0)
-                buf_written += snprintf(buf + buf_written, buf_size - buf_written, "%s", ",null");
-            else
-                buf_written += snprintf(buf + buf_written, buf_size - buf_written, ",%d", (int)val);
-        }
-
-        if (buf_written < buf_size)
-            buf_written += snprintf(buf + buf_written, buf_size - buf_written, "%c", ']');
-
-        return request.send(200, "application/json; charset=utf-8", buf, buf_written);
-    });
+    power_hist.register_urls("phase_switcher");
 
     server.on("/phase_switcher/start_debug", HTTP_GET, [this](WebServerRequest request) {
         task_scheduler.scheduleOnce([this](){
             logger.printfln("Phase switcher: Enabling debug mode");
             debug = true;
-            this->update_history();
         }, 0);
         return request.send(200);
     });
@@ -335,9 +218,6 @@ void PhaseSwitcher::register_urls()
         }, 0);
         return request.send(200);
     });
-
-
-
 }
 
 void PhaseSwitcher::loop(){}
@@ -932,19 +812,22 @@ void PhaseSwitcher::update_all_data()
         api_low_level_state.get("current_on_delay_time")->get(i)->updateUint(delay_timer[i].current_value_on_delay / 1000);
         api_low_level_state.get("current_off_delay_time")->get(i)->updateUint(delay_timer[i].current_value_off_delay / 1000);
     }
+
+    power_hist.add_sample(available_charging_power);
+
 }
 
-void PhaseSwitcher::update_history()
-{
-    int16_t actual_charging_power = -1;
-    if (modbus_meter.initialized){
-        static Config *meter_values = api.getState("meter/values", false);
+// void PhaseSwitcher::update_history()
+// {
+//     int16_t actual_charging_power = -1;
+//     if (modbus_meter.initialized){
+//         static Config *meter_values = api.getState("meter/values", false);
 
-        if (meter_values != nullptr)
-            actual_charging_power = meter_values->get("power")->asFloat();
-    }
+//         if (meter_values != nullptr)
+//             actual_charging_power = meter_values->get("power")->asFloat();
+//     }
 
-    requested_power_history.push((int16_t)available_charging_power);
-    charging_power_history.push((int16_t)(actual_charging_power));
-    active_phases_history.push((int16_t)(requested_phases * 230 * 6));
-}
+//     requested_power_history.push((int16_t)available_charging_power);
+//     charging_power_history.push((int16_t)(actual_charging_power));
+//     active_phases_history.push((int16_t)(requested_phases * 230 * 6));
+// }

@@ -21,10 +21,12 @@
 #include "bindings/bricklet_industrial_digital_in_4_v2.h"
 
 #include "config.h"
+
 #include "bricklet.h"
 #include "device_module.h"
 
 #include "delay_timer.h"
+#include "../meter/value_history.h"
 
 #define EVSE_START_TIMEOUT 60000
 #define EVSE_START_RETRIES 3
@@ -35,10 +37,6 @@
 #define MIN_POWER_ONE_PHASE (6 * 230)
 #define MIN_POWER_TWO_PHASES (6 * 230 * 2)
 #define MIN_POWER_THREE_PHASES (6 * 230 * 3)
-
-#define PHASE_SWITCHER_HISTORY_HOURS 12
-#define PHASE_SWITCHER_HISTORY_MINUTE_INTERVAL 1
-#define PHASE_SWITCHER_RING_BUF_SIZE (PHASE_SWITCHER_HISTORY_HOURS * (60 / PHASE_SWITCHER_HISTORY_MINUTE_INTERVAL) + 1)
 
 typedef Bricklet<TF_IndustrialQuadRelayV2, 
                 tf_industrial_quad_relay_v2_create> QuadRelayBricklet;
@@ -125,7 +123,6 @@ private:
     void write_outputs();
     void contactor_check();
     void update_all_data();
-    void update_history();
     
     QuadRelayBricklet quad_relay_bricklet = QuadRelayBricklet(
             TF_INDUSTRIAL_QUAD_RELAY_V2_DEVICE_IDENTIFIER,
@@ -170,42 +167,7 @@ private:
     uint8_t auto_start_charging;
     bool contactor_error;
 
-    // ValueHistory power_hist;
-
-    // micros_t last_value_change = 0_usec;
-
-
-    TF_Ringbuffer<int16_t,
-                  PHASE_SWITCHER_RING_BUF_SIZE,
-                  uint32_t,
-#if defined(BOARD_HAS_PSRAM)
-                  malloc_psram,
-#else
-                  malloc_32bit_addressed,
-#endif
-                  heap_caps_free> requested_power_history;
-
-
-    TF_Ringbuffer<int16_t,
-                  PHASE_SWITCHER_RING_BUF_SIZE,
-                  uint32_t,
-#if defined(BOARD_HAS_PSRAM)
-                  malloc_psram,
-#else
-                  malloc_32bit_addressed,
-#endif
-                  heap_caps_free> charging_power_history;
-
-
-    TF_Ringbuffer<int16_t,
-                  PHASE_SWITCHER_RING_BUF_SIZE,
-                  uint32_t,
-#if defined(BOARD_HAS_PSRAM)
-                  malloc_psram,
-#else
-                  malloc_32bit_addressed,
-#endif
-                  heap_caps_free> active_phases_history;
+    ValueHistory power_hist;
 
 };
                                     

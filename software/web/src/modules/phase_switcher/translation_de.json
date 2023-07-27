@@ -73,8 +73,9 @@
             },
 
             "meter": "Stromzähler",
-            "actual_charging_power": "Aktuelle Ladeleistung"
-
+            "actual_charging_power": "Aktuelle Ladeleistung",
+            "history": "Verlauf (48 h)",
+            "live": "Live"    
         },
         "script": {
             "save_failed": "Speichern der Konfiguration für die automatische Phasenumschaltung fehlgeschlagen.",
@@ -91,7 +92,7 @@
                 "50" : "Ladevorgang durch EVSE gestoppt"
             },
             "time": "Uhrzeit",
-            "power": "Leistung (Watt)"
+            "power": "Leistung"
         }
     }
 }

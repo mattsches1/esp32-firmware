@@ -35,12 +35,14 @@ import { SubPage } from "../../ts/components/sub_page";
 import { CollapsedSection } from "../../ts/components/collapsed_section";
 import { IndicatorGroup } from "../../ts/components/indicator_group";
 import uPlot from 'uplot';
+import { FormSeparator } from "../../ts/components/form_separator";
 
 type PhaseSwitcherConfig = API.getType['phase_switcher/config'];
 
 interface PhaseSwitcherState {
     state: API.getType['phase_switcher/state'];
     low_level_state: API.getType['phase_switcher/low_level_state'];
+    chart_selected: "history"|"live";
 }
 
 interface UplotData {
@@ -122,7 +124,7 @@ class UplotWrapper extends Component<UplotWrapperProps, {}> {
             },
             series: [
                 {
-                    label: __("meter.script.time"),
+                    label: __("phase_switcher.script.time"),
                     value: (self: uPlot, rawValue: number) => {
                         if (rawValue !== null) {
                             if (this.props.legend_time_with_seconds) {
@@ -140,7 +142,7 @@ class UplotWrapper extends Component<UplotWrapperProps, {}> {
                     show: true,
                     pxAlign: 0,
                     spanGaps: false,
-                    label: __("meter.script.power"),
+                    label: __("phase_switcher.status.available_charging_power"),
                     value: (self: uPlot, rawValue: number) => util.hasValue(rawValue) ? util.toLocaleFixed(rawValue) + " W" : null,
                     stroke: "rgb(0, 123, 255)",
                     fill: "rgb(0, 123, 255, 0.1)",
@@ -196,7 +198,7 @@ class UplotWrapper extends Component<UplotWrapperProps, {}> {
                     },
                 },
                 {
-                    label: __("meter.script.power") + " [Watt]",
+                    label: __("phase_switcher.script.power") + " [Watt]",
                     labelSize: 20,
                     labelGap: 2,
                     labelFont: 'bold 14px system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"',
@@ -405,6 +407,30 @@ class UplotWrapper extends Component<UplotWrapperProps, {}> {
     }
 }
 
+function calculate_live_data(offset: number, samples_per_second: number, samples: number[]): UplotData {
+    let data: UplotData = {timestamps: new Array(samples.length), samples: samples};
+    let now = Date.now();
+    let start;
+    let step;
+
+    if (samples_per_second == 0) { // implies samples.length == 1
+        start = now - offset;
+        step = 0;
+    } else {
+        // (samples.length - 1) because samples_per_second defines the gaps between
+        // two samples. with N samples there are (N - 1) gaps, while the lastest/newest
+        // sample is offset milliseconds old
+        start = now - (samples.length - 1) / samples_per_second * 1000 - offset;
+        step = 1 / samples_per_second * 1000;
+    }
+
+    for(let i = 0; i < samples.length; ++i) {
+        data.timestamps[i] = (start + i * step) / 1000;
+    }
+
+    return data;
+}
+
 function calculate_history_data(offset: number, samples: number[]): UplotData {
     const HISTORY_MINUTE_INTERVAL = 4;
 
@@ -432,7 +458,10 @@ function array_append<T>(a: Array<T>, b: Array<T>, tail: number): Array<T> {
 }
 
 export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, PhaseSwitcherConfig & PhaseSwitcherState> {
+    live_data: UplotData;
+    pending_live_data: UplotData = {timestamps: [], samples: []};
     history_data: UplotData;
+    uplot_wrapper_live_ref = createRef();
     uplot_wrapper_history_ref = createRef();
 
     constructor() {
@@ -448,6 +477,73 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
             this.setState({low_level_state: API.get('phase_switcher/low_level_state')});
         });
 
+        util.addApiEventListener("phase_switcher/live", () => {
+            let live = API.get("phase_switcher/live");
+
+            this.live_data = calculate_live_data(live.offset, live.samples_per_second, live.samples);
+            this.pending_live_data = {timestamps: [], samples: []};
+
+            if (this.state.chart_selected == "live") {
+                this.update_uplot();
+            }
+        });
+
+        util.addApiEventListener("phase_switcher/live_samples", () => {
+            let live = API.get("phase_switcher/live_samples");
+            let live_extra = calculate_live_data(0, live.samples_per_second, live.samples);
+
+            this.pending_live_data.timestamps.push(...live_extra.timestamps);
+            this.pending_live_data.samples.push(...live_extra.samples);
+
+            if (this.pending_live_data.samples.length >= 5) {
+                this.live_data.timestamps = array_append(this.live_data.timestamps, this.pending_live_data.timestamps, 720);
+                this.live_data.samples = array_append(this.live_data.samples, this.pending_live_data.samples, 720);
+
+                this.pending_live_data.timestamps = [];
+                this.pending_live_data.samples = [];
+
+                if (this.state.chart_selected == "live") {
+                    this.update_uplot();
+                }
+            }
+        });
+
+        util.addApiEventListener("meter/history", () => {
+            let history = API.get("meter/history");
+
+            this.history_data = calculate_history_data(history.offset, history.samples);
+
+            if (this.state.chart_selected == "history") {
+                // this.update_uplot();
+            }
+        });
+
+        util.addApiEventListener("meter/history_samples", () => {
+            let history = API.get("meter/history_samples");
+
+            this.history_data = calculate_history_data(0, array_append(this.history_data.samples, history.samples, 720));
+
+            if (this.state.chart_selected == "history") {
+                // this.update_uplot();
+            }
+        });
+
+        this.state = {
+            chart_selected: "history",
+        } as any;
+    }
+
+    update_uplot() {
+        if (this.state.chart_selected == 'live') {
+            if (this.uplot_wrapper_live_ref && this.uplot_wrapper_live_ref.current) {
+                this.uplot_wrapper_live_ref.current.set_data(this.live_data);
+            }
+        }
+        else {
+            if (this.uplot_wrapper_history_ref && this.uplot_wrapper_history_ref.current) {
+                this.uplot_wrapper_history_ref.current.set_data(this.history_data);
+            }
+        }
     }
 
     render(props: {}, api_data: Readonly<PhaseSwitcherConfig & PhaseSwitcherState>) {
@@ -539,6 +635,50 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
                             </div>
                         </div>
                     </FormRow>
+
+                    <FormSeparator heading={__("phase_switcher.content.meter")} first={true} colClasses={"justify-content-between align-items-center col"} extraClasses={"pr-0 pr-lg-3"} >
+                                <div class="mb-2">
+                                    <InputSelect value={this.state.chart_selected} onValue={(v) => {
+                                        let chart_selected: "live"|"history" = v as any;
+
+                                        this.setState({chart_selected: chart_selected}, () => {
+                                            if (chart_selected == 'live') {
+                                                this.uplot_wrapper_live_ref.current.set_show(true);
+                                                this.uplot_wrapper_history_ref.current.set_show(false);
+                                            }
+                                            else {
+                                                this.uplot_wrapper_history_ref.current.set_show(true);
+                                                this.uplot_wrapper_live_ref.current.set_show(false);
+                                            }
+
+                                            this.update_uplot();
+                                        });
+                                    }}
+                                        items={[
+                                            ["history", __("phase_switcher.content.history")],
+                                            ["live", __("phase_switcher.content.live")],
+                                        ]}/>
+                                </div>
+                            </FormSeparator>
+                            <UplotWrapper ref={this.uplot_wrapper_live_ref}
+                                          id="phase_switcher_chart_live"
+                                          class="phase_switcher-chart"
+                                          sidebar_id="phase_switcher"
+                                          show={false}
+                                          legend_time_with_seconds={true}
+                                          x_height={30}
+                                          x_include_date={false}
+                                          y_diff_min={100} />
+                            <UplotWrapper ref={this.uplot_wrapper_history_ref}
+                                          id="phase_switcher_chart_history"
+                                          class="phase_switcher-chart"
+                                          sidebar_id="phase_switcher"
+                                          show={true}
+                                          legend_time_with_seconds={false}
+                                          x_height={50}
+                                          x_include_date={true}
+                                          y_min={0}
+                                          y_max={1500} />
 
                     {/* Low Level State */}
                     <CollapsedSection label={__("phase_switcher.content.low_level_state")}>

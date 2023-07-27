@@ -1,3 +1,4 @@
+//APIPath:phase_switcher/
 export interface state {
     available_charging_power: number,
     requested_phases: number,
@@ -23,6 +24,17 @@ export interface low_level_state {
     output_channels: boolean[],
     current_on_delay_time: Uint32Array,
     current_off_delay_time: Uint32Array
+}
+
+export interface live {
+    offset: number,
+    samples_per_second: number,
+    samples: number[],
+}
+
+export interface live_samples {
+    samples_per_second: number,
+    samples: number[],
 }
 
 export interface history {

@@ -73,7 +73,9 @@
             },
 
             "meter": "Energy Meter",
-            "actual_charging_power": "Actual charging power"
+            "actual_charging_power": "Actual charging power",
+            "history": "History (48 h)",
+            "live": "Live"
         },
         "script": {
             "save_failed": "Failed to save the phase switcher configuration",
@@ -90,7 +92,7 @@
                 "50" : "Charging stopped by EVSE"
             },
             "time": "Time of day",
-            "power": "Power (Watt)"
+            "power": "Power"
         }
     }
 }
