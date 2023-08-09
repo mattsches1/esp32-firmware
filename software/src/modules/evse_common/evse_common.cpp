@@ -18,8 +18,9 @@
  */
 
 #include "evse_common.h"
-#include "modules.h"
+#include "module_dependencies.h"
 
+extern EvseCommon evse_common;
 extern uint32_t local_uid_num;
 
 EvseCommon::EvseCommon() {
@@ -135,6 +136,25 @@ void EvseCommon::pre_setup() {
     });
 
     require_meter_enabled_update = require_meter_enabled;
+
+#if MODULE_CRON_AVAILABLE()
+    ConfUnionPrototype proto;
+    proto.tag = CRON_TRIGGER_IEC_CHANGE;
+    proto.config = Config::Object({
+        {"charger_state", Config::Uint(0, 0, 4)}
+    });
+
+    cron.register_trigger(proto);
+
+    proto.tag = CRON_ACTION_SET_CURRENT;
+    proto.config = Config::Object({
+        {"current", Config::Uint(0, 0, 32000)}
+    });
+
+    cron.register_action(proto, [this](const Config *config) {
+        backend->set_charging_slot(CHARGING_SLOT_CRON, config->get("current")->asUint(), true, false);
+    });
+#endif
 }
 
 bool EvseCommon::apply_slot_default(uint8_t slot, uint16_t current, bool enabled, bool clear)
@@ -232,7 +252,6 @@ void EvseCommon::apply_defaults()
     }
 }
 
-
 void EvseCommon::setup() {
     setup_evse();
 
@@ -250,15 +269,36 @@ void EvseCommon::setup() {
     initialized = true;
 }
 
+#if MODULE_CRON_AVAILABLE()
+bool EvseCommon::action_triggered(Config *config, void *data) {
+    Config *cfg = (Config*)config->get();
+    switch (config->getTag()) {
+        case CRON_TRIGGER_IEC_CHANGE:
+                if (cfg->get("iec61851_state")->asUint() == state.get("iec61851_state")->asUint())
+                    return true;
+            break;
+
+        default:
+            return false;
+    }
+    return false;
+}
+#endif
 void EvseCommon::setup_evse()
 {
     if (!backend->setup_device()) {
         return;
     }
 
-    evse_common.apply_defaults();
+    this->apply_defaults();
     backend->initialized = true;
 }
+
+#if MODULE_CRON_AVAILABLE()
+    bool trigger_action(Config *cfg, void *data) {
+        return evse_common.action_triggered(cfg, data);
+    }
+#endif
 
 void EvseCommon::register_urls() {
 #if MODULE_CM_NETWORKING_AVAILABLE()
@@ -416,7 +456,7 @@ void EvseCommon::register_urls() {
         if (enabled)
             backend->set_charging_slot(CHARGING_SLOT_CHARGE_MANAGER, 0, true, true);
         else
-            backend->set_charging_slot(CHARGING_SLOT_CHARGE_MANAGER, 32000, true, true);
+            backend->set_charging_slot(CHARGING_SLOT_CHARGE_MANAGER, 32000, false, false);
 
         if (enabled)
             apply_slot_default(CHARGING_SLOT_CHARGE_MANAGER, 0, true, true);
@@ -441,7 +481,7 @@ void EvseCommon::register_urls() {
         if (enabled)
             backend->set_charging_slot(CHARGING_SLOT_USER, 0, true, true);
         else
-            backend->set_charging_slot(CHARGING_SLOT_USER, 0, true, true);
+            backend->set_charging_slot(CHARGING_SLOT_USER, 32000, false, false);
 
         if (enabled)
             apply_slot_default(CHARGING_SLOT_USER, 0, true, true);
@@ -509,6 +549,22 @@ void EvseCommon::register_urls() {
     }, false);
 
     backend->post_register_urls();
+
+#if MODULE_CRON_AVAILABLE()
+    if (cron.is_trigger_active(CRON_TRIGGER_IEC_CHANGE)) {
+        event.registerEvent("evse/state", {}, [this](Config *cfg) {
+
+            // we need this since not only iec state changes trigger this api event.
+            static uint32_t last_state = 0;
+            uint32_t state_now = cfg->get("charger_state")->asUint();
+            if (last_state != state_now) {
+                cron.trigger_action(CRON_TRIGGER_IEC_CHANGE, nullptr, &trigger_action);
+                last_state = state_now;
+            }
+        });
+    }
+#endif
+
 }
 
 void EvseCommon::loop() {

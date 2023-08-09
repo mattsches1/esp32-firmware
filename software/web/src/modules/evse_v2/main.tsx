@@ -136,7 +136,7 @@ export class EVSEV2 extends Component<{}, EVSEState> {
                     </FormRow>
 
                     <FormRow label={__("evse.content.contactor_state")} label_muted={__("evse.content.contactor_names")}>
-                        <div class="row form-group mx-n1">
+                        <div class="row mx-n1">
                             <IndicatorGroup
                                 class="mb-1 col px-1"
                                 value={(state.contactor_state & 1) == 1 ? 1 : 0}
@@ -162,7 +162,7 @@ export class EVSEV2 extends Component<{}, EVSEState> {
                     </FormRow>
 
                     <FormRow label={__("evse.content.dc_fault_current_state")} label_muted={__("evse.content.dc_fault_current_state_desc")}>
-                        <div class="row form-group mx-n1">
+                        <div class="row mx-n1">
                             <IndicatorGroup
                                 class="mb-1 col px-1 flex-wrap"
                                 value={state.dc_fault_current_state}
@@ -221,14 +221,6 @@ export class EVSEV2 extends Component<{}, EVSEState> {
                         <InputText value={util.format_timespan(Math.floor(ll_state.uptime / 1000.0))}/>
                     </FormRow>
 
-                    {/*<FormRow label={__("evse.content.control_pilot_disconnect_desc")} label_muted={__("evse.content.control_pilot_disconnect_desc_muted")}>
-                        <Switch desc={__("evse.content.control_pilot_disconnect")}
-                                checked={control_pilot_disconnect.disconnect}
-                                onClick={async () => {
-                                    let inverted = !control_pilot_disconnect.disconnect;
-                                    await API.save('evse/control_pilot_disconnect', {"disconnect": inverted}, __("evse.script.save_failed"));
-                                }}/>
-                            </FormRow>*/}
 
                     <FormSeparator heading={__("evse.content.charging_current")}/>
 

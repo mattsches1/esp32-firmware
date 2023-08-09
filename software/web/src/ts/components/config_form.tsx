@@ -19,7 +19,7 @@
 
 import * as util from "../../ts/util";
 
-import { h, Component, VNode, Fragment, JSX } from "preact";
+import { h, Component, Fragment, JSX, ComponentChildren } from "preact";
 import { __ } from "../translation";
 
 interface ConfigFormState {
@@ -29,9 +29,9 @@ interface ConfigFormState {
 }
 
 interface ConfigFormProps {
-    children: VNode | VNode[]
+    children: ComponentChildren
     id: string
-    title: string
+    title: ComponentChildren
     isModified: boolean
     onSave: () => Promise<void>
     onReset: () => Promise<void>
@@ -78,7 +78,7 @@ export class ConfigForm extends Component<ConfigFormProps,ConfigFormState> {
                 <div class="row sticky-under-top mb-3 pt-3">
                     <div class="col pb-2 border-bottom tab-header-shadow">
                         <div class="row no-gutters">
-                            <h1 class="page-header col-12 col-sm text-center text-sm-left text-nowrap" dangerouslySetInnerHTML={{__html: props.title}}></h1>
+                            <h1 class="page-header col-12 col-sm text-center text-sm-left text-nowrap">{props.title}</h1>
                             <div class="col-12 col-sm row no-gutters">
                                 {this.resetButton()}
                                 <button type="submit" form={props.id} class="btn btn-primary col mb-2 ml-2 ml-md-3 mr-0" disabled={state.saveDisabled}>

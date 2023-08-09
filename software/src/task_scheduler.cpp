@@ -24,8 +24,11 @@
 // Global definition here to match the declaration in task_scheduler.h.
 TaskScheduler task_scheduler;
 
-Task::Task(std::function<void(void)> fn, uint32_t first_run_delay_ms, uint32_t delay_ms, bool once) :
+static uint64_t last_task_id = 0;
+
+Task::Task(std::function<void(void)> fn, uint64_t task_id, uint32_t first_run_delay_ms, uint32_t delay_ms, bool once) :
           fn(std::move(fn)),
+          task_id(task_id),
           next_deadline_ms(millis() + first_run_delay_ms),
           delay_ms(delay_ms),
           once(once) {
@@ -43,7 +46,7 @@ That is, the front of the queue contains the "last" element
 according to the weak ordering imposed by Compare.
 (https://en.cppreference.com/w/cpp/container/priority_queue)
 */
-bool compare(const Task *a, const Task *b)
+bool compare(const std::unique_ptr<Task> &a, const std::unique_ptr<Task> &b)
 {
     if (millis() > 0x7FFFFFFF) {
         // We are close to a timer overflow
@@ -58,9 +61,31 @@ bool compare(const Task *a, const Task *b)
     return a->next_deadline_ms >= b->next_deadline_ms;
 }
 
+// https://stackoverflow.com/a/36711682
+bool TaskQueue::removeByTaskID(uint64_t task_id)  {
+    // The queue is locked if this function is called.
+
+    auto it = std::find_if(this->c.begin(), this->c.end(), [task_id](const std::unique_ptr<Task> &t){return t->task_id == task_id;});
+
+    if (it == this->c.end()) {
+        // not found
+        return false;
+    }
+
+    if (it == this->c.begin()) {
+        this->pop();
+        return true;
+    }
+
+    // remove element and re-heap
+    this->c.erase(it);
+    std::make_heap(this->c.begin(), this->c.end(), this->comp);
+    return true;
+}
+
 void TaskScheduler::pre_setup()
 {
-
+    mainTaskHandle = xTaskGetCurrentTaskHandle();
 }
 
 void TaskScheduler::setup()
@@ -74,7 +99,9 @@ void TaskScheduler::register_urls()
 
 void TaskScheduler::loop()
 {
-    std::unique_ptr<Task> task;
+    // We can't use defer to clean up currenTask on function level,
+    // because we have to make sure currentTask is only written
+    // while the task_mutex is locked.
 
     {
         std::lock_guard<std::mutex> l{this->task_mutex};
@@ -86,35 +113,83 @@ void TaskScheduler::loop()
             return;
         }
 
-        task = std::unique_ptr<Task>(tasks.top());
-        tasks.pop();
+        this->currentTask = tasks.top_and_pop();
+
+        bool cancelled = this->currentTask->task_id == 0;
+        if (cancelled) {
+            this->currentTask = nullptr;
+            return;
+        }
     }
 
-    if (!task->fn) {
+    // Run task without holding the lock.
+    // This allows a task to schedule tasks (could also be done with a recursive mutex)
+    // and also allows other threads to schedule tasks while one is executed.
+    if (!this->currentTask->fn) {
         logger.printfln("Invalid task");
     } else {
-        task->fn();
+        this->currentTask->fn();
     }
 
-    if (task->once) {
-        return;
-    }
-
-    task->next_deadline_ms = millis() + task->delay_ms;
     {
         std::lock_guard<std::mutex> l{this->task_mutex};
-        tasks.push(task.release());
+        defer {this->currentTask = nullptr;};
+
+        if (this->currentTask->once) {
+            return;
+        }
+
+        // Check whether a repeated task was cancelled while it was being executed.
+        bool cancelled = this->currentTask->task_id == 0;
+        if (cancelled) {
+            return;
+        }
+
+        this->currentTask->next_deadline_ms = millis() + this->currentTask->delay_ms;
+
+        tasks.push(std::move(this->currentTask));
     }
 }
 
-void TaskScheduler::scheduleOnce(std::function<void(void)> &&fn, uint32_t delay_ms)
+uint64_t TaskScheduler::scheduleOnce(std::function<void(void)> &&fn, uint32_t delay_ms)
 {
     std::lock_guard<std::mutex> l{this->task_mutex};
-    tasks.emplace(new Task(fn, delay_ms, 0, true));
+    uint64_t task_id = ++last_task_id;
+    tasks.emplace(new Task(fn, task_id, delay_ms, 0, true));
+    return task_id;
 }
 
-void TaskScheduler::scheduleWithFixedDelay(std::function<void(void)> &&fn, uint32_t first_delay_ms, uint32_t delay_ms)
+uint64_t TaskScheduler::scheduleWithFixedDelay(std::function<void(void)> &&fn, uint32_t first_delay_ms, uint32_t delay_ms)
 {
     std::lock_guard<std::mutex> l{this->task_mutex};
-    tasks.emplace(new Task(fn, first_delay_ms, delay_ms, false));
+    uint64_t task_id = ++last_task_id;
+    tasks.emplace(new Task(fn, task_id, first_delay_ms, delay_ms, false));
+    return task_id;
+}
+
+TaskScheduler::CancelResult TaskScheduler::cancel(uint64_t task_id) {
+    if (task_id == 0)
+        return TaskScheduler::CancelResult::NotFound;
+
+    std::lock_guard<std::mutex> l{this->task_mutex};
+    if (this->currentTask && this->currentTask->task_id == task_id) {
+        this->currentTask->task_id = 0;
+        return TaskScheduler::CancelResult::WillBeCancelled;
+    }
+    else
+        return tasks.removeByTaskID(task_id) ? TaskScheduler::CancelResult::Cancelled : TaskScheduler::CancelResult::NotFound;
+}
+
+uint64_t TaskScheduler::currentTaskId() {
+    // currentTaskId is intended to write a self-canceling task.
+    // Don't allow other threads to cancel tasks without knowing their ID.
+    if (this->mainTaskHandle != xTaskGetCurrentTaskHandle()) {
+        logger.printfln("Calling TaskScheduler::currentTask is only allowed in the main thread!");
+        return 0;
+    }
+
+    std::lock_guard<std::mutex> l{this->task_mutex};
+    if (this->currentTask != nullptr)
+        return this->currentTask->task_id;
+    return 0;
 }

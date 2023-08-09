@@ -39,6 +39,7 @@ import { config } from "./api";
 import { IndicatorGroup } from "src/ts/components/indicator_group";
 import { InputNumber } from "src/ts/components/input_number";
 import { SubPage } from "src/ts/components/sub_page";
+import { Table } from "../../ts/components/table";
 
 type ChargeManagerConfig = API.getType['charge_manager/config'];
 type ChargerConfig = ChargeManagerConfig["chargers"][0];
@@ -46,19 +47,13 @@ type ScanCharger = Exclude<API.getType['charge_manager/scan_result'], string>[0]
 
 const MAX_CONTROLLED_CHARGERS = 10;
 
-let charger_add_symbol = <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-server" style=""><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line y1="18" y2="18" x1="18" x2="18.01"></line><line x1="19" x2="19" y1="3" y2="9"></line><line x1="22" x2="16" y1="6" y2="6"></line></svg>
-let charger_delete_symbol = <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-server mr-2" style=""><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line y1="18" y2="18" x1="18" x2="18.01"></line><line x1="17" x2="22" y1="4" y2="9"></line><line x1="22" x2="17" y1="4" y2="9"></line></svg>
-let charger_symbol = <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-server" style=""><rect x="2" y="8" width="20" height="8" rx="2" ry="2"></rect><line y1="12" y2="12" x1="18" x2="18.01"></line></svg>
-
-
 interface ChargeManagerState {
-    showModal: boolean
-    newCharger: ChargerConfig
+    addCharger: ChargerConfig
+    editCharger: ChargerConfig
     managementEnabled: boolean
     showExpert: boolean
     scanResult: Readonly<ScanCharger[]>
 }
-
 
 export class ChargeManager extends ConfigComponent<'charge_manager/config', {}, ChargeManagerState> {
     intervalID: number = null;
@@ -69,8 +64,8 @@ export class ChargeManager extends ConfigComponent<'charge_manager/config', {}, 
               __("charge_manager.script.reboot_content_changed"));
 
         this.state = {
-            showModal: false,
-            newCharger: {host: "", name: ""},
+            addCharger: {host: "", name: ""},
+            editCharger: {host: "", name: ""},
             managementEnabled: false,
             showExpert: false,
             scanResult: []
@@ -246,22 +241,6 @@ export class ChargeManager extends ConfigComponent<'charge_manager/config', {}, 
         let energyManagerMode = API.hasModule("energy_manager") && !(API.hasModule("evse_v2") || API.hasModule("evse"));
         let warpUltimateMode  = API.hasModule("energy_manager") &&  (API.hasModule("evse_v2") || API.hasModule("evse"));
 
-        let addChargerCard = <div class="col mb-4">
-                <Card className="h-100" key={999}>
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    {charger_add_symbol}
-                    <Button variant="outline-dark" size="sm" style="visibility: hidden;">
-                        {charger_delete_symbol}<span style="font-size: 1rem; vertical-align: middle;">{__("charge_manager.script.delete")}</span>
-                    </Button>
-                </div>
-                <Card.Body>
-                    {state.chargers.length >= MAX_CONTROLLED_CHARGERS
-                        ? <span>{__("charge_manager.script.add_charger_disabled_prefix") + MAX_CONTROLLED_CHARGERS + __("charge_manager.script.add_charger_disabled_suffix")}</span>
-                        : <Button variant="light" size="lg" block style="height: 100%;" onClick={() => this.setState({showModal: true})}>{__("charge_manager.script.add_charger")}</Button>}
-                </Card.Body>
-            </Card>
-        </div>
-
         let charge_manager_mode = <FormRow label={__("charge_manager.content.enable_charge_manager")} label_muted={__("charge_manager.content.enable_charge_manager_muted")}>
              <InputSelect
                     items={[
@@ -411,9 +390,13 @@ export class ChargeManager extends ConfigComponent<'charge_manager/config', {}, 
 
         const check_host = (host: string, idx: number): string => {
             let ret: string;
+
+            if (!energyManagerMode && idx != 0 && (host.toLowerCase() == 'localhost' || host == '127.0.0.1')) {
+                return __("charge_manager.content.host_exists");
+            }
+
             state.chargers.forEach((charger, i) => {
-                if (charger.host == host && idx != i)
-                {
+                if (charger.host.toLowerCase() == host.toLowerCase() && idx != i) {
                     ret = __("charge_manager.content.host_exists");
                     return;
                 }
@@ -423,96 +406,115 @@ export class ChargeManager extends ConfigComponent<'charge_manager/config', {}, 
         }
 
         let chargers = <FormRow label={__("charge_manager.content.managed_boxes")}>
-                <div class="row row-cols-1 row-cols-md-2">
-                {state.chargers.map((c, i) => (
-                    <div class="col mb-4">
-                    <Card className="h-100" key={i}>
-                        <div class="card-header d-flex justify-content-between align-items-center">
-                            {charger_symbol}
-                            <Button variant="outline-dark" size="sm"
-                                    style={!energyManagerMode && c.host == "127.0.0.1" ? "visibility: hidden;" : ""}
-                                    onClick={() => {
-                                        this.setState({chargers: state.chargers.filter((v, idx) => idx != i)});
-                                        this.hackToAllowSave();} }>
-                                {charger_delete_symbol}<span style="font-size: 1rem; vertical-align: middle;">{__("charge_manager.script.delete")}</span>
-                            </Button>
-                        </div>
-                        <Card.Body>
-                            <FormGroup label={__("charge_manager.script.display_name")}>
-                                <InputText value={c.name}
-                                        onValue={(v) => this.setCharger(i, {name: v})}
-                                        maxLength={32}
-                                        required/>
-                            </FormGroup>
-                            <FormGroup label={__("charge_manager.script.host")}>
-                                <InputText value={c.host}
-                                        onValue={(v) => this.setCharger(i, {host: v})}
-                                        maxLength={64}
-                                        required
-                                        class={check_host(c.host, i) != undefined ? "is-invalid" : ""}
-                                        invalidFeedback={check_host(c.host, i)}/>
-                            </FormGroup>
-                        </Card.Body>
-                    </Card>
-                    </div>
-                )).concat(addChargerCard)}
-                </div>
-            </FormRow>
+                    <Table
+                        columnNames={[__("charge_manager.content.table_charger_name"), __("charge_manager.content.table_charger_host")]}
+                        rows={state.chargers.map((charger, i) =>
+                            { return {
+                                columnValues: [[charger.name], [<a target="_blank" rel="noopener noreferrer" href={(charger.host == '127.0.0.1' || charger.host == 'localhost') ? '/' : "http://" + charger.host}>{charger.host}</a>]],
+                                editTitle: __("charge_manager.content.edit_charger_title"),
+                                onEditStart: async () => this.setState({editCharger: {name: charger.name.trim(), host: charger.host.trim()}}),
+                                onEditGetRows: () => [
+                                    {
+                                        name: __("charge_manager.content.edit_charger_name"),
+                                        value: <InputText value={state.editCharger.name}
+                                                        onValue={(v) => this.setState({editCharger: {...state.editCharger, name: v}})}
+                                                        maxLength={32}
+                                                        required/>
+                                    },
+                                    {
+                                        name: __("charge_manager.content.edit_charger_host"),
+                                        value: <InputText value={state.editCharger.host}
+                                                        onValue={(v) => this.setState({editCharger: {...state.editCharger, host: v}})}
+                                                        maxLength={64}
+                                                        pattern="^[a-zA-Z0-9\-\.]+$"
+                                                        required
+                                                        disabled={!energyManagerMode && i == 0 /* localhost */}
+                                                        class={check_host(state.editCharger.host, i) != undefined ? "is-invalid" : ""}
+                                                        invalidFeedback={check_host(state.editCharger.host, i)}/>
+                                    }
+                                ],
+                                onEditCommit: async () => {
+                                    this.setState({
+                                        chargers: state.chargers.map((charger, k) => i === k ? state.editCharger : charger),
+                                        editCharger: {name: "", host: ""}
+                                    });
 
-        let modal = <ItemModal onSubmit={() => {
-                this.setState({showModal: false,
-                    chargers: state.chargers.concat(state.newCharger),
-                    newCharger: {name: "", host: ""}});
-                this.hackToAllowSave();}}
-            onHide={() => this.setState({showModal: false})}
-            onEnter={() => {this.scan_services(); this.intervalID = setInterval(this.scan_services, 3000)}}
-            onExited={() => {this.setState({scanResult: []}); window.clearInterval(this.intervalID)}}
-            show={state.showModal}
-            no_variant="secondary"
-            yes_variant="primary"
-            title={__("charge_manager.content.add_charger_modal_title")}
-            no_text={__("charge_manager.content.add_charger_modal_abort")}
-            yes_text={__("charge_manager.content.add_charger_modal_save")}>
-                    <FormGroup label={__("charge_manager.content.add_charger_modal_name")}>
-                                <InputText value={state.newCharger.name}
-                                        onValue={(v) => this.setState({newCharger: {...state.newCharger, name: v}})}
-                                        maxLength={32}
-                                        required/>
-                            </FormGroup>
-                            <FormGroup label={__("charge_manager.content.add_charger_modal_host")}>
-                                <InputText value={state.newCharger.host}
-                                        onValue={(v) => this.setState({newCharger: {...state.newCharger, host: v}})}
-                                        maxLength={64}
-                                        required
-                                        class={check_host(state.newCharger.host, -1) != undefined ? "is-invalid" : ""}
-                                        invalidFeedback={check_host(state.newCharger.host, -1)}/>
-                            </FormGroup>
-                            <FormGroup label={__("charge_manager.content.add_charger_modal_found")}>
-                                <ListGroup>
-                                {
-                                    state.scanResult.filter(c => !state.chargers.some(c1 => c1.host == c.hostname + ".local"))
-                                        .map(c => (
-                                            <ListGroup.Item key={c.hostname}
-                                                        action type="button"
-                                                        onClick={c.error != 0 ? () => {} : () => {
-                                                            this.setState({newCharger: {host: c.hostname + ".local", name: c.display_name}})
-                                                        }}
-                                                        style={c.error == 0 ? "" : "background-color: #eeeeee !important;"}>
-                                                <div class="d-flex w-100 justify-content-between">
-                                                    <span class="h5 text-left">{c.display_name}</span>
-                                                    {c.error == 0 ? null :
-                                                        <span class="text-right" style="color:red">{translate_unchecked(`charge_manager.content.scan_error_${c.error}`)}</span>
-                                                    }
-                                                </div>
-                                                <div class="d-flex w-100 justify-content-between">
-                                                    <a target="_blank" rel="noopener noreferrer" href={"http://" + c.hostname + ".local"}>{c.hostname + ".local"}</a>
-                                                    <a target="_blank" rel="noopener noreferrer" href={"http://" + c.ip}>{c.ip}</a>
-                                                </div>
-                                            </ListGroup.Item>))
+                                    this.hackToAllowSave();
+                                },
+                                onEditAbort: async () => this.setState({editCharger: {name: "", host: ""}}),
+                                onRemoveClick: !energyManagerMode && i == 0 /* localhost */ ? undefined : async () => {
+                                    this.setState({chargers: state.chargers.filter((v, idx) => idx != i)});
+                                    this.hackToAllowSave();
                                 }
-                                </ListGroup>
-                            </FormGroup>
-                </ItemModal>
+                            }})
+                        }
+                        addEnabled={state.chargers.length < MAX_CONTROLLED_CHARGERS}
+                        addTitle={__("charge_manager.content.add_charger_title")}
+                        addMessage={__("charge_manager.content.add_charger_count")(state.chargers.length, MAX_CONTROLLED_CHARGERS)}
+                        onAddStart={async () => {this.setState({addCharger: {name: "", host: ""}});
+                                                 this.scan_services();
+                                                 this.intervalID = window.setInterval(this.scan_services, 3000)}}
+                        onAddGetRows={() => [
+                            {
+                                name: __("charge_manager.content.add_charger_name"),
+                                value: <InputText value={state.addCharger.name}
+                                                onValue={(v) => this.setState({addCharger: {...state.addCharger, name: v}})}
+                                                maxLength={32}
+                                                required/>
+                            },
+                            {
+                                name: __("charge_manager.content.add_charger_host"),
+                                value: <InputText value={state.addCharger.host}
+                                                onValue={(v) => this.setState({addCharger: {...state.addCharger, host: v}})}
+                                                maxLength={64}
+                                                pattern="^[a-zA-Z0-9\-\.]+$"
+                                                required
+                                                class={check_host(state.addCharger.host, -1) != undefined ? "is-invalid" : ""}
+                                                invalidFeedback={check_host(state.addCharger.host, -1)}/>
+                            },
+                            {
+                                name: __("charge_manager.content.add_charger_found"),
+                                value:
+                                    <ListGroup>
+                                    {
+                                        state.scanResult.filter(c => !state.chargers.some(c1 => c1.host == c.hostname + ".local" || c1.host == c.ip))
+                                            .map(c => (
+                                                <ListGroup.Item key={c.hostname}
+                                                            action type="button"
+                                                            onClick={c.error != 0 ? () => {} : () => {
+                                                                this.setState({addCharger: {host: c.hostname + ".local", name: c.display_name}})
+                                                            }}
+                                                            style={c.error == 0 ? "" : "background-color: #eeeeee !important;"}>
+                                                    <div class="d-flex w-100 justify-content-between">
+                                                        <span class="h5 text-left">{c.display_name}</span>
+                                                        {c.error == 0 ? null :
+                                                            <span class="text-right" style="color:red">{translate_unchecked(`charge_manager.content.scan_error_${c.error}`)}</span>
+                                                        }
+                                                    </div>
+                                                    <div class="d-flex w-100 justify-content-between">
+                                                        <a target="_blank" rel="noopener noreferrer" href={"http://" + c.hostname + ".local"}>{c.hostname + ".local"}</a>
+                                                        <a target="_blank" rel="noopener noreferrer" href={"http://" + c.ip}>{c.ip}</a>
+                                                    </div>
+                                                </ListGroup.Item>))
+                                    }
+                                    </ListGroup>
+                            }
+                        ]}
+                        onAddCommit={async () => {
+                            window.clearInterval(this.intervalID);
+
+                            this.setState({
+                                chargers: state.chargers.concat({name: state.addCharger.name.trim(), host: state.addCharger.host.trim()}),
+                                addCharger: {name: "", host: ""}
+                            });
+
+                            this.hackToAllowSave();
+                        }}
+                        onAddAbort={async () => {
+                            window.clearInterval(this.intervalID);
+                            this.setState({addCharger: {name: "", host: ""}});
+                        }} />
+            </FormRow>
 
         return (
             <SubPage>
@@ -561,7 +563,6 @@ export class ChargeManager extends ConfigComponent<'charge_manager/config', {}, 
                     </Collapse>
                     }
                 </ConfigForm>
-                {modal}
             </SubPage>
         )
     }

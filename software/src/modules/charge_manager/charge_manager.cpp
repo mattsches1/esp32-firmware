@@ -211,6 +211,19 @@ void ChargeManager::pre_setup()
     control_pilot_disconnect = ConfigRoot{Config::Object({
         {"disconnect", Config::Bool(false)},
     })};
+
+#if MODULE_CRON_AVAILABLE()
+    ConfUnionPrototype proto;
+    proto.tag = CRON_ACTION_SET_MANAGER_CURRENT;
+    proto.config = Config::Object({
+        {"current", Config::Uint(0)}
+    });
+
+    cron.register_action(proto, [this](const Config *config) {
+        this->available_current.get("current")->updateUint(config->get("current")->asUint());
+        this->last_available_current_update = millis();
+    });
+#endif
 }
 
 static uint8_t get_charge_state(uint8_t charger_state, uint16_t supported_current, uint32_t charging_time, uint16_t target_allocated_current)
@@ -303,14 +316,14 @@ void ChargeManager::start_manager_task()
                 for (int i = 0; i < 3; i++) {
                     if (isnan(v1->line_currents[i])) {
                         // Don't trust the line currents if one is missing.
-                        max_phase_current = -1;
+                        max_phase_current = 32000;
                         break;
                     }
 
                     max_phase_current = max(max_phase_current, (int32_t)(v1->line_currents[i] * 1000.0f));
                 }
-
-                if (max_phase_current == -1)
+                // The CM protocol sends 0 instead of nan.
+                if (max_phase_current == 0)
                     max_phase_current = 32000;
 
                 max_phase_current += config_in_use.get("requested_current_margin")->asUint();

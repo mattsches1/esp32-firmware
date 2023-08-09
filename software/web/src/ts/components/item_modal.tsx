@@ -23,12 +23,14 @@ import { __ } from "../translation";
 
 
 interface ItemModalProps extends ModalProps {
-    onSubmit: () => void
-    onHide: () => void
+    onCheck?: () => Promise<boolean>
+    onSubmit: () => Promise<void>
+    onHide: () => Promise<void>
 
     show: boolean
 
     title: string
+    // Don't use ComponentChildren here: We want to pass in the idContext. This only works on VNodes.
     children: VNode | VNode[]
     no_variant: string
     no_text: string
@@ -52,23 +54,27 @@ export class ItemModal extends Component<ItemModalProps, any> {
     }
 
     render(props: ItemModalProps) {
-        let {onSubmit, onHide, show, title, children, no_variant, no_text, yes_variant, yes_text, ...p} = props;
-        
+        let {onCheck, onSubmit, onHide, show, title, children, no_variant, no_text, yes_variant, yes_text, ...p} = props;
+
         return (
             <Modal show={show} onHide={() => onHide()} centered {...p}>
                 <Modal.Header closeButton>
                     <label class="modal-title form-label">{title}</label>
                 </Modal.Header>
-                <form onSubmit={(e) => {
+                <form onSubmit={async (e) => {
                     e.preventDefault();
                     e.stopPropagation();
+
+                    if (onCheck && !await onCheck()) {
+                        return;
+                    }
 
                     if (!(e.target as HTMLFormElement).checkValidity() || (e.target as HTMLFormElement).querySelector(".is-invalid")) {
                         return;
                     }
 
-                    onSubmit();
-                    onHide();
+                    await onSubmit();
+                    await onHide();
                 }}>
                     <Modal.Body>
                         {(toChildArray(children) as VNode[]).map(c => cloneElement(c, {idContext: this.idContext}))}

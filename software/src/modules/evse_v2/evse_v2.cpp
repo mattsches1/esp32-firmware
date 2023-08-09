@@ -18,6 +18,7 @@
  */
 
 #include "evse_v2.h"
+#include "module_dependencies.h"
 
 #include "bindings/errors.h"
 
@@ -26,7 +27,8 @@
 #include "task_scheduler.h"
 #include "tools.h"
 #include "web_server.h"
-#include "modules.h"
+
+extern EVSEV2 evse_v2;
 
 extern bool firmware_update_allowed;
 
@@ -162,6 +164,33 @@ void EVSEV2::pre_setup()
     });
 
     gp_output_update = gp_output;
+
+#if MODULE_CRON_AVAILABLE()
+    ConfUnionPrototype proto;
+    proto.tag = CRON_TRIGGER_EVSE_BUTTON;
+    proto.config = Config::Object({
+        {"button_pressed", Config::Bool(false)}
+    });
+    cron.register_trigger(proto);
+
+    proto.tag = CRON_TRIGGER_EVSE_GP_INPUT;
+    proto.config = Config::Object({
+        {"high", Config::Bool(false)}
+    });
+    cron.register_trigger(proto);
+
+    proto.tag = CRON_TRIGGER_EVSE_SHUTDOWN_INPUT;
+    cron.register_trigger(proto);
+
+    proto.tag = CRON_ACTION_EVSE_GP_OUTPUT;
+
+    proto.config = Config::Object({
+        {"state", Config::Uint(0, 0, 1)}
+    });
+    cron.register_action(proto, [this](const Config *config) {
+        is_in_bootloader(tf_evse_v2_set_gp_output(&device, config->get("state")->asUint()));
+    });
+#endif
 }
 
 void EVSEV2::post_setup() {
@@ -634,6 +663,12 @@ String EVSEV2::get_evse_debug_line()
     return String(line);
 }
 
+#if MODULE_CRON_AVAILABLE()
+static bool trigger_action(Config *cfg, void *data) {
+    return evse_v2.action_triggered(cfg, data);
+}
+#endif
+
 void EVSEV2::update_all_data()
 {
     if (!initialized)
@@ -841,6 +876,14 @@ void EVSEV2::update_all_data()
     for (int i = 0; i < sizeof(resistances) / sizeof(resistances[0]); ++i)
         evse_common.low_level_state.get("resistances")->get(i)->updateUint(resistances[i]);
 
+#if MODULE_CRON_AVAILABLE()
+    if (evse_common.low_level_state.get("gpio")->get(5)->asBool() != gpio[5])
+        cron.trigger_action(CRON_TRIGGER_EVSE_SHUTDOWN_INPUT, nullptr, &trigger_action);
+
+    if (evse_common.low_level_state.get("gpio")->get(16)->asBool() != gpio[16])
+        cron.trigger_action(CRON_TRIGGER_EVSE_GP_INPUT, nullptr, &trigger_action);
+#endif
+
     for (int i = 0; i < sizeof(gpio) / sizeof(gpio[0]); ++i)
         evse_common.low_level_state.get("gpio")->get(i)->updateBool(gpio[i]);
 
@@ -887,6 +930,11 @@ void EVSEV2::update_all_data()
 
     // get_button_configuration
     button_configuration.get("button")->updateUint(button_cfg);
+
+#if MODULE_CRON_AVAILABLE()
+    if (evse_common.button_state.get("button_pressed")->asBool() != button_pressed)
+        cron.trigger_action(CRON_TRIGGER_EVSE_BUTTON, nullptr, &trigger_action);
+#endif
 
     // get_button_state
     evse_common.button_state.get("button_press_time")->updateUint(button_press_time);
@@ -948,3 +996,32 @@ uint8_t EVSEV2::get_energy_meter_type()
 {
     return evse_common.hardware_configuration.get("energy_meter_type")->asUint();
 }
+
+#if MODULE_CRON_AVAILABLE()
+bool EVSEV2::action_triggered(Config *config, void *data) {
+    auto cfg = config->get();
+    switch (config->getTag())
+    {
+    case CRON_TRIGGER_EVSE_BUTTON:
+        // This check happens before the new state is written to the config.
+        // Because of this we need to check if the current state in config is different than our desired state.
+        if (evse_common.button_state.get("button_pressed")->asBool() != cfg->get("button_pressed")->asBool())
+            return true;
+        break;
+
+    case CRON_TRIGGER_EVSE_GP_INPUT:
+        if (evse_common.low_level_state.get("gpio")->get(16)->asBool() != cfg->get("high")->asBool())
+            return true;
+        break;
+
+    case CRON_TRIGGER_EVSE_SHUTDOWN_INPUT:
+        if (evse_common.low_level_state.get("gpio")->get(5)->asBool() != cfg->get("high")->asBool())
+            return true;
+        break;
+
+    default:
+        break;
+    }
+    return false;
+}
+#endif

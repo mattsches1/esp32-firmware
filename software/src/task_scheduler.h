@@ -33,14 +33,29 @@
 
 struct Task {
     std::function<void(void)> fn;
+    uint64_t task_id;
     uint32_t next_deadline_ms;
     uint32_t delay_ms;
     bool once;
 
-    Task(std::function<void(void)> fn, uint32_t first_run_delay_ms, uint32_t delay_ms, bool once);
+    Task(std::function<void(void)> fn, uint64_t task_id, uint32_t first_run_delay_ms, uint32_t delay_ms, bool once);
 };
 
-bool compare(const Task *a, const Task *b);
+bool compare(const std::unique_ptr<Task> &a, const std::unique_ptr<Task> &b);
+
+class TaskQueue : public std::priority_queue<std::unique_ptr<Task>, std::vector<std::unique_ptr<Task>>, decltype(&compare)>
+{
+    using std::priority_queue<std::unique_ptr<Task>, std::vector<std::unique_ptr<Task>>, decltype(&compare)>::priority_queue;
+public:
+    bool removeByTaskID(uint64_t task_id);
+
+    std::unique_ptr<Task> top_and_pop() {
+        std::pop_heap(c.begin(), c.end(), comp);
+        std::unique_ptr<Task> value = std::move(c.back());
+        c.pop_back();
+        return value;
+    }
+};
 
 class TaskScheduler
 {
@@ -52,15 +67,33 @@ public:
     void setup();
     void register_urls();
     void loop();
+    uint64_t currentTaskId();
 
     bool initialized = false;
 
-    void scheduleOnce(std::function<void(void)> &&fn, uint32_t delay_ms);
-    void scheduleWithFixedDelay(std::function<void(void)> &&fn, uint32_t first_delay_ms, uint32_t delay_ms);
+    enum class CancelResult {
+        // Task not found in task queue
+        NotFound,
+        // Task found in and removed from task queue
+        Cancelled,
+        // Task is currently being executed. Flagged to cancel
+        // before being inserted into task queue again.
+        // Don't remove task resources yet!
+        // A well-written single shot task will remove its resources
+        // To remove a repeated task's resources, schedule a task
+        // (that will be executed after the currently executed task in any case)
+        WillBeCancelled
+    };
+
+    CancelResult cancel(uint64_t task_id);
+    uint64_t scheduleOnce(std::function<void(void)> &&fn, uint32_t delay_ms);
+    uint64_t scheduleWithFixedDelay(std::function<void(void)> &&fn, uint32_t first_delay_ms, uint32_t delay_ms);
 
 private:
     std::mutex task_mutex;
-    std::priority_queue<Task *, std::vector<Task *>, decltype(&compare)> tasks;
+    TaskQueue tasks;
+    TaskHandle_t mainTaskHandle;
+    std::unique_ptr<Task> currentTask = nullptr;
 };
 
 // Make global variable available everywhere because it is not declared in modules.h.

@@ -33,8 +33,14 @@ extern TF_HAL hal;
 // Global definition here to match the declaration in api.h.
 API api;
 
+API::API() {
+
+}
+
 void API::pre_setup()
 {
+    mainTaskHandle = xTaskGetCurrentTaskHandle();
+
     features = Config::Array(
         {},
         new Config{Config::Str("", 0, 32)},
@@ -104,7 +110,7 @@ void API::addCommand(const String &path, ConfigRoot *config, std::initializer_li
     if (already_registered(path, "command"))
         return;
 
-    commands.push_back({path, config, callback, keys_to_censor_in_debug_report, is_action});
+    commands.push_back({path, config, callback, keys_to_censor_in_debug_report, is_action, 0, nullptr});
     auto commandIdx = commands.size() - 1;
 
     for (auto *backend : this->backends) {
@@ -366,8 +372,56 @@ size_t API::registerBackend(IAPIBackend *backend)
     return backendIdx;
 }
 
-String API::callCommand(const String &path, const Config::ConfUpdate &payload)
+String API::callCommand(CommandRegistration &reg, char *payload, size_t len) {
+    if (this->mainTaskHandle == xTaskGetCurrentTaskHandle()) {
+        return "Use ConfUpdate overload of callCommand in main thread!";
+    }
+
+    std::lock_guard<std::mutex> l{command_mutex};
+
+    if (payload == nullptr && !reg.config->is_null())
+        return "empty payload only allowed for null configs";
+
+    for (auto *backend : backends)
+        backend->disableReceive();
+
+    if (task_scheduler.cancel(reg.task_id) == TaskScheduler::CancelResult::Cancelled) {
+        delete reg.config_in_flight;
+        reg.config_in_flight = nullptr;
+    }
+
+    if (payload != nullptr) {
+        reg.config_in_flight = new Config();
+        String error = reg.config->get_updated_copy(payload, len, reg.config_in_flight);
+        if(error != "") {
+            delete reg.config_in_flight;
+            reg.config_in_flight = nullptr;
+
+            for (auto *backend : backends)
+                backend->enableReceive();
+            return error;
+        }
+    }
+
+    reg.task_id = task_scheduler.scheduleOnce([this, reg]() mutable {
+        std::lock_guard<std::mutex> l2{command_mutex};
+        if (reg.config_in_flight != nullptr)
+            reg.config->update_from_copy(reg.config_in_flight);
+        reg.callback();
+        delete reg.config_in_flight;
+        reg.config_in_flight = nullptr;
+        for (auto *backend : backends)
+            backend->enableReceive();
+    }, 0);
+    return "";
+}
+
+String API::callCommand(const char *path, Config::ConfUpdate payload)
 {
+    if (this->mainTaskHandle != xTaskGetCurrentTaskHandle()) {
+        return "Use char *, size_t overload of callCommand in non-main thread!";
+    }
+
     for (CommandRegistration &reg : commands) {
         if (reg.path != path) {
             continue;
@@ -375,11 +429,11 @@ String API::callCommand(const String &path, const Config::ConfUpdate &payload)
 
         String error = reg.config->update(&payload);
 
-        if (error == "") {
-            task_scheduler.scheduleOnce([reg]() { reg.callback(); }, 0);
+        if (error != "") {
+            return error;
         }
-
-        return error;
+        reg.callback();
+        return "";
     }
 
     return String("Unknown command ") + path;

@@ -25,7 +25,7 @@
 #include "api.h"
 #include "event_log.h"
 #include "task_scheduler.h"
-#include "tools.h"
+#include "cool_string.h"
 #include "web_server.h"
 
 #include <ESPmDNS.h>
@@ -35,6 +35,8 @@
 #include <cstring>
 
 #include "TFJson.h"
+
+extern CMNetworking cm_networking;
 
 void CMNetworking::setup()
 {
@@ -302,13 +304,13 @@ String CMNetworking::get_scan_results()
     if (scan_results == nullptr)
         return "In progress or not started";
 
-    size_t payload_size = build_scan_result_json(scan_results, nullptr, 0);
+    size_t payload_size = build_scan_result_json(scan_results, nullptr, 0) + 1; // null terminator
 
     CoolString result;
     result.reserve(payload_size);
 
     build_scan_result_json(scan_results, result.begin(), payload_size);
-    result.setLength(payload_size);
+    result.setLength(payload_size - 1);
 
     return result;
 }

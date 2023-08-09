@@ -141,25 +141,28 @@ void Http::setup()
 
 static WebServerRequestReturnProtect run_command(WebServerRequest req, size_t cmdidx)
 {
-    CommandRegistration reg = api.commands[cmdidx];
+    CommandRegistration &reg = api.commands[cmdidx];
 
     // TODO: Use streamed parsing
     int bytes_written = req.receive(recv_buf, RECV_BUF_SIZE);
     if (bytes_written == -1) {
         // buffer was not large enough
         return req.send(413);
-    } else if (bytes_written < 0) {
-        logger.printfln("Failed to receive command payload: error code %d", bytes_written);
-        return req.send(400);
-    } else if (bytes_written == 0 && reg.config->is_null()) {
-        task_scheduler.scheduleOnce([reg](){reg.callback();}, 0);
-        return req.send(200, "text/html", "");
     }
 
-    String message = reg.config->update_from_cstr(recv_buf, bytes_written);
+    if (bytes_written < 0) {
+        logger.printfln("Failed to receive command payload: error code %d", bytes_written);
+        return req.send(400);
+    }
+
+    String message;
+    if (bytes_written == 0 && reg.config->is_null()) {
+        message = api.callCommand(reg, nullptr, 0);
+    } else {
+        message = api.callCommand(reg, recv_buf, bytes_written);
+    }
 
     if (message == "") {
-        task_scheduler.scheduleOnce([reg](){reg.callback();}, 0);
         return req.send(200, "text/html", "");
     }
     return req.send(400, "text/html", message.c_str());
@@ -318,6 +321,7 @@ bool Http::pushStateUpdate(size_t stateIdx, const String &payload, const String 
     return true;
 }
 
-void Http::pushRawStateUpdate(const String &payload, const String &path)
+bool Http::pushRawStateUpdate(const String &payload, const String &path)
 {
+    return true;
 }

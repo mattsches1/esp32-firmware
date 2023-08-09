@@ -24,7 +24,7 @@
 #include "api.h"
 #include "task_scheduler.h"
 #include "web_server.h"
-#include "tools.h"
+#include "cool_string.h"
 
 void WS::pre_setup()
 {
@@ -124,7 +124,7 @@ bool WS::pushStateUpdate(size_t stateIdx, const String &payload, const String &p
     return true;
 }
 
-void WS::pushRawStateUpdate(const String &payload, const String &path)
+bool WS::pushRawStateUpdate(const String &payload, const String &path)
 {
-    pushStateUpdate(0, payload, path);
+    return pushStateUpdate(0, payload, path);
 }

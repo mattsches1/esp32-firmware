@@ -18,6 +18,7 @@
  */
 
 #include "web_sockets.h"
+#include "web_dependencies.h"
 
 #include "api.h"
 #include "event_log.h"
@@ -25,10 +26,8 @@
 #include "web_server.h"
 
 #include "esp_httpd_priv.h"
-#include "modules.h"
 
 #define KEEP_ALIVE_TIMEOUT_MS 10000
-#define WORKER_START_ERROR_THRES 60 * 10
 #define WORKER_START_ERROR_MIN_UPTIME_FOR_REBOOT 60 * 60 * 1000
 
 #if MODULE_WATCHDOG_AVAILABLE()

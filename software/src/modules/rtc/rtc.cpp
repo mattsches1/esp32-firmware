@@ -23,6 +23,9 @@
 #include "build.h"
 #include "task_scheduler.h"
 #include "time.h"
+#include "module_dependencies.h"
+
+extern Rtc rtc;
 
 void Rtc::pre_setup()
 {
@@ -49,12 +52,28 @@ void Rtc::pre_setup()
     config = Config::Object({
         {"auto_sync", Config::Bool(true)},
     });
+
+#if MODULE_CRON_AVAILABLE()
+    ConfUnionPrototype proto;
+    proto.tag = CRON_TRIGGER_CRON;
+    proto.config = Config::Object({
+        {"mday", Config::Int(-1, -1, 31)},
+        {"wday", Config::Int(-1, -1, 7)},
+        {"hour", Config::Int(-1, -1, 23)},
+        {"minute", Config::Int(-1, -1, 59)}
+    });
+
+    cron.register_trigger(proto);
+#endif
 }
 
-void Rtc::setup()
-{
-    api.restorePersistentConfig("rtc/config", &config);
+void Rtc::setup() {}
+
+#if MODULE_CRON_AVAILABLE()
+static bool trigger_action(Config *cfg, void *data) {
+    return rtc.action_triggered(cfg, data);
 }
+#endif
 
 void Rtc::register_backend(IRtcBackend *_backend)
 {
@@ -90,6 +109,14 @@ void Rtc::register_backend(IRtcBackend *_backend)
 
         tm tm;
         gmtime_r(&tv.tv_sec, &tm);
+
+#if MODULE_CRON_AVAILABLE()
+        if (cron.is_trigger_active(CRON_TRIGGER_CRON)) {
+            uint32_t last_minute = time.get("minute")->asUint();
+            if (last_minute < tm.tm_min)
+                cron.trigger_action(CRON_TRIGGER_CRON, &tm, &trigger_action);
+        }
+#endif
 
         time.get("year")->updateUint(tm.tm_year + 1900);
         time.get("month")->updateUint(tm.tm_mon + 1);
@@ -144,3 +171,26 @@ bool Rtc::update_system_time()
         return false;
     return backend->update_system_time();
 }
+
+#if MODULE_CRON_AVAILABLE()
+bool Rtc::action_triggered(Config *conf, void *data) {
+    Config *cfg = (Config*)conf->get();
+    tm *time_struct = (tm *)data;
+    bool triggered = !(cfg->get("mday")->asInt() == time_struct->tm_mday || cfg->get("mday")->asInt() == -1 || cfg->get("mday")->asInt() == 0);
+    triggered |= !((cfg->get("wday")->asInt() % 7) == time_struct->tm_wday || cfg->get("wday")->asInt() == -1);
+    triggered |= !(cfg->get("hour")->asInt() == time_struct->tm_hour || cfg->get("hour")->asInt() == -1);
+    triggered |= !(cfg->get("minute")->asInt() == time_struct->tm_min || cfg->get("minute")->asInt() == -1);
+
+    switch (conf->getTag()) {
+        case CRON_TRIGGER_CRON:
+            if (!triggered) {
+                return true;
+            }
+            break;
+
+        default:
+            return false;
+    }
+    return false;
+}
+#endif

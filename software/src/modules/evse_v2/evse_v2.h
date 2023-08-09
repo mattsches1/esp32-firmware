@@ -78,6 +78,7 @@ protected:
 
 // To allow the evse_v2_meter module to get/set energy meter values
 public:
+    bool action_triggered(Config *config, void *data);
     void update_all_data() override;
     // End IEvseBackend implementation
 

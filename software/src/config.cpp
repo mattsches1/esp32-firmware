@@ -28,7 +28,7 @@
 #define SLOT_HEADROOM 20
 
 struct ConfStringSlot {
-    String val = "";
+    CoolString val = "";
     uint16_t minChars = 0;
     uint16_t maxChars = 0;
     bool inUse = false;
@@ -388,7 +388,7 @@ struct from_json {
 
         if (!json_node.is<String>())
             return "JSON node was not a string.";
-        *x.getVal() = json_node.as<String>();
+        *x.getVal() = json_node.as<CoolString>();
         return "";
     }
     String operator()(Config::ConfFloat &x)
@@ -563,7 +563,7 @@ struct from_json {
 
         if (new_tag != x.getTag()) {
             if (!x.changeUnionVariant(new_tag))
-                return "[0] Unknown union tag";
+                return String("[0] Unknown union tag: ") + new_tag;
         }
 
         return Config::apply_visitor(from_json{arr[1], force_same_keys, permit_null_updates, false}, x.getVal()->value);
@@ -581,9 +581,9 @@ struct from_update {
         if (Config::containsNull(update))
             return "";
 
-        if (update->get<String>() == nullptr)
+        if (update->get<CoolString>() == nullptr)
             return "ConfUpdate node was not a string.";
-        *x.getVal() = *(update->get<String>());
+        *x.getVal() = *(update->get<CoolString>());
         return "";
     }
     String operator()(Config::ConfFloat &x)
@@ -900,13 +900,13 @@ bool Config::ConfString::slotEmpty(size_t i) {
     return !string_buf[i].inUse;
 }
 
-String* Config::ConfString::getVal() { return &string_buf[idx].val; }
-const String* Config::ConfString::getVal() const { return &string_buf[idx].val; }
+CoolString* Config::ConfString::getVal() { return &string_buf[idx].val; }
+const CoolString* Config::ConfString::getVal() const { return &string_buf[idx].val; }
 
 const Config::ConfString::Slot* Config::ConfString::getSlot() const { return &string_buf[idx]; }
 Config::ConfString::Slot* Config::ConfString::getSlot() { return &string_buf[idx]; }
 
-Config::ConfString::ConfString(const String &val, uint16_t minChars, uint16_t maxChars)
+Config::ConfString::ConfString(const CoolString &val, uint16_t minChars, uint16_t maxChars)
 {
     idx = nextSlot<Config::ConfString>(string_buf, string_buf_size);
     this->getSlot()->inUse = true;
@@ -935,6 +935,7 @@ Config::ConfString::~ConfString()
     string_buf[idx].inUse = false;
 
     this->getSlot()->val.clear();
+    this->getSlot()->val.shrinkToFit();
     this->getSlot()->minChars = 0;
     this->getSlot()->maxChars = 0;
 }
@@ -1229,7 +1230,7 @@ Config Config::Str(const String &s, uint16_t minChars, uint16_t maxChars)
     if (boot_stage < BootStage::PRE_SETUP)
         esp_system_abort("constructing configs before the pre_setup is not allowed!");
 
-    return Config{ConfString{s, minChars, maxChars}};
+    return Config{ConfString{CoolString(s), minChars, maxChars}};
 }
 
 Config Config::Float(float d, float min, float max)
@@ -1400,7 +1401,7 @@ const Config::ConstWrap Config::get(uint16_t i) const
     return wrap;
 }
 
-const String &Config::asString() const
+const CoolString &Config::asString() const
 {
     return *this->get<ConfString>()->getVal();
 }
@@ -1555,6 +1556,14 @@ void Config::set_update_handled(uint8_t api_backend_flag)
     Config::apply_visitor(set_updated_false{api_backend_flag}, value);
 }
 
+static std::recursive_mutex update_mutex;
+
+void ConfigRoot::update_from_copy(Config *copy) {
+    std::lock_guard<std::recursive_mutex> l{update_mutex};
+    this->value = copy->value;
+    this->value.updated = true;
+}
+
 String ConfigRoot::update_from_file(File &file)
 {
     DynamicJsonDocument doc(this->json_size(false));
@@ -1569,12 +1578,22 @@ String ConfigRoot::update_from_file(File &file)
 // This allows ArduinoJson to deserialize in zero-copy mode
 String ConfigRoot::update_from_cstr(char *c, size_t len)
 {
+    Config copy;
+    String err = this->get_updated_copy(c, len, &copy);
+    if (err != "")
+        return err;
+
+    this->update_from_copy(&copy);
+    return "";
+}
+
+String ConfigRoot::get_updated_copy(char *c, size_t payload_len, Config *out_config) {
     DynamicJsonDocument doc(this->json_size(true));
-    DeserializationError error = deserializeJson(doc, c, len);
+    DeserializationError error = deserializeJson(doc, c, payload_len);
 
     switch (error.code()) {
         case DeserializationError::Ok:
-            return this->update_from_json(doc.as<JsonVariant>(), true);
+            return this->get_updated_copy(doc.as<JsonVariant>(), true, out_config);
         case DeserializationError::NoMemory:
             return String("Failed to deserialize: JSON payload was longer than expected and possibly contained unknown keys.");
         case DeserializationError::EmptyInput:
@@ -1590,37 +1609,55 @@ String ConfigRoot::update_from_cstr(char *c, size_t len)
     }
 }
 
-static std::recursive_mutex update_mutex;
+String ConfigRoot::update_from_json(JsonVariant root, bool force_same_keys)
+{
+    Config copy;
+    String err = this->get_updated_copy(root, force_same_keys, &copy);
+    if (err != "")
+        return err;
+
+    this->update_from_copy(&copy);
+    return "";
+}
+
+String ConfigRoot::get_updated_copy(JsonVariant root, bool force_same_keys, Config *out_config)
+{
+    return this->get_updated_copy(from_json{root, force_same_keys, this->permit_null_updates, true}, out_config);
+}
+
 
 template<typename T>
-String ConfigRoot::update_from_visitor(T visitor) {
+String ConfigRoot::get_updated_copy(T visitor, Config *out_config) {
     std::lock_guard<std::recursive_mutex> l{update_mutex};
-    Config copy = *this;
-    String err = Config::apply_visitor(visitor, copy.value);
+    *out_config = *this;
+    String err = Config::apply_visitor(visitor, out_config->value);
 
     if (err != "")
         return err;
 
-    err = Config::apply_visitor(default_validator{}, copy.value);
+    err = Config::apply_visitor(default_validator{}, out_config->value);
 
     if (err != "")
         return err;
 
     if (this->validator != nullptr) {
-        err = this->validator(copy);
+        err = this->validator(*out_config);
         if (err != "")
             return err;
     }
-
-    this->value = copy.value;
-    this->value.updated = true;
-
-    return err;
+    return "";
 }
 
-String ConfigRoot::update_from_json(JsonVariant root, bool force_same_keys)
-{
-    return this->update_from_visitor(from_json{root, force_same_keys, this->permit_null_updates, true});
+template<typename T>
+String ConfigRoot::update_from_visitor(T visitor) {
+    Config copy;
+
+    String err = this->get_updated_copy(visitor, &copy);
+    if (err != "")
+        return err;
+
+    this->update_from_copy(&copy);
+    return "";
 }
 
 String ConfigRoot::update(const Config::ConfUpdate *val)
@@ -1649,6 +1686,7 @@ void config_pre_init()
     string_buf = new Config::ConfString::Slot[STRING_SLOTS];
     array_buf = new Config::ConfArray::Slot[ARRAY_SLOTS];
     object_buf = new Config::ConfObject::Slot[OBJECT_SLOTS];
+    union_buf = new Config::ConfUnion::Slot[UNION_SLOTS];
 
     uint_buf_size = UINT_SLOTS;
     int_buf_size = INT_SLOTS;
@@ -1656,6 +1694,7 @@ void config_pre_init()
     string_buf_size = STRING_SLOTS;
     array_buf_size = ARRAY_SLOTS;
     object_buf_size = OBJECT_SLOTS;
+    union_buf_size = UNION_SLOTS;
 }
 
 template<typename T>
@@ -1681,6 +1720,7 @@ void config_post_setup() {
     shrinkToFit<Config::ConfString>(string_buf, string_buf_size);
     shrinkToFit<Config::ConfArray>(array_buf, array_buf_size);
     shrinkToFit<Config::ConfObject>(object_buf, object_buf_size);
+    shrinkToFit<Config::ConfUnion>(union_buf, union_buf_size);
 }
 
 Config::ConstWrap::ConstWrap(const Config *_conf)

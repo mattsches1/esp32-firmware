@@ -18,6 +18,7 @@
  */
 
 #include "web_server.h"
+#include "web_dependencies.h"
 
 #include "esp_log.h"
 #include "esp_httpd_priv.h"
@@ -25,9 +26,7 @@
 #include "task_scheduler.h"
 #include "digest_auth.h"
 
-#include "modules.h"
-
-#include "tools.h"
+#include "cool_string.h"
 
 #include <memory>
 

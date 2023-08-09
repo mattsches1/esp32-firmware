@@ -20,7 +20,6 @@
 #pragma once
 
 #include "config.h"
-
 #include "module.h"
 
 class ChargeLimits final : public IModule
@@ -30,6 +29,8 @@ public:
     void pre_setup() override;
     void setup() override;
     void register_urls() override;
+
+    bool action_triggered(Config *config, void *data);
 
     ConfigRoot config;
     ConfigRoot config_in_use;

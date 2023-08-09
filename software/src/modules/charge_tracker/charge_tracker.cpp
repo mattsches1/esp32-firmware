@@ -21,9 +21,10 @@
 
 #include <memory>
 
-#include "modules.h"
+#include "api.h"
 #include "task_scheduler.h"
 #include "tools.h"
+#include "module_dependencies.h"
 
 #include "pdf_charge_log.h"
 
@@ -436,6 +437,9 @@ void ChargeTracker::setup()
         return;
     }
 
+    if (!LittleFS.exists(chargeRecordFilename(this->last_charge_record)))
+        LittleFS.open(chargeRecordFilename(this->last_charge_record), "w", true);
+
     repair_charges();
 
     api.restorePersistentConfig("charge_tracker/config", &config);
@@ -788,7 +792,7 @@ void ChargeTracker::register_urls()
 
         std::lock_guard<std::mutex> lock{records_mutex};
 
-        uint32_t electricity_price = charge_tracker.config.get("electricity_price")->asUint();
+        uint32_t electricity_price = this->config.get("electricity_price")->asUint();
 
         {
             char charge_buf[sizeof(ChargeStart) + sizeof(ChargeEnd)];
