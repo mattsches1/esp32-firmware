@@ -29,8 +29,8 @@ import { ConfigComponent } from "../../ts/components/config_component";
 import { ConfigForm } from "../../ts/components/config_form";
 import { InputText } from "../../ts/components/input_text";
 import { ListGroup, ListGroupItem } from "react-bootstrap";
-import { InputSelect } from "src/ts/components/input_select";
-import { SubPage } from "src/ts/components/sub_page";
+import { InputSelect } from "../../ts/components/input_select";
+import { SubPage } from "../../ts/components/sub_page";
 import { Table } from "../../ts/components/table";
 
 const MAX_AUTHORIZED_TAGS = 16;
@@ -130,7 +130,7 @@ export class Nfc extends ConfigComponent<'nfc/config', {}, NfcState> {
                                     columnValues: [
                                         [tag.tag_id],
                                         [translate_unchecked(`nfc.content.type_${tag.tag_type}`)],
-                                        [tag.user_id == 0 ? __("nfc.script.not_assigned") : state.userCfg.users[tag.user_id].display_name],
+                                        [tag.user_id == 0 ? __("nfc.script.not_assigned") : state.userCfg.users.filter((user) => user.id == tag.user_id)[0].display_name],
                                         [auth_seen_ids.indexOf(i) >= 0 ? __("nfc.content.last_seen") + util.format_timespan(Math.floor(auth_seen_tags[auth_seen_ids.indexOf(i)].last_seen / 1000)) + __("nfc.content.last_seen_suffix") : __("nfc.script.not_seen")]
                                     ],
                                     editTitle: __("nfc.content.edit_tag_title"),

@@ -12,7 +12,7 @@
 2021-02-10: 1.0.3 (ddbc8e9a)
 - Fix communication timing issue with Bricklets
 - Fix race condition between MQTT and WiFi reconnects
-- Don't add 0 measurements if communicating with the energy meter fails.
+- Don't add 0 measurements if communicating with the energy meter fails
 
 2021-02-17: 1.1.0 (18c1e717)
 - Allow connected car during initial calibration
@@ -67,7 +67,7 @@
 - Show min/max in out of range API error messages
 
 2021-07-16: 1.2.4 (62108b37)
-- Fix connection issues with barely receivable WiFI networks
+- Fix connection issues with barely receivable WiFi networks
 - Fix EVSE boot-up behavior with plugged in vehicle (through EVSE Bricklet firmware 2.0.10)
 - Ignore glitches in contactor check (through EVSE Bricklet firmware 2.0.10)
 - Report EVSE hardware version (through EVSE Bricklet firmware 2.0.10)
@@ -121,7 +121,7 @@
 - Allow firmware update if vehicle state is error
 - Make web interface usable for screens with 320 to 360 px width
 - Warn when activating authentication that a password reset can only be done by resetting to factory defaults
-- Improve web UI of authentication, event log, WiFI and MQTT configuration
+- Improve web UI of authentication, event log, WiFi and MQTT configuration
 - Link to correct manual
 - Fix web server hang if a client can not be reached anymore
 - Reimplement exponential backoff for WiFi connection attempts
@@ -142,14 +142,14 @@
 - Fix browser caching
 - Fix firmware compilation on Windows and macOS
 - Log WiFi MAC address
-- Add greyed out bars and RSSI alt text to WiFI reception icon.
+- Add greyed out bars and RSSI alt text to WiFi reception icon
 - Log reboot reason
 - Allow passing integer values for float API values
 - Use strings in APIs for NFC tag ids and IP addresses
 - Optimize user modification
 - Add features API
 - Add delay to prevent accidental charge stops immediately after a start via NFC
-- Allow passing the value of single-member commands directly.
+- Allow passing the value of single-member commands directly
 - Accept falsy values for null configs
 - Fix handling of missing meter on charge start and end
 - Add configurable send interval to MQTT
@@ -177,7 +177,7 @@
 - Refine new API
 - Add configuration migration
 - Add warning when disabling the WiFi AP
-- Fix websocket connections through SSL proxy
+- Fix WebSocket connections through SSL proxy
 - Fix charge tracker edge cases
 - Fix web interface error message hide logic
 - Fix MQTT payload length limit calculation
@@ -258,7 +258,7 @@
 - Allow HTTP GET/POST for payload-less commands
 - Support config updates without "_update" suffix (only via HTTP)
 - Check static IP configuration for common mistakes
-- Fix energy meter x-axis lables on really small screens
+- Fix energy meter x-axis labels on really small screens
 - Fix memory leak in WebSocket queue cleanup
 - Fix WebSockets blocking the web server if a connection stays active over weeks
 - Fix duplicated NFC tag detections
@@ -269,23 +269,23 @@
 - Add uptime tracker for debug purposes
 - Fix user ID overflow
 - Block creating new users if all IDs are in use
-- Reflash bricklets stuck in bootloader mode
+- Reflash Bricklets stuck in bootloader mode
 - Fix status page showing up before the correct sub-page when reloading the web interface
 - Update timezone database
 - Fix manual and firmware URLs
 - Move "require user authorization to charge" to users sub-page
 - Improve translations
-- Disable start charging button in web interface if keyswitch is locked
+- Disable start charging button in web interface if key switch is locked
 
 2022-11-25: 2.0.8 (9dbdd9f5)
 - Add WireGuard
-- Add RTC support (via Real Time Clock 2.0 Bricklet)
+- Add RTC support (via Real-Time Clock 2.0 Bricklet)
 - Add "are you sure"-dialog to meter reset
 - Add config reset API
 - Add reset button to configuration pages
 - Add electricity price configuration; show cost of charge in web interface and charge log
 - Add meter/type_override
-- Add EVSE communication watchdog (through EVSE 2.0 Bricklet firmware 2.1.5)
+- Add EVSE communication watchdog (through EVSE Bricklet firmware 2.1.5)
 - Fix error message if firmware update is too small
 - Fix EVSE low level value labels
 - Fix HTTP GET for payload-less commands
@@ -337,7 +337,7 @@
 - Improve WiFi connection establishment speed
 - Fix WiFi not allowing configuration to be saved if only the selected network has changed
 - Fix float configuration values being dropped if configuration is saved by pressing enter in float input
-- Fix charge manager, nfc and users modal form submission
+- Fix charge manager, NFC and users modal form submission
 - Add check for reserved, broadcast and multicast IP addresses in charge manager configuration
 - Fix charge manager error duration not increasing if all chargers don't send packets anymore
 - Fix start/end date selection of charge tracker log export not considering the user's timezone
@@ -355,8 +355,8 @@
 - Fix charged sum calculation being wrong if charges without start date were tracked before the selected interval
 - Fix charge tracking values if power-cycled
 - Fix error feedback of text inputs
-- Fix WiFi station passphase placeholder text
-- Fix deletion of WiFI station passphrase
+- Fix WiFi station passphrase placeholder text
+- Fix deletion of WiFi station passphrase
 - Fix negative and large energy plot values
 - Fix length check of text and password inputs
 - Make Bricklet flashing more robust
@@ -377,12 +377,11 @@
 - Improve WiFi reception by disabling HT40 mode and 11b
 - Make energy meter initialization more robust
 - Fix charge manager distribution log access if verbose not requested
-- Make static IP configuration of ethernet interface more reliable
+- Make static IP configuration of Ethernet interface more reliable
 - Fix removal of controlled charger in charge manager sub-page
 - Improve translations
-- Fix charge limit blocking a charge forever
 - Update timezone database
-- Log connection duration when ethernet, WiFi, MQTT or WireGuard connection is lost
+- Log connection duration when Ethernet, WiFi, MQTT or WireGuard connection is lost
 - Fix OCPP not reconnecting if a TLS connection was closed by the server immediately after establishing it
 - Reset energy meter only once if requested via Modbus TCP
 - Make sure action requests are never ignored if requested via Modbus TCP
@@ -397,7 +396,7 @@
 - Don't count unknown user against the limit of 16 users
 - Change energy limit setting to drop-down box
 - Add PWA-style bookmark support
-- Add option to require up-to-date meter value when starting a charge. Automatically enabled the first time a meter is found.
+- Add option to require up-to-date meter value when starting a charge; automatically enabled the first time a meter is found
 - Improve charge management efficiency by using line currents if available
 - Add last seen NFC tag to Modbus TCP
 - Add API and Modbus TCP registers to control front button LED
@@ -418,17 +417,17 @@
 - Fix user authentication being lost if ESP restarts while charge is paused
 - Repair charge records with either the start or end meter value missing
 - Fix crash if NFC logic is blocked for more than one second
-- Increase NFC detection threshold to two seconds. Should make duplicated detection less likely.
+- Increase NFC detection threshold to two seconds; should make duplicated detection less likely
 - Make local charger link clickable
 - Check for overlapping networks between WiFi or WireGuard IPs
 - Improve translations
-- Immediately start WiFI AP if no WiFi configured
+- Immediately start WiFi AP if no WiFi configured
 - Improve zero line visibility
 - Consistently scale all 48h graphs to at least 1500 W
 - Don't log if optional devices are missing
 - Clarify event log messages
 - Fix race condition in web server initialization
-- Fix charge manager handling of low priority chargers.
+- Fix charge manager handling of low priority chargers
 - Handle chargers that only support less than the minimum current as low priority
 - Fix ESP crash when accessing API concurrently
 - Fix web interface errors caused by wrong web socket message order
@@ -436,5 +435,28 @@
 - Fix non-UTF-8 web socket payload by clamping sampled meter values into expected range
 - Fix wrong meter history calculation if samples arrive faster than every 500 ms
 - Limit debug protocol to last 20000 lines
-- Fix Y axis jump on double click in graphs
-- Auto-scale graph Y axis based on tick text width
+- Fix y-axis jump on double click in graphs
+- Auto-scale graph y-axis based on tick text width
+
+<unknown>: 2.1.4 (<unknown>)
+- Add y-axis label to meter plot
+- Fix loading of RTC time on Sundays
+- Show firmware build time in human readable format
+- Fix charge limit blocking a charge forever
+- Add subnet mask to WiFi and network state
+- Allow full subnet mask (/0 to /32) for WireGuard
+- Fix serialization mismatch between current_charge and last_charges
+- Fix NFC tag injection API in case of injecting a tag that has already been seen before
+- Remove unnecessary release button from global current slot
+- Stop using disabled items in InputSelect as placeholder
+- Don't blink LED if user slot is not active
+- Switch from cards to table in charge manager, NFC and users UI
+- Fix recovery API call payloads
+- Fix invalid feedback if no subnet mask is selected
+- Fix potential deadlock when calling API commands
+- Fix handling of missing line currents in charge manager resulting in too low charging currents
+- Fix API meter not updating last_value_change
+- Fix boost mode after startup (through EVSE Bricklet firmware 2.1.6)
+- Make ID.3 mode work for state changes that go from C directly to A (through EVSE Bricklet firmware 2.1.6)
+- Wait for at least 30 seconds until contactor is turned on again after leaving state D (through EVSE Bricklet firmware 2.1.6)
+- Wait for at least 5 seconds until contactor is turned on again after charging was stopped (through EVSE Bricklet firmware 2.1.6)

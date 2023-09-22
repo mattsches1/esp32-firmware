@@ -1505,17 +1505,30 @@ void Config::save_to_file(File &file)
 {
     auto doc = this->to_json({});
 
-    if (doc.overflowed())
-        logger.printfln("JSON doc overflow while writing %s!", file.name());
+    if (doc.overflowed()) {
+        logger.printfln("JSON doc overflow while writing file %s! Doc capacity is %u. Truncated doc follows.", file.name(), doc.capacity());
+        String str;
+        serializeJson(doc, str);
+        logger.write(str.c_str(), str.length());
+    }
     serializeJson(doc, file);
 }
 
 void Config::write_to_stream(Print &output)
 {
-    auto doc = this->to_json({});
+    write_to_stream_except(output, {});
+}
 
-    if (doc.overflowed())
-        logger.printfln("JSON doc overflow!");
+void Config::write_to_stream_except(Print &output, const std::vector<String> &keys_to_censor)
+{
+    auto doc = this->to_json(keys_to_censor);
+
+    if (doc.overflowed()) {
+        logger.printfln("JSON doc overflow while writing to stream! Doc capacity is %u. Truncated doc follows.", doc.capacity());
+        String str;
+        serializeJson(doc, str);
+        logger.write(str.c_str(), str.length());
+    }
     serializeJson(doc, output);
 }
 
@@ -1528,21 +1541,14 @@ String Config::to_string_except(const std::vector<String> &keys_to_censor) const
 {
     auto doc = this->to_json(keys_to_censor);
 
-    if (doc.overflowed())
-        logger.printfln("JSON doc overflow!");
-
     String result;
     serializeJson(doc, result);
+
+    if (doc.overflowed()) {
+        logger.printfln("JSON doc overflow while converting to string! Doc capacity is %u. Truncated doc follows.", doc.capacity());
+        logger.write(result.c_str(), result.length());
+    }
     return result;
-}
-
-void Config::write_to_stream_except(Print &output, const std::vector<String> &keys_to_censor)
-{
-    auto doc = this->to_json(keys_to_censor);
-
-    if (doc.overflowed())
-        logger.printfln("JSON doc overflow!");
-    serializeJson(doc, output);
 }
 
 bool Config::was_updated(uint8_t api_backend_flag)

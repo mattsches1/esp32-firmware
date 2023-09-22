@@ -25,13 +25,10 @@ import * as API from "../../ts/api";
 import { h, render, Fragment, Component } from "preact";
 import { __ } from "../../ts/translation";
 import { PageHeader } from "../../ts/components/page_header";
-
-
 import { FormRow } from "../../ts/components/form_row";
 import { Button, Spinner } from "react-bootstrap";
-
 import { Download } from 'react-feather';
-import { SubPage } from "src/ts/components/sub_page";
+import { SubPage } from "../../ts/components/sub_page";
 
 interface EventLogState {
     log: string

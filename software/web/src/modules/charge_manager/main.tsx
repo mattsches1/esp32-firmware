@@ -22,23 +22,21 @@ import $ from "../../ts/jq";
 import * as util from "../../ts/util";
 import * as API from "../../ts/api";
 
-import { h, render, Fragment, Component, Attributes, ComponentChild, ComponentChildren, Ref } from "preact";
+import { h, render, Fragment, Component } from "preact";
 import { translate_unchecked, __ } from "../../ts/translation";
 
 import { ConfigComponent } from "../../ts/components/config_component";
 import { ConfigForm } from "../../ts/components/config_form";
 import { FormRow } from "../../ts/components/form_row";
-import { FormGroup } from "../../ts/components/form_group";
 import { InputText } from "../../ts/components/input_text";
-import { Button, Card, Collapse, ListGroup, Modal } from "react-bootstrap";
-import { InputSelect } from "src/ts/components/input_select";
-import { InputFloat } from "src/ts/components/input_float";
-import { ItemModal } from "src/ts/components/item_modal";
-import { Switch } from "src/ts/components/switch";
+import { Button, Collapse, ListGroup } from "react-bootstrap";
+import { InputSelect } from "../../ts/components/input_select";
+import { InputFloat } from "../../ts/components/input_float";
+import { Switch } from "../../ts/components/switch";
 import { config } from "./api";
-import { IndicatorGroup } from "src/ts/components/indicator_group";
-import { InputNumber } from "src/ts/components/input_number";
-import { SubPage } from "src/ts/components/sub_page";
+import { IndicatorGroup } from "../../ts/components/indicator_group";
+import { InputNumber } from "../../ts/components/input_number";
+import { SubPage } from "../../ts/components/sub_page";
 import { Table } from "../../ts/components/table";
 
 type ChargeManagerConfig = API.getType['charge_manager/config'];

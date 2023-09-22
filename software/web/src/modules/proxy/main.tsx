@@ -24,17 +24,16 @@ import * as util from "../../ts/util";
 
 import { h, render, Fragment} from "preact";
 import { __ } from "../../ts/translation";
-import { PageHeader } from "../../ts/components/page_header";
 
 import { FormRow } from "../../ts/components/form_row";
 import { FormSeparator } from "../../ts/components/form_separator";
 import { Table} from "react-bootstrap";
-import { ConfigComponent } from "src/ts/components/config_component";
-import { ConfigForm } from "src/ts/components/config_form";
-import { InputPassword } from "src/ts/components/input_password";
-import { InputNumber } from "src/ts/components/input_number";
-import { InputIP } from "src/ts/components/input_ip";
-import { SubPage } from "src/ts/components/sub_page";
+import { ConfigComponent } from "../../ts/components/config_component";
+import { ConfigForm } from "../../ts/components/config_form";
+import { InputPassword } from "../../ts/components/input_password";
+import { InputNumber } from "../../ts/components/input_number";
+import { InputIP } from "../../ts/components/input_ip";
+import { SubPage } from "../../ts/components/sub_page";
 import { Slash } from "react-feather";
 
 interface ProxyState {

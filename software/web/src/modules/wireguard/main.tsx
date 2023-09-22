@@ -23,7 +23,7 @@ import * as util from "../../ts/util";
 import * as API from "../../ts/api";
 
 
-import { h, render, Fragment, Component } from "preact";
+import { h, render, Fragment } from "preact";
 import { __ } from "../../ts/translation";
 
 import { ConfigComponent } from "../../ts/components/config_component";
@@ -33,12 +33,12 @@ import { InputText } from "../../ts/components/input_text";
 import { InputNumber } from "../../ts/components/input_number";
 import { InputPassword } from "../../ts/components/input_password";
 import { Switch } from "../../ts/components/switch";
-import { IPConfiguration } from "src/ts/components/ip_configuration";
+import { IPConfiguration } from "../../ts/components/ip_configuration";
 import { Slash } from "react-feather";
-import { InputIP } from "src/ts/components/input_ip";
-import { IndicatorGroup } from "src/ts/components/indicator_group";
-import { InputSubnet } from "src/ts/components/input_subnet";
-import { SubPage } from "src/ts/components/sub_page";
+import { InputIP } from "../../ts/components/input_ip";
+import { IndicatorGroup } from "../../ts/components/indicator_group";
+import { InputSubnet } from "../../ts/components/input_subnet";
+import { SubPage } from "../../ts/components/sub_page";
 
 type WireGuardConfig = API.getType['wireguard/config'];
 
