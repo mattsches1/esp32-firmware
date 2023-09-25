@@ -33,6 +33,7 @@ import { InputText } from "../../ts/components/input_text";
 import { Switch } from "../../ts/components/switch";
 import { SubPage } from "../../ts/components/sub_page";
 import { CollapsedSection } from "../../ts/components/collapsed_section";
+import { OutputFloat } from "../../ts/components/output_float";
 import { IndicatorGroup } from "../../ts/components/indicator_group";
 import uPlot from 'uplot';
 import { FormSeparator } from "../../ts/components/form_separator";
@@ -587,10 +588,12 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
                     <FormRow label={__("phase_switcher.content.charging_power.title")} label_muted={__("phase_switcher.content.charging_power.description")}>
                         <div class="row mx-n1">
                             <div class="mb-1 col-6 px-1">
-                                <InputText value={api_data.state.available_charging_power.toString() + " W"}/>
+                                <OutputFloat value={api_data.state.available_charging_power} digits={0} scale={0} unit="W" maxFractionalDigitsOnPage={0} maxUnitLengthOnPage={1}/>
+                                {/* <InputText value={api_data.state.available_charging_power.toString() + " W"}/> */}
                             </div>
                             <div class="mb-1 col-6 px-1">
-                                <InputText value={api_data.meter.power.toString() + " W"}/>
+                                <OutputFloat value={api_data.meter.power} digits={0} scale={0} unit="W" maxFractionalDigitsOnPage={0} maxUnitLengthOnPage={1}/>
+                                {/* <InputText value={api_data.meter.power.toString() + " W"}/> */}
                             </div>
                         </div>
                     </FormRow>
@@ -819,6 +822,8 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
     }
 }
 
+render(<PhaseSwitcher/>, $('#phase_switcher')[0])
+
 
 // ========= STATUS =========
 
@@ -826,27 +831,45 @@ interface PhaseSwitcherStatusState {
     state: API.getType['phase_switcher/state'];
 }
 
-// export class PhaseSwitcherStatus extends Component<{}, PhaseSwitcherStatusState> {
-//     constructor() {
-//         super();
+export class PhaseSwitcherStatus extends Component<{}, PhaseSwitcherStatusState> {
+    constructor() {
+        super();
 
-//         util.addApiEventListener('phase_switcher/state', () => {
-//             this.setState({state: API.get('charge_manager/state')})
-//         });
-//     }
+        util.addApiEventListener('phase_switcher/state', () => {
+            this.setState({state: API.get('phase_switcher/state')})
+        });
+    }
 
-//     render(props: {}, state: Readonly<PhaseSwitcherStatusState>) {
-//         if (!util.render_allowed() || !API.hasFeature("phase_switcher"))
-//             return <></>;
+    render(props: {}, state: Readonly<PhaseSwitcherStatusState>) {
+        if (!util.render_allowed() || !API.hasFeature("phase_switcher"))
+            return <></>;
 
-//     }
+        return <>
+                <FormRow label={__("phase_switcher.status.available_charging_power")} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4">
+                    <OutputFloat value={state.state.available_charging_power} digits={0} scale={0} unit="W" maxFractionalDigitsOnPage={0} maxUnitLengthOnPage={1}/>
+                </FormRow>
 
-// }
+                <FormRow label={__("phase_switcher.status.active_phases")} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4">
+                    <IndicatorGroup
+                        style="width: 100%"
+                        class="flex-wrap"
+                        value={state.state.active_phases}
+                        items={[
+                            ["primary", __("phase_switcher.status.no_phase")],
+                            ["primary", __("phase_switcher.status.one_phase")],
+                            ["primary", __("phase_switcher.status.two_phases")],
+                            ["primary", __("phase_switcher.status.three_phases")]
+                        ]}/>
+                </FormRow>
+            </>;
 
 
+    }
 
+}
 
-render(<PhaseSwitcher/>, $('#phase_switcher')[0])
+render(<PhaseSwitcherStatus />, $('#status-phase_switcher')[0]);
+
 
 export function add_event_listeners(source: API.APIEventTarget) {}
 
