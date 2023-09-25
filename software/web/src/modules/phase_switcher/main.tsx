@@ -37,6 +37,8 @@ import { IndicatorGroup } from "../../ts/components/indicator_group";
 import uPlot from 'uplot';
 import { FormSeparator } from "../../ts/components/form_separator";
 
+// ========= CONFIG =========
+
 type PhaseSwitcherConfig = API.getType['phase_switcher/config'];
 
 interface PhaseSwitcherState {
@@ -44,6 +46,11 @@ interface PhaseSwitcherState {
     low_level_state: API.getType['phase_switcher/low_level_state'];
     chart_selected: "history"|"live";
 }
+
+interface MeterValues {
+    meter: API.getType["meter/values"];
+}
+
 
 interface UplotData {
     timestamps: number[];
@@ -457,7 +464,7 @@ function array_append<T>(a: Array<T>, b: Array<T>, tail: number): Array<T> {
     return a.slice(-tail);
 }
 
-export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, PhaseSwitcherConfig & PhaseSwitcherState> {
+export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, PhaseSwitcherConfig & PhaseSwitcherState & MeterValues> {
     live_data: UplotData;
     pending_live_data: UplotData = {timestamps: [], samples: []};
     history_data: UplotData;
@@ -475,6 +482,10 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
 
         util.addApiEventListener('phase_switcher/low_level_state', () => {
             this.setState({low_level_state: API.get('phase_switcher/low_level_state')});
+        });
+
+        util.addApiEventListener('meter/values', () => {
+            this.setState({meter: API.get('meter/values')});
         });
 
         util.addApiEventListener("phase_switcher/live", () => {
@@ -546,8 +557,8 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
         }
     }
 
-    render(props: {}, api_data: Readonly<PhaseSwitcherConfig & PhaseSwitcherState>) {
-        if (!util.render_allowed() || !API.hasFeature("phase_switcher"))
+    render(props: {}, api_data: Readonly<PhaseSwitcherConfig & PhaseSwitcherState & MeterValues>) {
+        if (!util.render_allowed() || !API.hasFeature("phase_switcher") || !API.hasFeature("meter"))
             return <></>
 
         return (
@@ -558,6 +569,72 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
                             onReset={this.reset} 
                             onDirtyChange={(d) => this.ignore_updates = d}
                             isModified={this.isModified()}>
+
+
+                    <FormSeparator heading={__("phase_switcher.content.state")}/>
+
+                    <FormRow label={__("phase_switcher.content.sequencer_state")}>
+                        <div class="row mx-n1">
+                            <div class="mb-1 col-6 px-1">
+                                <InputText value={translate_unchecked("phase_switcher.script.sequencer_states." + String(api_data.state.sequencer_state))}/>
+                            </div>
+                            <div class="mb-1 col-6 px-1">
+                                <InputText value={util.format_timespan(Math.floor(api_data.state.time_since_state_change))}/>
+                            </div>
+                        </div>
+                    </FormRow>
+
+                    <FormRow label={__("phase_switcher.content.charging_power.title")} label_muted={__("phase_switcher.content.charging_power.description")}>
+                        <div class="row mx-n1">
+                            <div class="mb-1 col-6 px-1">
+                                <InputText value={api_data.state.available_charging_power.toString() + " W"}/>
+                            </div>
+                            <div class="mb-1 col-6 px-1">
+                                <InputText value={api_data.meter.power.toString() + " W"}/>
+                            </div>
+                        </div>
+                    </FormRow>
+
+                    <FormRow label={__("phase_switcher.content.requested_phases")} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4">
+                        <IndicatorGroup
+                            style="width: 100%"
+                            class="flex-wrap"
+                            value={api_data.state.requested_phases_pending}
+                            items={[
+                                ["primary", __("phase_switcher.status.no_phase")],
+                                ["primary", __("phase_switcher.status.one_phase")],
+                                ["primary", __("phase_switcher.status.two_phases")],
+                                ["primary", __("phase_switcher.status.three_phases")]
+                            ]}/>
+                    </FormRow>
+
+                    <FormRow label={__("phase_switcher.status.active_phases")} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4">
+                        <IndicatorGroup
+                            style="width: 100%"
+                            class="flex-wrap"
+                            value={api_data.state.active_phases}
+                            items={[
+                                ["primary", __("phase_switcher.status.no_phase")],
+                                ["primary", __("phase_switcher.status.one_phase")],
+                                ["primary", __("phase_switcher.status.two_phases")],
+                                ["primary", __("phase_switcher.status.three_phases")]
+                            ]}/>
+                    </FormRow>
+
+                    <FormRow label={__("phase_switcher.content.contactor_state")} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4">
+                        <IndicatorGroup
+                            style="width: 100%"
+                            class="flex-wrap"
+                            value={api_data.state.contactor_state ? 1 : 0}
+                            items={[
+                                ["primary", __("phase_switcher.content.contactor_state_ok")],
+                                ["danger", __("phase_switcher.content.contactor_state_error")]
+                            ]}/>
+                    </FormRow>
+
+
+                    <FormSeparator heading={__("phase_switcher.content.configuration")}/>
+
                     <FormRow label={__("phase_switcher.content.phase_switcher_enabled")}>
                         <Switch desc={__("phase_switcher.content.phase_switcher_enabled_desc")}
                                 checked={api_data.enabled}
@@ -741,6 +818,33 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
         );
     }
 }
+
+
+// ========= STATUS =========
+
+interface PhaseSwitcherStatusState {
+    state: API.getType['phase_switcher/state'];
+}
+
+// export class PhaseSwitcherStatus extends Component<{}, PhaseSwitcherStatusState> {
+//     constructor() {
+//         super();
+
+//         util.addApiEventListener('phase_switcher/state', () => {
+//             this.setState({state: API.get('charge_manager/state')})
+//         });
+//     }
+
+//     render(props: {}, state: Readonly<PhaseSwitcherStatusState>) {
+//         if (!util.render_allowed() || !API.hasFeature("phase_switcher"))
+//             return <></>;
+
+//     }
+
+// }
+
+
+
 
 render(<PhaseSwitcher/>, $('#phase_switcher')[0])
 
