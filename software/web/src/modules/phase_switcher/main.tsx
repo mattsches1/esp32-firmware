@@ -595,7 +595,7 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
                         </div>
                     </FormRow>
 
-                    <FormRow label={__("phase_switcher.content.requested_phases")} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4">
+                    <FormRow label={__("phase_switcher.content.requested_phases")}>
                         <IndicatorGroup
                             style="width: 100%"
                             class="flex-wrap"
@@ -608,7 +608,7 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
                             ]}/>
                     </FormRow>
 
-                    <FormRow label={__("phase_switcher.status.active_phases")} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4">
+                    <FormRow label={__("phase_switcher.status.active_phases")}>
                         <IndicatorGroup
                             style="width: 100%"
                             class="flex-wrap"
@@ -621,7 +621,7 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
                             ]}/>
                     </FormRow>
 
-                    <FormRow label={__("phase_switcher.content.contactor_state")} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4">
+                    <FormRow label={__("phase_switcher.content.contactor_state")}>
                         <IndicatorGroup
                             style="width: 100%"
                             class="flex-wrap"
