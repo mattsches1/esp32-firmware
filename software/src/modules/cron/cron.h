@@ -23,28 +23,10 @@
 #include "config.h"
 #include <map>
 #include <vector>
-
-#define CRON_TRIGGER_CRON 1
-#define CRON_TRIGGER_IEC_CHANGE 2
-#define CRON_TRIGGER_MQTT 3
-#define CRON_TRIGGER_EVSE_BUTTON 4
-#define CRON_TRIGGER_NFC 5
-#define CRON_TRIGGER_CHARGE_LIMITS 6
-#define CRON_TRIGGER_EVSE_SHUTDOWN_INPUT 7
-#define CRON_TRIGGER_EVSE_GP_INPUT 8
-
-#define CRON_ACTION_PRINT 1
-#define CRON_ACTION_MQTT 2
-#define CRON_ACTION_SET_CURRENT 3
-#define CRON_ACTION_LED 4
-#define CRON_ACTION_METER_RESET 5
-#define CRON_ACTION_SET_MANAGER_CURRENT 6
-#define CRON_ACTION_NFC_INJECT_TAG 7
-#define CRON_ACTION_CHARGE_LIMITS 8
-#define CRON_ACTION_EVSE_GP_OUTPUT 9
+#include "cron_defs.h"
 
 typedef std::function<void(const Config *)>               ActionCb;
-typedef std::map<uint32_t, ActionCb>                ActionMap;
+typedef std::map<CronActionID, ActionCb>                ActionMap;
 typedef std::vector<std::pair<size_t, Config *>>                       ConfigVec;
 
 class Cron : public IModule {
@@ -54,8 +36,8 @@ class Cron : public IModule {
     ConfigRoot enabled_in_use;
 
     ActionMap   action_map;
-    std::vector<ConfUnionPrototype>    trigger_vec;
-    std::vector<ConfUnionPrototype>    action_vec;
+    std::vector<ConfUnionPrototype<CronTriggerID>>    trigger_vec;
+    std::vector<ConfUnionPrototype<CronActionID>>    action_vec;
 
 public:
     Cron();
@@ -64,11 +46,11 @@ public:
     void setup() override;
     void register_urls() override;
 
-    void register_action(const ConfUnionPrototype &proto, ActionCb callback);
-    void register_trigger(const ConfUnionPrototype &proto);
+    void register_action(CronActionID id, Config cfg, ActionCb callback);
+    void register_trigger(CronTriggerID id, Config cfg);
 
-    bool trigger_action(uint8_t number, void *data, bool (*cb)(Config *, void *));
-    bool is_trigger_active(uint8_t number);
+    bool trigger_action(CronTriggerID number, void *data, std::function<bool(Config *, void *)> cb);
+    bool is_trigger_active(CronTriggerID number);
 
-    ConfigVec get_configured_triggers(uint8_t number);
+    ConfigVec get_configured_triggers(CronTriggerID number);
 };

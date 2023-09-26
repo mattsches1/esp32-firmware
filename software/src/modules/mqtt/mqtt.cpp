@@ -72,44 +72,63 @@ void Mqtt::pre_setup()
     });
 
 #if MODULE_CRON_AVAILABLE()
-    ConfUnionPrototype proto;
-    proto.tag = CRON_TRIGGER_MQTT;
-    proto.config = Config::Object({
+    cron.register_trigger(
+        CronTriggerID::MQTT,
+        Config::Object({
             {"topic", Config::Str("", 0, 64)},
             {"payload", Config::Str("", 0, 64)},
             {"retain", Config::Bool(false)}
-        });
+        })
+    );
 
-    cron.register_trigger(proto);
-
-    proto.tag = CRON_ACTION_MQTT;
-
-    cron.register_action(proto, [this](const Config *cfg) {
-        publish(cfg->get("topic")->asString(), cfg->get("payload")->asString(), cfg->get("retain")->asBool());
-    });
+    cron.register_action(
+        CronActionID::MQTT,
+        Config::Object({
+            {"topic", Config::Str("", 0, 64)},
+            {"payload", Config::Str("", 0, 64)},
+            {"retain", Config::Bool(false)}
+        }),
+        [this](const Config *cfg) {
+            publish(cfg->get("topic")->asString(), cfg->get("payload")->asString(), cfg->get("retain")->asBool());
+        }
+    );
 #endif
 }
 
-void Mqtt::subscribe_with_prefix(const String &path, std::function<void(const char *, size_t, char *, size_t)> callback, bool forbid_retained)
+void Mqtt::subscribe_with_prefix(const String &path, SubscribeCallback callback, bool forbid_retained)
 {
-    const String &prefix = config_in_use.get("global_topic_prefix")->asString();
     String topic = prefix + "/" + path;
-    subscribe(topic, callback, forbid_retained);
+    subscribe_internal(topic, true, callback, forbid_retained);
 }
 
-void Mqtt::subscribe(const String &topic, std::function<void(const char *, size_t, char *, size_t)> callback, bool forbid_retained)
+void Mqtt::subscribe_with_prefix_mqtt_thread(const String &path, SubscribeCallback callback, bool forbid_retained)
 {
-    this->commands.push_back({topic, callback, forbid_retained, topic.startsWith(config_in_use.get("global_topic_prefix")->asString())});
+    String topic = prefix + "/" + path;
+    subscribe_internal(topic, false, callback, forbid_retained);
+}
 
-    esp_mqtt_client_unsubscribe(client, topic.c_str());
-    esp_mqtt_client_subscribe(client, topic.c_str(), 0);
+
+void Mqtt::subscribe(const String &topic, SubscribeCallback callback, bool forbid_retained)
+{
+    subscribe_internal(topic, true, callback, forbid_retained);
+}
+
+void Mqtt::subscribe_mqtt_thread(const String &topic, SubscribeCallback callback, bool forbid_retained)
+{
+    subscribe_internal(topic, false, callback, forbid_retained);
+}
+
+void Mqtt::subscribe_internal(const String &topic, bool callback_in_main_thread, SubscribeCallback callback, bool forbid_retained) {
+    bool subscribed = esp_mqtt_client_subscribe(client, topic.c_str(), 0) >= 0;
+
+    this->commands.push_back({topic, callback, forbid_retained, topic.startsWith(prefix), subscribed, callback_in_main_thread});
 }
 
 void Mqtt::addCommand(size_t commandIdx, const CommandRegistration &reg)
 {
     auto req_size = reg.config->max_string_length();
     if (req_size > MQTT_RECV_BUFFER_SIZE) {
-        logger.printfln("MQTT: Recv buf is %u bytes. %s requires %u. Bump MQTT_RECV_BUFFER_SIZE! Not subscribing!", MQTT_RECV_BUFFER_SIZE, reg.path.c_str(), req_size);
+        logger.printfln("MQTT: Recv buf is %u bytes. %s requires %u. Bump MQTT_RECV_BUFFER_SIZE! Updates on this topic might break the MQTT connection!", MQTT_RECV_BUFFER_SIZE, reg.path.c_str(), req_size);
         return;
     }
     if (req_size > (MQTT_RECV_BUFFER_SIZE - MQTT_RECV_BUFFER_HEADROOM))
@@ -132,23 +151,19 @@ void Mqtt::addResponse(size_t responseIdx, const ResponseRegistration &reg)
 
 bool Mqtt::publish_with_prefix(const String &path, const String &payload, bool retain)
 {
-    const String &prefix = config_in_use.get("global_topic_prefix")->asString();
     String topic = prefix + "/" + path;
     return publish(topic, payload, retain);
 }
 
 bool Mqtt::publish(const String &topic, const String &payload, bool retain)
 {
-    esp_mqtt_client_publish(this->client, topic.c_str(), payload.c_str(), payload.length(), 0, retain);
-    // We always publish with QoS 0.
-    // esp_mqtt_client_publish will thus always return 0
-    // (because it returns the message ID on success _only_ if QoS is not 0)
-    // But we've set MQTT_SKIP_PUBLISH_IF_DISCONNECTED
-    // so esp_mqtt_client_publish will return -1 if there is no connection to the broker.
-    // We don't care that this is the case, because a) onMqttConnect sends all states anyway
-    // and b) we publish with QoS 0, so message loss is expected.
-    // -> Return true in any case to clear the config's dirty flag.
-    return true;
+    // ESP-MQTT does this check but we only want to allow publishing after
+    // onMqttConnect was called (in the main thread!)
+    // ESP-MQTT's check can asynchronously flip to connected.
+    if (this->state.get("connection_state")->asInt() != (int)MqttConnectionState::CONNECTED)
+        return false;
+
+    return esp_mqtt_client_publish(this->client, topic.c_str(), payload.c_str(), payload.length(), 0, retain) >= 0;
 }
 
 bool Mqtt::pushStateUpdate(size_t stateIdx, const String &payload, const String &path)
@@ -172,6 +187,26 @@ bool Mqtt::pushRawStateUpdate(const String &payload, const String &path)
     return this->publish_with_prefix(path, payload);
 }
 
+void Mqtt::resubscribe() {
+    if (this->state.get("connection_state")->asInt() != (int)MqttConnectionState::CONNECTED)
+        return;
+
+    if (!global_topic_prefix_subscribed) {
+        String topic = prefix + "/#";
+        global_topic_prefix_subscribed = esp_mqtt_client_subscribe(client, topic.c_str(), 0) >= 0;
+    }
+
+    for (auto &cmd : this->commands) {
+        if (cmd.starts_with_global_topic_prefix)
+            continue;
+
+        if (cmd.subscribed)
+            continue;
+
+        cmd.subscribed = esp_mqtt_client_subscribe(client, cmd.topic.c_str(), 0) >= 0;
+    }
+}
+
 void Mqtt::onMqttConnect()
 {
     last_connected_ms = millis();
@@ -189,20 +224,18 @@ void Mqtt::onMqttConnect()
         this->addRawCommand(i, reg);
     }
     for (auto &reg : api.states) {
-        publish_with_prefix(reg.path, reg.config->to_string_except(reg.keys_to_censor));
+        reg.config->set_updated(1 << this->backend_idx);
     }
 
-    const String &prefix = config_in_use.get("global_topic_prefix")->asString();
-    String topic = prefix + "/#";
-    esp_mqtt_client_unsubscribe(client, topic.c_str());
-    esp_mqtt_client_subscribe(client, topic.c_str(), 0);
-
+    this->global_topic_prefix_subscribed = false;
     for (auto &cmd : this->commands) {
-        if (cmd.starts_with_global_topic_prefix)
-            continue;
-        esp_mqtt_client_unsubscribe(client, cmd.topic.c_str());
-        esp_mqtt_client_subscribe(client, cmd.topic.c_str(), 0);
+        cmd.subscribed = false;
     }
+
+    // Resubscribe now to prioritize re-subscription
+    // of the first topics (for example the global topic prefix)
+    // over sending state updates.
+    this->resubscribe();
 }
 
 void Mqtt::onMqttDisconnect()
@@ -239,14 +272,30 @@ void Mqtt::onMqttMessage(char *topic, size_t topic_len, char *data, size_t data_
             continue;
 
         if (retain && c.forbid_retained) {
-            logger.printfln("MQTT: Topic %s is an action. Ignoring retained message.", c.topic.c_str());
+            logger.printfln("MQTT: Retained messages on topic %s are forbidden. Ignoring retained message (data_len=%u).", c.topic.c_str(), data_len);
             return;
         }
 
-        c.callback(topic, topic_len, data, data_len);
+        if (c.callback_in_main_thread) {
+            esp_mqtt_client_disable_receive(client, 100);
+            char *topic_cpy = (char *) malloc(topic_len);
+            memcpy(topic_cpy, topic, topic_len);
+
+            char *data_cpy = (char *) malloc(data_len);
+            memcpy(data_cpy, data, data_len);
+
+            task_scheduler.scheduleOnce([this, c, topic_cpy, topic_len, data_cpy, data_len](){
+                c.callback(topic_cpy, topic_len, data_cpy, data_len);
+                free(data_cpy);
+                free(topic_cpy);
+                esp_mqtt_client_enable_receive(client);
+            }, 0);
+        } else
+            c.callback(topic, topic_len, data, data_len);
+
         return;
     }
-    const String &prefix = this->config_in_use.get("global_topic_prefix")->asString();
+
     if (topic_len < prefix.length() + 1) // + 1 because we will check for the / between the prefix and the topic.
         return;
     if (memcmp(topic, prefix.c_str(), prefix.length()) != 0)
@@ -257,20 +306,27 @@ void Mqtt::onMqttMessage(char *topic, size_t topic_len, char *data, size_t data_
     topic += prefix.length() + 1;
     topic_len -= prefix.length() + 1;
 
-
     for (auto &reg : api.commands) {
         if (topic_len != reg.path.length() || memcmp(topic, reg.path.c_str(), topic_len) != 0)
             continue;
 
         if (retain && reg.is_action) {
-            logger.printfln("MQTT: Topic %s is an action. Ignoring retained message.", reg.path.c_str());
+            logger.printfln("MQTT: Topic %s is an action. Ignoring retained message (data_len=%u).", reg.path.c_str(), data_len);
             return;
         }
 
-        String error = api.callCommand(reg, data, data_len);
+        if (reg.is_action && data_len == 0)  {
+            logger.printfln("MQTT: Topic %s is an action. Ignoring empty message.", reg.path.c_str());
+            return;
+        }
 
-        if (error != "")
-            logger.printfln("MQTT: Failed to update %s from MQTT payload: %s", reg.path.c_str(), error.c_str());
+        esp_mqtt_client_disable_receive(client, 100);
+        api.callCommandNonBlocking(reg, data, data_len, [this](String error){
+            if (error != "")
+                logger.printfln("MQTT: %s", error.c_str());
+            esp_mqtt_client_enable_receive(this->client);
+        });
+
         return;
     }
 
@@ -279,16 +335,23 @@ void Mqtt::onMqttMessage(char *topic, size_t topic_len, char *data, size_t data_
             continue;
 
         if (retain && reg.is_action) {
-            logger.printfln("MQTT: Topic %s is an action. Ignoring retained message.", reg.path.c_str());
+            logger.printfln("MQTT: Topic %s is an action. Ignoring retained message (data_len=%u).", reg.path.c_str(), data_len);
             return;
         }
 
-        String error = reg.callback(data, data_len);
-        if(error == "") {
-            return;
-        }
+        char *data_cpy = (char *) malloc(data_len);
+        memcpy(data_cpy, data, data_len);
 
-        logger.printfln("MQTT: Failed to update %s from MQTT payload: %s", reg.path.c_str(), error.c_str());
+        esp_mqtt_client_disable_receive(client, 100);
+        task_scheduler.scheduleOnce([this, reg, data_cpy, data_len](){
+            String error = reg.callback(data_cpy, data_len);
+            if (error != "")
+                logger.printfln("MQTT: %s", error.c_str());
+
+            free(data_cpy);
+            esp_mqtt_client_enable_receive(this->client);
+        }, 0);
+
         return;
     }
 
@@ -304,7 +367,7 @@ void Mqtt::onMqttMessage(char *topic, size_t topic_len, char *data, size_t data_
     msg.topic = String(topic).substring(0, topic_len);
     msg.payload = String(data).substring(0, data_len);
     msg.retained = retain;
-    if (cron.trigger_action(CRON_TRIGGER_MQTT, &msg, &trigger_action))
+    if (cron.trigger_action(CronTriggerID::MQTT, &msg, &trigger_action))
         return;
 #endif
 
@@ -313,7 +376,7 @@ void Mqtt::onMqttMessage(char *topic, size_t topic_len, char *data, size_t data_
     // It MUST set the RETAIN flag to 0 when a PUBLISH Packet is sent to a Client
     // because it matches an established subscription regardless of how the flag was set in the message it received [MQTT-3.3.1-9].
     if (!retain)
-        logger.printfln("MQTT: Received message on unknown topic '%.*s'. data_len=%u", static_cast<int>(topic_len), topic, data_len);
+        logger.printfln("MQTT: Received message on unknown topic '%.*s' (data_len=%u)", static_cast<int>(topic_len), topic, data_len);
 }
 
 static char err_buf[64] = {0};
@@ -367,33 +430,35 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             mqtt->onMqttMessage(event->topic, event->topic_len, event->data, event->data_len, event->retain);
             break;
         case MQTT_EVENT_ERROR: {
-                auto eh = event->error_handle;
-                bool was_connected = mqtt->state.get("connection_state")->asEnum<MqttConnectionState>() != MqttConnectionState::NOT_CONNECTED;
+                auto eh = *event->error_handle;
+                task_scheduler.scheduleOnce([mqtt, eh](){
+                    bool was_connected = mqtt->state.get("connection_state")->asEnum<MqttConnectionState>() != MqttConnectionState::NOT_CONNECTED;
 
-                if (eh->error_type == MQTT_ERROR_TYPE_TCP_TRANSPORT) {
-                    if (was_connected && eh->esp_tls_last_esp_err != ESP_OK) {
-                        const char *e = esp_err_to_name_r(eh->esp_tls_last_esp_err, err_buf, sizeof(err_buf) / sizeof(err_buf[0]));
-                        logger.printfln("MQTT: Transport error: %s (esp_tls_last_esp_err)", e);
-                        mqtt->state.get("last_error")->updateInt(eh->esp_tls_last_esp_err);
+                    if (eh.error_type == MQTT_ERROR_TYPE_TCP_TRANSPORT) {
+                        if (was_connected && eh.esp_tls_last_esp_err != ESP_OK) {
+                            const char *e = esp_err_to_name_r(eh.esp_tls_last_esp_err, err_buf, sizeof(err_buf) / sizeof(err_buf[0]));
+                            logger.printfln("MQTT: Transport error: %s (esp_tls_last_esp_err)", e);
+                            mqtt->state.get("last_error")->updateInt(eh.esp_tls_last_esp_err);
+                        }
+                        if (was_connected && eh.esp_tls_stack_err != 0) {
+                            const char *e = esp_err_to_name_r(eh.esp_tls_stack_err, err_buf, sizeof(err_buf) / sizeof(err_buf[0]));
+                            logger.printfln("MQTT: Transport error: %s (esp_tls_stack_err)", e);
+                            mqtt->state.get("last_error")->updateInt(eh.esp_tls_stack_err);
+                        }
+                        if (eh.esp_transport_sock_errno != 0) {
+                            const char *e = strerror(eh.esp_transport_sock_errno);
+                            logger.printfln("MQTT: Transport error: %s", e);
+                            mqtt->state.get("last_error")->updateInt(eh.esp_transport_sock_errno);
+                        }
+                    } else if (eh.error_type == MQTT_ERROR_TYPE_CONNECTION_REFUSED) {
+                        logger.printfln("MQTT: Connection refused: %s", get_mqtt_error(eh.connect_return_code));
+                        // Minus to indicate this is a connection error
+                        mqtt->state.get("last_error")->updateInt(-eh.connect_return_code);
+                    } else {
+                        logger.printfln("MQTT: Unknown error");
+                        mqtt->state.get("last_error")->updateInt(0xFFFFFFFF);
                     }
-                    if (was_connected && eh->esp_tls_stack_err != 0) {
-                        const char *e = esp_err_to_name_r(eh->esp_tls_stack_err, err_buf, sizeof(err_buf) / sizeof(err_buf[0]));
-                        logger.printfln("MQTT: Transport error: %s (esp_tls_stack_err)", e);
-                        mqtt->state.get("last_error")->updateInt(eh->esp_tls_stack_err);
-                    }
-                    if (eh->esp_transport_sock_errno != 0) {
-                        const char *e = strerror(eh->esp_transport_sock_errno);
-                        logger.printfln("MQTT: Transport error: %s", e);
-                        mqtt->state.get("last_error")->updateInt(eh->esp_transport_sock_errno);
-                    }
-                } else if (eh->error_type == MQTT_ERROR_TYPE_CONNECTION_REFUSED) {
-                    logger.printfln("MQTT: Connection refused: %s", get_mqtt_error(eh->connect_return_code));
-                    // Minus to indicate this is a connection error
-                    mqtt->state.get("last_error")->updateInt(-eh->connect_return_code);
-                } else {
-                    logger.printfln("MQTT: Unknown error");
-                    mqtt->state.get("last_error")->updateInt(0xFFFFFFFF);
-                }
+                }, 0);
                 break;
             }
         default:
@@ -425,13 +490,14 @@ void Mqtt::setup()
     }
 
     config_in_use = config;
+    prefix = this->config_in_use.get("global_topic_prefix")->asString();
 
     if (!config.get("enable_mqtt")->asBool()) {
         initialized = true;
         return;
     }
 
-    api.registerBackend(this);
+    this->backend_idx = api.registerBackend(this);
 
     esp_log_level_set("MQTT_CLIENT", ESP_LOG_NONE);
     esp_log_level_set("TRANSPORT_BASE", ESP_LOG_NONE);
@@ -453,17 +519,21 @@ void Mqtt::setup()
     client = esp_mqtt_client_init(&mqtt_cfg);
     esp_mqtt_client_register_event(client, (esp_mqtt_event_id_t)ESP_EVENT_ANY_ID, mqtt_event_handler, this);
 
+    task_scheduler.scheduleWithFixedDelay([this](){
+        this->resubscribe();
+    }, 1000, 1000);
+
     initialized = true;
 }
 
 void Mqtt::register_urls()
 {
-    api.addPersistentConfig("mqtt/config", &config, {"broker_password"}, 1000);
-    api.addState("mqtt/state", &state, {}, 1000);
+    api.addPersistentConfig("mqtt/config", &config, {"broker_password"});
+    api.addState("mqtt/state", &state);
 
 #if MODULE_CRON_AVAILABLE()
-    if (cron.is_trigger_active(CRON_TRIGGER_MQTT)) {
-        ConfigVec trigger_config = cron.get_configured_triggers(CRON_TRIGGER_MQTT);
+    if (cron.is_trigger_active(CronTriggerID::MQTT)) {
+        ConfigVec trigger_config = cron.get_configured_triggers(CronTriggerID::MQTT);
         std::vector<String> subscribed_topics;
         for (auto &conf: trigger_config) {
             bool already_subscribed = false;
@@ -478,7 +548,7 @@ void Mqtt::register_urls()
                     msg.topic = String(tpic).substring(0, tpic_len);
                     msg.payload = String(data).substring(0, data_len);
                     msg.retained = false;
-                    if (cron.trigger_action(CRON_TRIGGER_MQTT, &msg, &trigger_action))
+                    if (cron.trigger_action(CronTriggerID::MQTT, &msg, &trigger_action))
                         return;
                 }, false);
                 subscribed_topics.push_back(conf.second->get("topic")->asString());
@@ -513,9 +583,9 @@ void Mqtt::register_events() {
 bool Mqtt::action_triggered(Config *config, void *data) {
     Config *cfg = (Config*)config->get();
     MqttMessage *msg = (MqttMessage *)data;
-    switch (config->getTag())
+    switch (config->getTag<CronTriggerID>())
     {
-    case CRON_TRIGGER_MQTT:
+        case CronTriggerID::MQTT:
         if (cfg->get("payload")->asString() == msg->payload)
             return true;
         break;
@@ -526,9 +596,3 @@ bool Mqtt::action_triggered(Config *config, void *data) {
     return false;
 }
 #endif
-void Mqtt::disableReceive() {
-    esp_mqtt_client_disable_receive(client, 100);
-};
-void Mqtt::enableReceive() {
-    esp_mqtt_client_enable_receive(client);
-};

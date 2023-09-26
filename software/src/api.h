@@ -36,14 +36,13 @@ struct StateRegistration {
     String path;
     ConfigRoot *config;
     std::vector<String> keys_to_censor;
-    uint32_t interval;
-    uint32_t last_update;
+    bool low_latency;
 };
 
 struct CommandRegistration {
     String path;
     ConfigRoot *config;
-    std::function<void(void)> callback;
+    std::function<void(String &)> callback;
     std::vector<String> keys_to_censor_in_debug_report;
     bool is_action;
     uint64_t task_id;
@@ -72,8 +71,6 @@ public:
     virtual void addResponse(size_t responseIdx, const ResponseRegistration &reg) = 0;
     virtual bool pushStateUpdate(size_t stateIdx, const String &payload, const String &path) = 0;
     virtual bool pushRawStateUpdate(const String &payload, const String &path) = 0;
-    virtual void disableReceive() {};
-    virtual void enableReceive() {};
 };
 
 class API
@@ -87,17 +84,36 @@ public:
     // Call this method only if you are a IAPIBackend and run in another FreeRTOS task!
     String callCommand(CommandRegistration &reg, char *payload, size_t len);
 
+    // Call this method only if you are a IAPIBackend and run in another FreeRTOS task!
+    void callCommandNonBlocking(CommandRegistration &reg, char *payload, size_t len, std::function<void(String)> done_cb);
+
     String callCommand(const char *path, Config::ConfUpdate payload);
+
+    void callResponse(ResponseRegistration &reg, char *payload, size_t len, IChunkedResponse *response, Ownership *response_ownership, uint32_t response_owner_id);
 
     Config *getState(const String &path, bool log_if_not_found = true);
 
     void addFeature(const char *name);
-    void addCommand(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor_in_debug_report, std::function<void(void)> callback, bool is_action);
-    void addState(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor, uint32_t interval_ms);
-    bool addPersistentConfig(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor, uint32_t interval_ms);
-    //void addTemporaryConfig(const String &path, Config *config, std::initializer_list<String> keys_to_censor, uint32_t interval_ms, std::function<void(void)> callback);
+    void addCommand(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor_in_debug_report, std::function<void()> callback, bool is_action);
+    void addCommand(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor_in_debug_report, std::function<void(String &)> callback, bool is_action);
+
+    void addState(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor = {}, bool low_latency = false);
+    bool addPersistentConfig(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor = {});
+    //void addTemporaryConfig(const String &path, Config *config, std::initializer_list<String> keys_to_censor, std::function<void(void)> callback);
     void addRawCommand(const String &path, std::function<String(char *, size_t)> callback, bool is_action);
     void addResponse(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor_in_debug_report, std::function<void(IChunkedResponse *, Ownership *, uint32_t)> callback);
+
+    template<typename T>
+    //_ATTRIBUTE((deprecated("Pass bool low_latecy instead of interval_ms. Use 'false' or nothing for 1000ms interval or 'true' for 250ms interval.")))
+    void addState(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor, T interval_ms) {
+        addState(path, config, keys_to_censor, interval_ms < 1000);
+    }
+    template<typename T>
+    //_ATTRIBUTE((deprecated("Please remove interval_ms parameter.")))
+    bool addPersistentConfig(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor, T interval_ms) {
+        (void)interval_ms;
+        return addPersistentConfig(path, config, keys_to_censor);
+    }
 
     bool hasFeature(const char *name);
 
@@ -107,7 +123,7 @@ public:
 
     static bool restorePersistentConfig(const String &path, ConfigRoot *config);
 
-    void registerDebugUrl(WebServer *server);
+    void registerDebugUrl();
 
     size_t registerBackend(IAPIBackend *backend);
 
@@ -121,9 +137,7 @@ public:
     ConfigRoot features;
     ConfigRoot version;
 
-    TaskHandle_t mainTaskHandle;
-
-    std::mutex command_mutex;
+    uint8_t state_update_counter = 0;
 
 private:
     bool already_registered(const String &path, const char *api_type);

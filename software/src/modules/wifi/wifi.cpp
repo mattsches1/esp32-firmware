@@ -276,7 +276,7 @@ bool Wifi::apply_sta_config_and_connect(WifiState current_state)
     const char *ssid = sta_config_in_use.get("ssid")->asEphemeralCStr();
 
     uint8_t bssid[6];
-    sta_config_in_use.get("bssid")->fillArray<uint8_t, Config::ConfUint>(bssid, 6 * sizeof(bssid));
+    sta_config_in_use.get("bssid")->fillUint8Array(bssid, ARRAY_SIZE(bssid));
 
     const char *passphrase = sta_config_in_use.get("passphrase")->asEphemeralCStr();
     bool bssid_lock = sta_config_in_use.get("bssid_lock")->asBool();
@@ -389,28 +389,25 @@ void Wifi::setup()
 #endif
     }
 
-    ap_config_in_use = ap_config;
-    sta_config_in_use = sta_config;
+    ap_config_in_use = ap_config.get_owned_copy();
+    sta_config_in_use = sta_config.get_owned_copy();
 
     WiFi.persistent(false);
 
     WiFi.onEvent([this](arduino_event_id_t event, arduino_event_info_t info) {
-            static bool first = true;
             uint8_t reason_code = info.wifi_sta_disconnected.reason;
+            static bool first = true;
             const char *reason = reason2str(reason_code);
             if (!this->was_connected) {
-            {
                 logger.printfln("Wifi failed to connect to %s: %s (%u)", sta_config_in_use.get("ssid")->asEphemeralCStr(), reason, reason_code);
                 if (first)
                 {
                     first = false;
                     this->apply_sta_config_and_connect();
                 }
-            }
             } else {
                 uint32_t now = millis();
                 uint32_t connected_for = now - last_connected_ms;
-                state.get("connection_end")->updateUint(now);
 
                 // FIXME: Use a better way of time keeping here.
                 if (connected_for < 0x7FFFFFFF)
@@ -418,12 +415,18 @@ void Wifi::setup()
                 else
                     logger.printfln("Wifi disconnected from %s: %s (%u). Was connected for a long time.", sta_config_in_use.get("ssid")->asEphemeralCStr(), reason, reason_code);
 
+                task_scheduler.scheduleOnce([this, now](){
+                    state.get("connection_end")->updateUint(now);
+                }, 0);
             }
-            this->was_connected = false;
 
-            state.get("sta_ip")->updateString("0.0.0.0");
-            state.get("sta_subnet")->updateString("0.0.0.0");
-            state.get("sta_bssid")->updateString("");
+            task_scheduler.scheduleOnce([this](){
+                state.get("sta_ip")->updateString("0.0.0.0");
+                state.get("sta_subnet")->updateString("0.0.0.0");
+                state.get("sta_bssid")->updateString("");
+            }, 0);
+
+            this->was_connected = false;
         },
         ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
 
@@ -431,8 +434,12 @@ void Wifi::setup()
             this->was_connected = true;
 
             logger.printfln("Wifi connected to %s, BSSID %s", WiFi.SSID().c_str(), WiFi.BSSIDstr().c_str());
-            last_connected_ms = millis();
-            state.get("connection_start")->updateUint(last_connected_ms);
+            auto now = millis();
+            last_connected_ms = now;
+
+            task_scheduler.scheduleOnce([this, now](){
+                state.get("connection_start")->updateUint(now);
+            }, 0);
         },
         ARDUINO_EVENT_WIFI_STA_CONNECTED);
 
@@ -446,9 +453,11 @@ void Wifi::setup()
             auto ip = WiFi.localIP().toString();
             auto subnet = WiFi.subnetMask();
             logger.printfln("Wifi got IP address: %s/%u. Own MAC address: %s", ip.c_str(), WiFiGenericClass::calculateSubnetCIDR(subnet), WiFi.macAddress().c_str());
-            state.get("sta_ip")->updateString(ip);
-            state.get("sta_subnet")->updateString(subnet.toString());
-            state.get("sta_bssid")->updateString(WiFi.BSSIDstr());
+            task_scheduler.scheduleOnce([this, ip, subnet](){
+                state.get("sta_ip")->updateString(ip);
+                state.get("sta_subnet")->updateString(subnet.toString());
+                state.get("sta_bssid")->updateString(WiFi.BSSIDstr());
+            }, 0);
         },
         ARDUINO_EVENT_WIFI_STA_GOT_IP);
 
@@ -458,18 +467,21 @@ void Wifi::setup()
         ARDUINO_EVENT_WIFI_STA_GOT_IP6);
 
     WiFi.onEvent([this](arduino_event_id_t event, arduino_event_info_t info) {
-        if(!this->was_connected)
-            return;
+            if(!this->was_connected)
+                return;
 
-        this->was_connected = false;
+            this->was_connected = false;
 
-        logger.printfln("Wifi lost IP. Forcing disconnect and reconnect of WiFi");
-        state.get("sta_ip")->updateString("0.0.0.0");
-        state.get("sta_subnet")->updateString("0.0.0.0");
-        state.get("sta_bssid")->updateString("");
+            logger.printfln("Wifi lost IP. Forcing disconnect and reconnect of WiFi");
+            WiFi.disconnect(false, true);
 
-        WiFi.disconnect(false, true);
-    }, ARDUINO_EVENT_WIFI_STA_LOST_IP);
+            task_scheduler.scheduleOnce([this](){
+                state.get("sta_ip")->updateString("0.0.0.0");
+                state.get("sta_subnet")->updateString("0.0.0.0");
+                state.get("sta_bssid")->updateString("");
+            }, 0);
+        },
+        ARDUINO_EVENT_WIFI_STA_LOST_IP);
 
     bool enable_ap = ap_config_in_use.get("enable_ap")->asBool();
     bool enable_sta = sta_config_in_use.get("enable_sta")->asBool();
@@ -681,7 +693,7 @@ void Wifi::start_scan()
 
 void Wifi::register_urls()
 {
-    api.addState("wifi/state", &state, {}, 1000);
+    api.addState("wifi/state", &state);
 
     api.addCommand("wifi/scan", Config::Null(), {}, [this](){
         start_scan();
@@ -699,8 +711,8 @@ void Wifi::register_urls()
         return request.send(200, "application/json; charset=utf-8", result.c_str());
     });
 
-    api.addPersistentConfig("wifi/sta_config", &sta_config, {"passphrase"}, 1000);
-    api.addPersistentConfig("wifi/ap_config", &ap_config, {"passphrase"}, 1000);
+    api.addPersistentConfig("wifi/sta_config", &sta_config, {"passphrase"});
+    api.addPersistentConfig("wifi/ap_config", &ap_config, {"passphrase"});
 }
 
 WifiState Wifi::get_connection_state() const

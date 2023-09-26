@@ -31,6 +31,19 @@
 #include "strict_variant/variant.hpp"
 #include "strict_variant/mpl/find_with.hpp"
 
+#include "config/owned_config.h"
+
+#ifdef DEBUG_FS_ENABLE
+extern TaskHandle_t mainTaskHandle;
+#define ASSERT_MAIN_THREAD() do { \
+        if (mainTaskHandle != xTaskGetCurrentTaskHandle()) { \
+            esp_system_abort("Accessing the config is only allowed in the main thread!"); \
+        } \
+    } while (0)
+#else
+#define ASSERT_MAIN_THREAD() do {} while (0)
+#endif
+
 void config_pre_init();
 void config_post_setup();
 
@@ -43,6 +56,9 @@ struct ConfArraySlot;
 struct ConfObjectSlot;
 struct ConfUnionSlot;
 
+struct ConfUnionPrototypeInternal;
+
+template<typename T>
 struct ConfUnionPrototype;
 
 struct Config {
@@ -55,6 +71,8 @@ struct Config {
     public:
         static bool slotEmpty(size_t i);
         static constexpr const char *variantName = "ConfString";
+        static Slot *allocSlotBuf(size_t elements);
+        static void freeSlotBuf(Slot *buf);
 
         CoolString *getVal();
         const CoolString *getVal() const;
@@ -76,6 +94,8 @@ struct Config {
     public:
         static bool slotEmpty(size_t i);
         static constexpr const char *variantName = "ConfFloat";
+        static Slot *allocSlotBuf(size_t elements);
+        static void freeSlotBuf(Slot *buf);
 
         float *getVal();
         const float *getVal() const;
@@ -97,6 +117,8 @@ struct Config {
     public:
         static bool slotEmpty(size_t i);
         static constexpr const char *variantName = "ConfInt";
+        static Slot *allocSlotBuf(size_t elements);
+        static void freeSlotBuf(Slot *buf);
 
         int32_t *getVal();
         const int32_t *getVal() const;
@@ -118,6 +140,8 @@ struct Config {
     public:
         static bool slotEmpty(size_t i);
         static constexpr const char *variantName = "ConfUint";
+        static Slot *allocSlotBuf(size_t elements);
+        static void freeSlotBuf(Slot *buf);
 
         uint32_t *getVal();
         const uint32_t *getVal() const;
@@ -132,8 +156,8 @@ struct Config {
 
     struct ConfBool {
         bool value;
-        bool *getVal() { return &value; };
-        const bool *getVal() const { return &value; };
+        bool *getVal();
+        const bool *getVal() const;
 
         static constexpr const char *variantName = "ConfBool";
     };
@@ -147,6 +171,8 @@ struct Config {
     public:
         static bool slotEmpty(size_t i);
         static constexpr const char *variantName = "ConfArray";
+        static Slot *allocSlotBuf(size_t elements);
+        static void freeSlotBuf(Slot *buf);
 
         Config *get(uint16_t i);
         const Config *get(uint16_t i) const;
@@ -154,7 +180,7 @@ struct Config {
         const std::vector<Config> *getVal() const;
         const Slot *getSlot() const;
 
-        ConfArray(std::vector<Config> val, Config *prototype, uint16_t minElements, uint16_t maxElements, int8_t variantType);
+        ConfArray(std::vector<Config> val, const Config *prototype, uint16_t minElements, uint16_t maxElements, int8_t variantType);
         ConfArray(const ConfArray &cpy);
         ~ConfArray();
 
@@ -170,6 +196,8 @@ struct Config {
     public:
         static bool slotEmpty(size_t i);
         static constexpr const char *variantName = "ConfObject";
+        static Slot *allocSlotBuf(size_t elements);
+        static void freeSlotBuf(Slot *buf);
 
         Config *get(const String &s);
         const Config *get(const String &s) const;
@@ -193,6 +221,8 @@ struct Config {
     public:
         static bool slotEmpty(size_t i);
         static constexpr const char *variantName = "ConfUnion";
+        static Slot *allocSlotBuf(size_t elements);
+        static void freeSlotBuf(Slot *buf);
 
         uint8_t getTag() const;
         bool changeUnionVariant(uint8_t tag);
@@ -201,7 +231,7 @@ struct Config {
         const Config *getVal() const;
         const Slot *getSlot() const;
 
-        ConfUnion(const Config &val, uint8_t tag, uint8_t prototypes_len, const ConfUnionPrototype prototypes[]);
+        ConfUnion(const Config &val, uint8_t tag, uint8_t prototypes_len, const ConfUnionPrototypeInternal prototypes[]);
         ConfUnion(const ConfUnion &cpy);
         ~ConfUnion();
 
@@ -228,10 +258,7 @@ struct Config {
     // a get<std::nullptr_t>() that returned nullptr because the variant
     // had another type and the same call that returned nullptr because
     // the variant has the std::nullptr_type and thus contains a nullptr.
-    static bool containsNull(const ConfUpdate *update)
-    {
-        return update->which() == 0;
-    }
+    static bool containsNull(const ConfUpdate *update);
 
     struct ConfUpdateArray {
         std::vector<ConfUpdate> elements;
@@ -263,7 +290,7 @@ struct Config {
         Tag tag = Tag::EMPTY;
         uint8_t updated;
         union Val {
-            Val() : e(Empty{}) {}
+            Val();
             Empty e;
             ConfString s;
             ConfFloat f;
@@ -273,139 +300,34 @@ struct Config {
             ConfArray a;
             ConfObject o;
             ConfUnion un;
-            ~Val() {}
+            ~Val();
         } val;
 
-        ConfVariant(ConfString s) : tag(Tag::STRING), updated(0xFF), val() {new(&val.s)  ConfString{s};}
-        ConfVariant(ConfFloat f)  : tag(Tag::FLOAT),  updated(0xFF), val() {new(&val.f)  ConfFloat{f};}
-        ConfVariant(ConfInt i)    : tag(Tag::INT),    updated(0xFF), val() {new(&val.i)  ConfInt{i};}
-        ConfVariant(ConfUint u)   : tag(Tag::UINT),   updated(0xFF), val() {new(&val.u)  ConfUint{u};}
-        ConfVariant(ConfBool b)   : tag(Tag::BOOL),   updated(0xFF), val() {new(&val.b)  ConfBool{b};}
-        ConfVariant(ConfArray a)  : tag(Tag::ARRAY),  updated(0xFF), val() {new(&val.a)  ConfArray{a};}
-        ConfVariant(ConfObject o) : tag(Tag::OBJECT), updated(0xFF), val() {new(&val.o)  ConfObject{o};}
-        ConfVariant(ConfUnion un) : tag(Tag::UNION),  updated(0xFF), val() {new(&val.un) ConfUnion{un};}
+        ConfVariant(ConfString s);
+        ConfVariant(ConfFloat f);
+        ConfVariant(ConfInt i);
+        ConfVariant(ConfUint u);
+        ConfVariant(ConfBool b);
+        ConfVariant(ConfArray a);
+        ConfVariant(ConfObject o);
+        ConfVariant(ConfUnion un);
 
-        ConfVariant() : tag(Tag::EMPTY), updated(0xFF), val() {}
+        ConfVariant();
 
-        ConfVariant(const ConfVariant &cpy) {
-            if (tag != Tag::EMPTY)
-                destroyUnionMember();
+        ConfVariant(const ConfVariant &cpy);
 
-            switch (cpy.tag) {
-                case ConfVariant::Tag::EMPTY:
-                    new(&val.e) Empty(cpy.val.e);
-                    break;
-                case ConfVariant::Tag::STRING:
-                    new(&val.s) ConfString(cpy.val.s);
-                    break;
-                case ConfVariant::Tag::FLOAT:
-                    new(&val.f) ConfFloat(cpy.val.f);
-                    break;
-                case ConfVariant::Tag::INT:
-                    new(&val.i) ConfInt(cpy.val.i);
-                    break;
-                case ConfVariant::Tag::UINT:
-                    new(&val.u) ConfUint(cpy.val.u);
-                    break;
-                case ConfVariant::Tag::BOOL:
-                    new(&val.b) ConfBool(cpy.val.b);
-                    break;
-                case ConfVariant::Tag::ARRAY:
-                    new(&val.a) ConfArray(cpy.val.a);
-                    break;
-                case ConfVariant::Tag::OBJECT:
-                    new(&val.o) ConfObject(cpy.val.o);
-                    break;
-                case ConfVariant::Tag::UNION:
-                    new(&val.un) ConfUnion(cpy.val.un);
-                    break;
-            }
-            this->tag = cpy.tag;
-            this->updated = cpy.updated;
-        }
+        ConfVariant &operator=(const ConfVariant &cpy);
 
-        ConfVariant &operator=(const ConfVariant &cpy) {
-            if (this == &cpy) {
-                return *this;
-            }
+        void destroyUnionMember();
 
-            if (tag != Tag::EMPTY)
-                destroyUnionMember();
+        ~ConfVariant();
 
-            switch (cpy.tag) {
-                case ConfVariant::Tag::EMPTY:
-                    new(&val.e) Empty(cpy.val.e);
-                    break;
-                case ConfVariant::Tag::STRING:
-                    new(&val.s) ConfString(cpy.val.s);
-                    break;
-                case ConfVariant::Tag::FLOAT:
-                    new(&val.f) ConfFloat(cpy.val.f);
-                    break;
-                case ConfVariant::Tag::INT:
-                    new(&val.i) ConfInt(cpy.val.i);
-                    break;
-                case ConfVariant::Tag::UINT:
-                    new(&val.u) ConfUint(cpy.val.u);
-                    break;
-                case ConfVariant::Tag::BOOL:
-                    new(&val.b) ConfBool(cpy.val.b);
-                    break;
-                case ConfVariant::Tag::ARRAY:
-                    new(&val.a) ConfArray(cpy.val.a);
-                    break;
-                case ConfVariant::Tag::OBJECT:
-                    new(&val.o) ConfObject(cpy.val.o);
-                    break;
-                case ConfVariant::Tag::UNION:
-                    new(&val.un) ConfUnion(cpy.val.un);
-                    break;
-            }
-            this->tag = cpy.tag;
-            this->updated = cpy.updated;
-
-            return *this;
-        }
-
-        void destroyUnionMember() {
-            switch (tag) {
-                case ConfVariant::Tag::EMPTY:
-                    val.e.~Empty();
-                    break;
-                case ConfVariant::Tag::STRING:
-                    val.s.~ConfString();
-                    break;
-                case ConfVariant::Tag::FLOAT:
-                    val.f.~ConfFloat();
-                    break;
-                case ConfVariant::Tag::INT:
-                    val.i.~ConfInt();
-                    break;
-                case ConfVariant::Tag::UINT:
-                    val.u.~ConfUint();
-                    break;
-                case ConfVariant::Tag::BOOL:
-                    val.b.~ConfBool();
-                    break;
-                case ConfVariant::Tag::ARRAY:
-                    val.a.~ConfArray();
-                    break;
-                case ConfVariant::Tag::OBJECT:
-                    val.o.~ConfObject();
-                    break;
-                case ConfVariant::Tag::UNION:
-                    val.un.~ConfUnion();
-                    break;
-            }
-        }
-
-        ~ConfVariant() {
-            destroyUnionMember();
-        }
+        const char *getVariantName() const;
     };
 
     template<typename T>
     static auto apply_visitor(T visitor, ConfVariant &v) -> decltype(visitor(ConfVariant::Empty{})) {
+        ASSERT_MAIN_THREAD();
         switch (v.tag) {
             case ConfVariant::Tag::EMPTY:
                 return visitor(v.val.e);
@@ -433,6 +355,7 @@ struct Config {
 
     template<typename T>
     static auto apply_visitor(T visitor, const ConfVariant &v) -> decltype(visitor(ConfVariant::Empty{})) {
+        ASSERT_MAIN_THREAD();
         switch (v.tag) {
             case ConfVariant::Tag::EMPTY:
                 return visitor(v.val.e);
@@ -460,8 +383,9 @@ struct Config {
 
     ConfVariant value;
 
-    bool was_updated(uint8_t api_backend_flag);
-    void set_update_handled(uint8_t api_backend_flag);
+    uint8_t was_updated(uint8_t api_backend_flag);
+    void clear_updated(uint8_t api_backend_flag);
+    void set_updated(uint8_t api_backend_flag);
 
     template<typename T>
     static int type_id()
@@ -493,9 +417,7 @@ struct Config {
         return (int)value.tag == Config::type_id<T>();
     }
 
-    bool is_null() const {
-        return value.tag == ConfVariant::Tag::EMPTY;
-    }
+    bool is_null() const;
 
     static Config Str(const String &s,
                       uint16_t minChars,
@@ -516,16 +438,41 @@ struct Config {
     static Config Bool(bool b);
 
     static Config Array(std::initializer_list<Config> arr,
-                        Config *prototype,
+                        const Config *prototype,
                         uint16_t minElements,
                         uint16_t maxElements,
                         int variantType);
 
     static Config Object(std::initializer_list<std::pair<String, Config>> obj);
 
-    static Config Union(Config value, uint8_t tag, const ConfUnionPrototype prototypes[], uint8_t prototypes_len);
+    template<typename T>
+    static void check_enum_template_type() {
+        static_assert(std::is_enum<T>::value, "ConfUnion tag type must be enum");
+
+        // This is a complicated way to express
+        // static_assert(std::is_same<std::underlying_type<T>::type, uint8_t>::value, "Underlying type of ConfUnion tag type must be uint8_t");
+        // but I don't get the simpler assert to compile.
+        // So check for the alignment properties, because those are what we care about.
+        struct foobar{T foo; uint8_t bar;};
+        static_assert(offsetof(foobar, bar) == 1, "Underlying type of ConfUnion tag type must be uint8_t");
+
+        static_assert(offsetof(ConfUnionPrototype<T>, tag) == offsetof(ConfUnionPrototypeInternal, tag), "Tag offset mismatch between ConfUnionPrototype<T> and ConfUnionPrototypeInternal");
+        static_assert(offsetof(ConfUnionPrototype<T>, config) == offsetof(ConfUnionPrototypeInternal, config), "Config offset mismatch between ConfUnionPrototype<T> and ConfUnionPrototypeInternal");
+    }
+
+    template<typename T>
+    static Config Union(Config value, T tag, const ConfUnionPrototype<T> prototypes[], uint8_t prototypes_len) {
+        Config::check_enum_template_type<T>();
+        return Union(value, (uint8_t) tag, (ConfUnionPrototypeInternal*) prototypes, prototypes_len);
+    }
+private:
+    static Config Union(Config value, uint8_t tag, const ConfUnionPrototypeInternal prototypes[], uint8_t prototypes_len);
+public:
 
     static ConfigRoot *Null();
+
+    static ConfigRoot *Confirm();
+    static String ConfirmKey();
 
     static Config Uint8(uint8_t u);
 
@@ -544,23 +491,15 @@ struct Config {
         public:
             Wrap(Config *_conf);
 
-            Config *operator->()
-            {
-                return conf;
-            }
+            Config *operator->();
 
-            explicit operator Config*(){return conf;}
+            explicit operator Config*();
 
             // Allowing to call begin and end directly on
             // the wrapper makes it easier to use
             // range-based for loops.
-            std::vector<Config>::iterator begin() {
-                return conf->begin();
-            }
-
-            std::vector<Config>::iterator end() {
-                return conf->end();
-            }
+            std::vector<Config>::iterator begin();
+            std::vector<Config>::iterator end();
 
         private:
             Config *conf;
@@ -572,12 +511,9 @@ struct Config {
         public:
             ConstWrap(const Config *_conf);
 
-            const Config *operator->() const
-            {
-                return conf;
-            }
+            const Config *operator->() const;
 
-            explicit operator const Config*() const {return conf;}
+            explicit operator const Config*() const;
 
         private:
             const Config *conf;
@@ -600,100 +536,34 @@ struct Config {
 
     // for ConfArray
     const ConstWrap get(uint16_t i) const;
-
     Wrap add();
+    bool removeLast();
+    bool removeAll();
+    bool remove(size_t i);
+    ssize_t count() const;
+    std::vector<Config>::iterator begin();
+    std::vector<Config>::iterator end();
 
-    bool removeLast()
-    {
-        if (!this->is<Config::ConfArray>()) {
-            logger.printfln("Tried to remove the last element from a node that is not an array!");
-            delay(100);
-            return false;
-        }
-
-        std::vector<Config> &children = this->asArray();
-        if (children.size() == 0)
-            return false;
-
-        children.pop_back();
-        return true;
-    }
-
-    bool removeAll()
-    {
-        if (!this->is<Config::ConfArray>()) {
-            logger.printfln("Tried to remove all from a node that is not an array!");
-            delay(100);
-            return false;
-        }
-
-        std::vector<Config> &children = this->asArray();
-
-        children.clear();
-
-        return true;
-    }
-
-    bool remove(size_t i)
-    {
-        if (!this->is<Config::ConfArray>()) {
-            logger.printfln("Tried to remove from a node that is not an array!");
-            delay(100);
-            return false;
-        }
-        std::vector<Config> &children = this->asArray();
-
-        if (children.size() <= i)
-            return false;
-
-        children.erase(children.begin() + i);
-        return true;
-    }
-
-    ssize_t count()
-    {
-        if (!this->is<Config::ConfArray>()) {
-            logger.printfln("Tried to get count of a node that is not an array!");
-            delay(100);
-            return -1;
-        }
-        std::vector<Config> &children = this->asArray();
-        return children.size();
-    }
-
-    std::vector<Config>::iterator begin() {
-        if (!this->is<Config::ConfArray>()) {
-            logger.printfln("Tried to get count of a node that is not an array!");
-            delay(100);
-            return std::vector<Config>::iterator();
-        }
-        return this->asArray().begin();
-    }
-
-    std::vector<Config>::iterator end() {
-        if (!this->is<Config::ConfArray>()) {
-            logger.printfln("Tried to get count of a node that is not an array!");
-            delay(100);
-            return std::vector<Config>::iterator();
-        }
-        return this->asArray().end();
-    }
-
-    uint8_t getTag() const {
+    template<typename T>
+    T getTag() const {
+        Config::check_enum_template_type<T>();
         if (!this->is<Config::ConfUnion>()) {
             logger.printfln("Tried to get tag of a node that is not a union!");
-            delay(100);
-            return -1;
+            esp_system_abort("");
         }
-        return this->get<ConfUnion>()->getTag();
+        return (T) this->get<ConfUnion>()->getTag();
     }
 
+private:
     template<typename ConfigT>
     ConfigT *get() {
+        ASSERT_MAIN_THREAD();
         if (!this->is<ConfigT>()) {
-            logger.printfln("get: Config has wrong type. This is %s, requested is %s", this->to_string().c_str(), ConfigT::variantName);
-            delay(100);
-            return nullptr;
+            logger.printfln("get: Config has wrong type. This is %s, requested is %s", this->value.getVariantName(), ConfigT::variantName);
+#ifdef DEBUG_FS_ENABLE
+            logger.printfln("Content is %s", this->to_string().c_str());
+#endif
+            esp_system_abort("");
         }
 
         return reinterpret_cast<ConfigT *>(&value.val);
@@ -701,15 +571,19 @@ struct Config {
 
     template<typename ConfigT>
     const ConfigT *get() const {
+        ASSERT_MAIN_THREAD();
         if (!this->is<ConfigT>()) {
-            logger.printfln("get: Config has wrong type. This is %s, requested is %s", this->to_string().c_str(), ConfigT::variantName);
-            delay(100);
-            return nullptr;
+            logger.printfln("get: Config has wrong type. This is %s, requested is %s", this->value.getVariantName(), ConfigT::variantName);
+#ifdef DEBUG_FS_ENABLE
+            logger.printfln("Content is %s", this->to_string().c_str());
+#endif
+            esp_system_abort("");
         }
 
         return reinterpret_cast<const ConfigT *>(&value.val);
     }
 
+public:
     const CoolString &asString() const;
 
     const char *asEphemeralCStr() const;
@@ -728,9 +602,11 @@ struct Config {
         } else if (this->is<ConfInt>()) {
             return (T) this->asInt();
         } else {
-            logger.printfln("asEnum: Config has wrong type. This is %s, (not a ConfInt or ConfUint)", this->to_string().c_str());
-            delay(100);
-            return (T) this->asUint();
+            logger.printfln("asEnum: Config has wrong type. This is %s, (not a ConfInt or ConfUint)", this->value.getVariantName());
+#ifdef DEBUG_FS_ENABLE
+            logger.printfln("Content is %s", this->to_string().c_str());
+#endif
+            esp_system_abort("");
         }
     }
 
@@ -740,14 +616,18 @@ private:
     // This is a gigantic footgun: The reference is invalidated after the module setup,
     // because of the ConfSlot array shrinkToFit calls.
     std::vector<Config> &asArray();
+    const std::vector<Config> &asArray() const;
 
-public:
     template<typename T, typename ConfigT>
-    bool update_value(T value) {
+    bool update_value(T value, const char *value_type) {
+        ASSERT_MAIN_THREAD();
         if (!this->is<ConfigT>()) {
-            logger.printfln("update_value: Config has wrong type. This is %s. new value is %s", this->to_string().c_str(), String(value).c_str());
-            delay(100);
-            return false;
+            logger.printfln("update_value: Config has wrong type. This is a %s. new value is a %s", this->value.getVariantName(), value_type);
+#ifdef DEBUG_FS_ENABLE
+            logger.printfln("Content is %s", this->to_string().c_str());
+            logger.printfln("value is is %s", String(value).c_str());
+#endif
+            esp_system_abort("");
         }
         T *target = get<ConfigT>()->getVal();
         T old_value = *target;
@@ -759,37 +639,20 @@ public:
         return old_value != value;
     }
 
-    bool updateString(const String &value)
-    {
-        return update_value<String, ConfString>(value);
-    }
+public:
+    bool updateString(const String &value);
+    bool updateInt(int32_t value);
+    bool updateUint(uint32_t value);
+    bool updateFloat(float value);
+    bool updateBool(bool value);
 
-    bool updateInt(int32_t value)
-    {
-        return update_value<int32_t, ConfInt>(value);
-    }
-
-    bool updateUint(uint32_t value)
-    {
-        return update_value<uint32_t, ConfUint>(value);
-    }
-
-    bool updateFloat(float value)
-    {
-        return update_value<float, ConfFloat>(value);
-    }
-
-    bool updateBool(bool value)
-    {
-        return update_value<bool, ConfBool>(value);
-    }
-
+private:
     template<typename T, typename ConfigT>
     size_t fillArray(T *arr, size_t elements) {
+        ASSERT_MAIN_THREAD();
         if (!this->is<ConfArray>()) {
             logger.printfln("Can't fill array, Config is not an array");
-            delay(100);
-            return 0;
+            esp_system_abort("");
         }
 
         const ConfArray &confArr = this->value.val.a;
@@ -799,8 +662,7 @@ public:
             const Config *entry = confArr.get(i);
             if (!entry->is<ConfigT>()) {
                 logger.printfln("Config entry has wrong type.");
-                delay(100);
-                return 0;
+                esp_system_abort("");
             }
             arr[i] = *entry->get<ConfigT>()->getVal();
         }
@@ -808,6 +670,7 @@ public:
         return toWrite;
     }
 
+public:
     size_t fillFloatArray(float *arr, size_t elements);
 
     size_t fillUint8Array(uint8_t *arr, size_t elements);
@@ -817,38 +680,7 @@ public:
     size_t fillInt8Array(int8_t *arr, size_t elements);
     size_t fillInt16Array(int16_t *arr, size_t elements);
     size_t fillInt32Array(int32_t *arr, size_t elements);
-/*
-    template<typename T, typename ConfigT>
-    void fromArray(T *arr, size_t elements) {
-        if (!this->is<ConfArray>()) {
-            Serial.println("Can't from array, config is not an array");
-            delay(100);
-            return;
-        }
 
-        ConfArray *confArr = strict_variant::get<ConfArray>(&this->value);
-
-        confArr->value.clear();
-        for(size_t i = 0; i < elements; ++i) {
-            confArr->value.push_back(confArr->prototype[0]);
-            *confArr->value[i].as<T, ConfigT>() = arr[i];
-            ConfigT *inner = strict_variant::get<ConfigT>(confArr->value[i]);
-            String inner_error = inner->validator(*inner);
-            if(inner_error != "") {
-                //return String("[") + i + "]" + inner_error;
-                Serial.println( String("[") + i + "]" + inner_error);
-                delay(100);
-                return;
-            }
-        }
-
-        String error = confArr->validator(*confArr);
-        if(error != "") {
-            Serial.println(error);
-            delay(100);
-        }
-    }
-*/
     size_t json_size(bool zero_copy) const;
     size_t max_string_length() const;
 
@@ -867,13 +699,9 @@ struct ConfigRoot : public Config {
 public:
     ConfigRoot() = default;
 
-    ConfigRoot(Config cfg) : Config(cfg), validator(nullptr)
-    {
-    }
+    ConfigRoot(Config cfg);
 
-    ConfigRoot(Config cfg, std::function<String(Config &)> validator) : Config(cfg), validator(validator)
-    {
-    }
+    ConfigRoot(Config cfg, std::function<String(Config &)> validator);
 
     std::function<String(Config &)> validator;
     bool permit_null_updates = true;
@@ -894,6 +722,8 @@ public:
 
     String validate();
 
+    OwnedConfig get_owned_copy();
+
 private:
     template<typename T>
     String update_from_visitor(T visitor);
@@ -902,7 +732,17 @@ private:
     String get_updated_copy(T visitor, Config *out_config);
 };
 
+template<typename T>
 struct ConfUnionPrototype {
+    T tag;
+    Config config;
+
+    ConfUnionPrototype(T tag, Config config) : tag(tag), config(config) {
+        Config::check_enum_template_type<T>();
+    }
+};
+
+struct ConfUnionPrototypeInternal {
     uint8_t tag;
     Config config;
 };

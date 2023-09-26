@@ -98,21 +98,22 @@ void NFC::pre_setup()
     });
 
 #if MODULE_CRON_AVAILABLE()
-    ConfUnionPrototype proto;
-    proto.tag = CRON_TRIGGER_NFC;
-    proto.config = Config::Object({
-        {"tag_type", Config::Uint(0, 0, 4)},
-        {"tag_id", Config::Str("", 0, NFC_TAG_ID_STRING_LENGTH)}
-    });
-    cron.register_trigger(proto);
+    cron.register_trigger(
+        CronTriggerID::NFC,
+        Config::Object({
+            {"tag_type", Config::Uint(0, 0, 4)},
+            {"tag_id", Config::Str("", 0, NFC_TAG_ID_STRING_LENGTH)}
+        })
+    );
 
-    proto.tag = CRON_ACTION_NFC_INJECT_TAG;
-    proto.config = Config::Object({
-        {"tag_type", Config::Uint(0, 0, 4)},
-        {"tag_id", Config::Str("", 0, NFC_TAG_ID_STRING_LENGTH)},
-        {"tag_action", Config::Uint(0, 0, 2)}
-    });
-    cron.register_action(proto, [this](const Config *config) {
+    cron.register_action(
+        CronActionID::NFCInjectTag,
+        Config::Object({
+            {"tag_type", Config::Uint(0, 0, 4)},
+            {"tag_id", Config::Str("", 0, NFC_TAG_ID_STRING_LENGTH)},
+            {"tag_action", Config::Uint(0, 0, 2)}
+        }),
+        [this](const Config *config) {
         inject_tag.get("tag_type")->updateUint(config->get("tag_type")->asUint());
         inject_tag.get("tag_id")->updateString(config->get("tag_id")->asString());
         last_tag_injection = millis();
@@ -216,7 +217,7 @@ void NFC::tag_seen(tag_info_t *tag, bool injected)
     }
 
 #if MODULE_CRON_AVAILABLE()
-    cron.trigger_action(CRON_TRIGGER_NFC, tag, &trigger_action);
+    cron.trigger_action(CronTriggerID::NFC, tag, &trigger_action);
 #endif
 }
 
@@ -393,8 +394,8 @@ void NFC::loop()
 bool NFC::action_triggered(Config *config, void *data) {
     auto cfg = config->get();
     tag_info_t *tag = (tag_info_t *)data;
-    switch (config->getTag()) {
-    case CRON_TRIGGER_NFC:
+    switch (config->getTag<CronTriggerID>()) {
+        case CronTriggerID::NFC:
         if (cfg->get("tag_type")->asUint() == tag->tag_type && cfg->get("tag_id")->asString() == tag->tag_id) {
             return true;
         }

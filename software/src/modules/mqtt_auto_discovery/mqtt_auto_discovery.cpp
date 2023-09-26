@@ -48,9 +48,11 @@ void MqttAutoDiscovery::setup()
     api.restorePersistentConfig("mqtt/auto_discovery_config", &config);
 
     config_in_use = config;
+    mode = config_in_use.get("auto_discovery_mode")->asEnum<MqttAutoDiscoveryMode>();
+
     initialized = true;
 
-    if (config.get("auto_discovery_mode")->asEnum<MqttAutoDiscoveryMode>() == MqttAutoDiscoveryMode::DISCOVERY_DISABLED)
+    if (config_in_use.get("auto_discovery_mode")->asEnum<MqttAutoDiscoveryMode>() == MqttAutoDiscoveryMode::DISCOVERY_DISABLED)
         return;
 
     prepare_topics();
@@ -68,7 +70,7 @@ void MqttAutoDiscovery::setup()
     discovery_topic.concat(mqtt.config_in_use.get("client_name")->asString());
     discovery_topic.concat("/+/config");
 
-    mqtt.subscribe(discovery_topic, [this](const char *topic, size_t topic_len, char *data, size_t data_len) {
+    mqtt.subscribe_mqtt_thread(discovery_topic, [this](const char *topic, size_t topic_len, char *data, size_t data_len) {
         check_discovery_topic(topic, topic_len, data_len);
     }, false);
 }
@@ -128,7 +130,7 @@ void MqttAutoDiscovery::subscribe_to_own()
 void MqttAutoDiscovery::check_discovery_topic(const char *topic, size_t topic_len, size_t data_len)
 {
     // auto discovery is disabled. remove all entities
-    if (config_in_use.get("auto_discovery_mode")->asEnum<MqttAutoDiscoveryMode>() == MqttAutoDiscoveryMode::DISCOVERY_DISABLED) {
+    if (this->mode == MqttAutoDiscoveryMode::DISCOVERY_DISABLED) {
         if (data_len == 0) //already removed
             return;
 

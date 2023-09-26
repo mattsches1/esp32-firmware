@@ -36,7 +36,9 @@ struct Task {
     uint64_t task_id;
     uint32_t next_deadline_ms;
     uint32_t delay_ms;
+    TaskHandle_t awaited_by;
     bool once;
+    bool cancelled;
 
     Task(std::function<void(void)> fn, uint64_t task_id, uint32_t first_run_delay_ms, uint32_t delay_ms, bool once);
 };
@@ -48,6 +50,7 @@ class TaskQueue : public std::priority_queue<std::unique_ptr<Task>, std::vector<
     using std::priority_queue<std::unique_ptr<Task>, std::vector<std::unique_ptr<Task>>, decltype(&compare)>::priority_queue;
 public:
     bool removeByTaskID(uint64_t task_id);
+    Task *findByTaskID(uint64_t task_id);
 
     std::unique_ptr<Task> top_and_pop() {
         std::pop_heap(c.begin(), c.end(), comp);
@@ -89,10 +92,18 @@ public:
     uint64_t scheduleOnce(std::function<void(void)> &&fn, uint32_t delay_ms);
     uint64_t scheduleWithFixedDelay(std::function<void(void)> &&fn, uint32_t first_delay_ms, uint32_t delay_ms);
 
+    enum class AwaitResult {
+        Done,
+        Timeout,
+        Error
+    };
+    AwaitResult await(uint64_t task_id, uint32_t millis_to_wait = 10000);
+    AwaitResult await(std::function<void(void)> &&fn, uint32_t millis_to_wait = 10000);
+
 private:
     std::mutex task_mutex;
     TaskQueue tasks;
-    TaskHandle_t mainTaskHandle;
+    TaskHandle_t mainThreadHandle;
     std::unique_ptr<Task> currentTask = nullptr;
 };
 

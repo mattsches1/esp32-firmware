@@ -255,7 +255,7 @@ bool FirmwareUpdate::handle_update_chunk(int command, WebServerRequest request, 
 
 void FirmwareUpdate::register_urls()
 {
-    server.on("/recovery", HTTP_GET, [](WebServerRequest req) {
+    server.on_HTTPThread("/recovery", HTTP_GET, [](WebServerRequest req) {
         req.addResponseHeader("Content-Encoding", "gzip");
         req.addResponseHeader("ETag", "dontcachemeplease");
         // Intentionally don't handle the If-None-Match header:
@@ -299,7 +299,7 @@ void FirmwareUpdate::register_urls()
         return true;
     });
 
-    server.on("/flash_firmware", HTTP_POST, [this](WebServerRequest request){
+    server.on_HTTPThread("/flash_firmware", HTTP_POST, [this](WebServerRequest request){
         if (update_aborted)
             return request.unsafe_ResponseAlreadySent(); // Already sent in upload callback.
 
@@ -317,7 +317,7 @@ void FirmwareUpdate::register_urls()
         return handle_update_chunk(U_FLASH, request, index, data, len, final, request.contentLength());
     });
 
-    server.on("/flash_spiffs", HTTP_POST, [this](WebServerRequest request){
+    server.on_HTTPThread("/flash_spiffs", HTTP_POST, [this](WebServerRequest request){
         if(!Update.hasError()) {
             logger.printfln("SPFFS flashed successfully! Rebooting in one second.");
             task_scheduler.scheduleOnce([](){ESP.restart();}, 1000);
@@ -328,46 +328,22 @@ void FirmwareUpdate::register_urls()
         return handle_update_chunk(U_SPIFFS, request, index, data, len, final, request.contentLength());
     });
 
-    api.addRawCommand("factory_reset", [this](char *c, size_t s) -> String {
-        StaticJsonDocument<16> doc;
-
-        DeserializationError error = deserializeJson(doc, c, s);
-
-        if (error) {
-            return String("Failed to deserialize string: ") + error.c_str();
-        }
-
-        if (!doc["do_i_know_what_i_am_doing"].is<bool>()) {
-            return "you don't seem to know what you are doing";
-        }
-
-        if (!doc["do_i_know_what_i_am_doing"].as<bool>()) {
-            return "Factory reset NOT initiated";
+    api.addCommand("factory_reset", Config::Confirm(), {Config::ConfirmKey()}, [this](String &result) {
+        if (!Config::Confirm()->get(Config::ConfirmKey())->asBool()) {
+            result = "Factory reset NOT requested";
+            return;
         }
 
         task_scheduler.scheduleOnce([](){
             logger.printfln("Factory reset requested");
             factory_reset();
         }, 3000);
-
-        return "";
     }, true);
 
-    api.addRawCommand("config_reset", [this](char *c, size_t s) -> String {
-        StaticJsonDocument<16> doc;
-
-        DeserializationError error = deserializeJson(doc, c, s);
-
-        if (error) {
-            return String("Failed to deserialize string: ") + error.c_str();
-        }
-
-        if (!doc["do_i_know_what_i_am_doing"].is<bool>()) {
-            return "you don't seem to know what you are doing";
-        }
-
-        if (!doc["do_i_know_what_i_am_doing"].as<bool>()) {
-            return "Config reset NOT initiated";
+    api.addCommand("config_reset", Config::Confirm(), {Config::ConfirmKey()}, [this](String &result) {
+        if (!Config::Confirm()->get(Config::ConfirmKey())->asBool()) {
+            result = "Config reset NOT requested";
+            return;
         }
 
         task_scheduler.scheduleOnce([](){
@@ -391,7 +367,5 @@ void FirmwareUpdate::register_urls()
             API::removeAllConfig();
             ESP.restart();
         }, 3000);
-
-        return "";
     }, true);
 }

@@ -37,6 +37,7 @@ export interface IPConfig {
 }
 
 interface IPConfigurationProps extends Omit<JSXInternal.HTMLAttributes<HTMLInputElement>,  "class" | "id" | "type" | "onInput" | "value" | "disabled"> {
+    showAnyAddress: boolean,
     showDhcp?: boolean,
     showDns?: boolean,
     value: IPConfig
@@ -50,7 +51,6 @@ interface IPConfigurationProps extends Omit<JSXInternal.HTMLAttributes<HTMLInput
     forbidNetwork?: {ip: number, subnet: number, name: string}[]
 }
 
-
 export class IPConfiguration extends Component<IPConfigurationProps, {}> {
     constructor() {
         super();
@@ -60,8 +60,6 @@ export class IPConfiguration extends Component<IPConfigurationProps, {}> {
         this.props.value[k] = v;
         this.props.onValue(this.props.value);
     }
-
-
 
     render(props: IPConfigurationProps, state: Readonly<{}>) {
         let dhcp = props.value.ip == "0.0.0.0";
@@ -73,7 +71,7 @@ export class IPConfiguration extends Component<IPConfigurationProps, {}> {
             let subnet = parseIP(props.value.subnet);
             let gateway = parseIP(props.value.gateway);
 
-            if (!isNaN(ip) && !isNaN(subnet) && !isNaN(gateway)){
+            if (!isNaN(ip) && !isNaN(subnet) && !isNaN(gateway) && subnet != 0){
                 gateway_out_of_subnet = gateway != 0 && (ip & subnet) != (gateway & subnet);
 
                 if (props.forbidNetwork) {
@@ -93,15 +91,15 @@ export class IPConfiguration extends Component<IPConfigurationProps, {}> {
             <FormRow label={props.ip_label ? props.ip_label : __("component.ip_configuration.static_ip")}>
                 <InputIP invalidFeedback={__("component.ip_configuration.static_ip_invalid")}
                          required={!props.showDhcp || !dhcp}
-                         value={props.value.ip}
-                         onValue={(v) => this.onUpdate("ip", v)}/>
+                         value={!props.showAnyAddress && props.value.ip == "0.0.0.0" ? "" : props.value.ip}
+                         onValue={(v) => this.onUpdate("ip", !props.showAnyAddress && v == "" ? "0.0.0.0" : v)}/>
             </FormRow>
             <FormRow label={props.gateway_label ? props.gateway_label : __("component.ip_configuration.gateway")}>
                 <InputIP invalidFeedback={gateway_out_of_subnet ? __("component.ip_configuration.gateway_out_of_subnet") : __("component.ip_configuration.gateway_invalid")}
                          moreClasses={gateway_out_of_subnet ? ["is-invalid"] : [""]}
                          required={!props.showDhcp || !dhcp}
-                         value={props.value.gateway}
-                         onValue={(v) => this.onUpdate("gateway", v)}/>
+                         value={!props.showAnyAddress && props.value.gateway == "0.0.0.0" ? "" : props.value.gateway}
+                         onValue={(v) => this.onUpdate("gateway", !props.showAnyAddress && v == "" ? "0.0.0.0" : v)}/>
             </FormRow>
             <FormRow label={props.subnet_label ? props.subnet_label : __("component.ip_configuration.subnet")}>
                 <InputSubnet classList={captured_subnet_name != "" ? "is-invalid" : ""}
@@ -112,13 +110,12 @@ export class IPConfiguration extends Component<IPConfigurationProps, {}> {
                     />
                 {captured_subnet_name != "" ? <div class="invalid-feedback">{__("component.ip_configuration.subnet_captures_prefix") + captured_subnet_name + " (" + captured_subnet_ip + ") " + __("component.ip_configuration.subnet_captures_suffix")}</div> : <></>}
             </FormRow>
-
         </>);
 
         if (props.showDns) {
             inner = (<>
                 {inner}
-                <FormRow label={__("component.ip_configuration.dns")}>
+                <FormRow label={__("component.ip_configuration.dns")} label_muted={__("component.ip_configuration.dns_muted")}>
                     <InputIP invalidFeedback={__("component.ip_configuration.dns_invalid")}
                              value={props.value.dns}
                              onValue={(v) => this.onUpdate("dns", v)}/>

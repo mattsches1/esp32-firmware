@@ -33,6 +33,7 @@ export interface FormRowProps {
     label_infix ?: VNode
     label_suffix ?: VNode
     help?: ComponentChildren
+    error?: ComponentChildren
 }
 
 let id_counter = 0;
@@ -53,7 +54,8 @@ export class FormRow extends Component<FormRowProps, {help_expanded: boolean}> {
         if (props.contentColClasses === undefined || props.contentColClasses !== "")
             inner = <div class={props.contentColClasses === undefined ? "col-lg-9" : props.contentColClasses}>
                 {inner}
-                {props.help ? <Collapse in={state.help_expanded}>
+                {props.error ? <div class="alert alert-danger my-2 p-3">{props.error}</div> : <></>}
+                {props.help ? <Collapse in={state.help_expanded} className="my-2">
                                 <div>{/*Empty div to fix choppy animation. See https://react-bootstrap-v4.netlify.app/utilities/transitions/#collapse*/}
                                     <div class="card">
                                         <div class="card-body p-3">

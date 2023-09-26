@@ -29,6 +29,7 @@
 #include "task_scheduler.h"
 
 extern TF_HAL hal;
+extern TaskHandle_t mainTaskHandle;
 
 // Global definition here to match the declaration in api.h.
 API api;
@@ -39,8 +40,6 @@ API::API() {
 
 void API::pre_setup()
 {
-    mainTaskHandle = xTaskGetCurrentTaskHandle();
-
     features = Config::Array(
         {},
         new Config{Config::Str("", 0, 32)},
@@ -79,33 +78,45 @@ void API::setup()
     version.get("config_type")->updateString(config_type);
 
     task_scheduler.scheduleWithFixedDelay([this]() {
+        bool skip_high_latency_states = state_update_counter % 4 != 0;
+        ++state_update_counter;
+
         for (size_t state_idx = 0; state_idx < states.size(); ++state_idx) {
             auto &reg = states[state_idx];
 
-            if (!deadline_elapsed(reg.last_update + reg.interval)) {
+            if (skip_high_latency_states && !reg.low_latency)
                 continue;
-            }
-
-            reg.last_update = millis();
 
             size_t backend_count = this->backends.size();
 
+            uint8_t to_send = reg.config->was_updated((1 << backend_count) - 1);
             // If the config was not updated for any API, we don't have to serialize the payload.
-            if (!reg.config->was_updated((1 << backend_count) - 1)) {
+            if (to_send == 0) {
                 continue;
             }
 
             String payload = reg.config->to_string_except(reg.keys_to_censor);
 
+            uint8_t sent = 0;
+
             for (size_t backend_idx = 0; backend_idx < this->backends.size(); ++backend_idx) {
+                if ((to_send & (1 << backend_idx)) == 0)
+                    continue;
+
                 if (this->backends[backend_idx]->pushStateUpdate(state_idx, payload, reg.path))
-                    reg.config->set_update_handled(1 << backend_idx);
+                    sent |= 1 << backend_idx;
             }
+
+            reg.config->clear_updated(sent);
         }
     }, 250, 250);
 }
 
-void API::addCommand(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor_in_debug_report, std::function<void(void)> callback, bool is_action)
+void API::addCommand(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor_in_debug_report, std::function<void(void)> callback, bool is_action) {
+    this->addCommand(path, config, keys_to_censor_in_debug_report, [callback](String &){callback();}, is_action);
+}
+
+void API::addCommand(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor_in_debug_report, std::function<void(String &)> callback, bool is_action)
 {
     if (already_registered(path, "command"))
         return;
@@ -118,12 +129,12 @@ void API::addCommand(const String &path, ConfigRoot *config, std::initializer_li
     }
 }
 
-void API::addState(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor, uint32_t interval_ms)
+void API::addState(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor, bool low_latency)
 {
     if (already_registered(path, "state"))
         return;
 
-    states.push_back({path, config, keys_to_censor, interval_ms, millis()});
+    states.push_back({path, config, keys_to_censor, low_latency});
     auto stateIdx = states.size() - 1;
 
     for (auto *backend : this->backends) {
@@ -131,7 +142,7 @@ void API::addState(const String &path, ConfigRoot *config, std::initializer_list
     }
 }
 
-bool API::addPersistentConfig(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor, uint32_t interval_ms)
+bool API::addPersistentConfig(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor)
 {
     if (path.length() > 63) {
         logger.printfln("The maximum allowed config path length is 63 bytes. Got %u bytes instead.", path.length());
@@ -166,9 +177,9 @@ bool API::addPersistentConfig(const String &path, ConfigRoot *config, std::initi
         }
 
         String conf_modified_path = path + "_modified";
-        addState(conf_modified_path, conf_modified, {}, interval_ms);
+        addState(conf_modified_path, conf_modified);
 
-        addState(path, config, keys_to_censor, interval_ms);
+        addState(path, config, keys_to_censor);
     }
 
     addCommand(path + "_update", config, keys_to_censor, [path, config, conf_modified]() {
@@ -179,7 +190,7 @@ bool API::addPersistentConfig(const String &path, ConfigRoot *config, std::initi
     addCommand(path + "_reset", Config::Null(), {}, [path, conf_modified]() {
         API::removeConfig(path);
         conf_modified->get("modified")->updateUint(1);
-    }, false);
+    }, true);
 
     return true;
 }
@@ -195,6 +206,26 @@ void API::addRawCommand(const String &path, std::function<String(char *, size_t)
     for (auto *backend : this->backends) {
         backend->addRawCommand(rawCommandIdx, raw_commands[rawCommandIdx]);
     }
+}
+
+void API::callResponse(ResponseRegistration &reg, char *payload, size_t len, IChunkedResponse *response, Ownership *response_ownership, uint32_t response_owner_id) {
+    if (mainTaskHandle != xTaskGetCurrentTaskHandle()) {
+        logger.printfln("Don't use API::callResponse in non-main thread!");
+        return;
+    }
+
+    if (!(len == 0 && reg.config->is_null())) {
+        String message = reg.config->update_from_cstr(payload, len);
+        if (message != "") {
+            response->begin(false);
+            response->write(message.c_str(), message.length());
+            response->flush();
+            response->end("");
+            return;
+        }
+    }
+
+    reg.callback(response, response_ownership, response_owner_id);
 }
 
 void API::addResponse(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor_in_debug_report, std::function<void(IChunkedResponse *, Ownership *, uint32_t)> callback)
@@ -261,9 +292,9 @@ void API::removeAllConfig() {
 }
 
 /*
-void API::addTemporaryConfig(String path, Config *config, std::initializer_list<String> keys_to_censor, uint32_t interval_ms, std::function<void(void)> callback)
+void API::addTemporaryConfig(String path, Config *config, std::initializer_list<String> keys_to_censor, std::function<void(void)> callback)
 {
-    addState(path, config, keys_to_censor, interval_ms);
+    addState(path, config, keys_to_censor);
     addCommand(path + "_update", config, callback);
 }
 */
@@ -290,9 +321,9 @@ bool API::restorePersistentConfig(const String &path, ConfigRoot *config)
     return error == "";
 }
 
-void API::registerDebugUrl(WebServer *server)
+void API::registerDebugUrl()
 {
-    server->on("/debug_report", HTTP_GET, [this](WebServerRequest request) {
+    server.on("/debug_report", HTTP_GET, [this](WebServerRequest request) {
         String result = "{\"uptime\": ";
         result += String(millis());
         result += ",\n \"free_heap_bytes\":";
@@ -359,8 +390,8 @@ void API::registerDebugUrl(WebServer *server)
         return request.send(200, "application/json; charset=utf-8", result.c_str());
     });
 
-    this->addState("info/features", &features, {}, 1000);
-    this->addState("info/version", &version, {}, 1000);
+    this->addState("info/features", &features);
+    this->addState("info/version", &version);
 }
 
 size_t API::registerBackend(IAPIBackend *backend)
@@ -373,52 +404,72 @@ size_t API::registerBackend(IAPIBackend *backend)
 }
 
 String API::callCommand(CommandRegistration &reg, char *payload, size_t len) {
-    if (this->mainTaskHandle == xTaskGetCurrentTaskHandle()) {
+    if (mainTaskHandle == xTaskGetCurrentTaskHandle()) {
         return "Use ConfUpdate overload of callCommand in main thread!";
     }
 
-    std::lock_guard<std::mutex> l{command_mutex};
+    String result = "";
 
-    if (payload == nullptr && !reg.config->is_null())
-        return "empty payload only allowed for null configs";
+    auto await_result = task_scheduler.await(
+        [&result, reg, payload, len]() mutable {
+            if (payload == nullptr && !reg.config->is_null()) {
+                result = "empty payload only allowed for null configs";
+                return;
+            }
 
-    for (auto *backend : backends)
-        backend->disableReceive();
+            if (payload != nullptr) {
+                result = reg.config->update_from_cstr(payload, len);
+                if (result != "")
+                    return;
+            }
 
-    if (task_scheduler.cancel(reg.task_id) == TaskScheduler::CancelResult::Cancelled) {
-        delete reg.config_in_flight;
-        reg.config_in_flight = nullptr;
+            reg.callback(result);
+        });
+
+    if (await_result == TaskScheduler::AwaitResult::Timeout) {
+        return "Failed to execute command: Timeout reached.";
     }
 
-    if (payload != nullptr) {
-        reg.config_in_flight = new Config();
-        String error = reg.config->get_updated_copy(payload, len, reg.config_in_flight);
-        if(error != "") {
-            delete reg.config_in_flight;
-            reg.config_in_flight = nullptr;
+    return result;
+}
 
-            for (auto *backend : backends)
-                backend->enableReceive();
-            return error;
-        }
+void API::callCommandNonBlocking(CommandRegistration &reg, char *payload, size_t len, std::function<void(String)> done_cb) {
+    if (mainTaskHandle == xTaskGetCurrentTaskHandle()) {
+        done_cb("callCommandNonBlocking: Use ConfUpdate overload of callCommand in main thread!");
+        return;
     }
 
-    reg.task_id = task_scheduler.scheduleOnce([this, reg]() mutable {
-        std::lock_guard<std::mutex> l2{command_mutex};
-        if (reg.config_in_flight != nullptr)
-            reg.config->update_from_copy(reg.config_in_flight);
-        reg.callback();
-        delete reg.config_in_flight;
-        reg.config_in_flight = nullptr;
-        for (auto *backend : backends)
-            backend->enableReceive();
-    }, 0);
-    return "";
+    char *cpy = (char *) malloc(len);
+    memcpy(cpy, payload, len);
+
+    task_scheduler.scheduleOnce(
+        [reg, cpy, len, done_cb]() mutable {
+            String result;
+
+            defer {
+                done_cb(result);
+                free(cpy);
+            };
+
+            if ((cpy == nullptr || len == 0) && !reg.config->is_null()) {
+                result = "empty payload only allowed for null configs";
+                return;
+            }
+
+            if (cpy != nullptr) {
+                result = reg.config->update_from_cstr(cpy, len);
+                if (result != "") {
+                    return;
+                }
+            }
+
+            reg.callback(result);
+        }, 0);
 }
 
 String API::callCommand(const char *path, Config::ConfUpdate payload)
 {
-    if (this->mainTaskHandle != xTaskGetCurrentTaskHandle()) {
+    if (mainTaskHandle != xTaskGetCurrentTaskHandle()) {
         return "Use char *, size_t overload of callCommand in non-main thread!";
     }
 
@@ -432,8 +483,8 @@ String API::callCommand(const char *path, Config::ConfUpdate payload)
         if (error != "") {
             return error;
         }
-        reg.callback();
-        return "";
+        reg.callback(error);
+        return error;
     }
 
     return String("Unknown command ") + path;

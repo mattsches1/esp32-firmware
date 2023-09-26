@@ -179,7 +179,13 @@ WebServerRequestReturnProtect Http::api_handler_get(WebServerRequest req)
         if (strcmp(api.states[i].path.c_str(), req.uriCStr() + 1) != 0)
             continue;
 
-        String response = api.states[i].config->to_string_except(api.states[i].keys_to_censor);
+        String response;
+        auto result = task_scheduler.await([&response, i](){
+            response = api.states[i].config->to_string_except(api.states[i].keys_to_censor);
+        });
+        if (result == TaskScheduler::AwaitResult::Timeout)
+            return req.send(500, "text/html", "Failed to get config. Task timed out.");
+
         return req.send(200, "application/json; charset=utf-8", response.c_str());
     }
 
@@ -212,7 +218,13 @@ WebServerRequestReturnProtect Http::api_handler_put(WebServerRequest req) {
             return req.send(400);
         }
 
-        String message = api.raw_commands[i].callback(recv_buf, bytes_written);
+        String message;
+        auto result = task_scheduler.await([&message, i, bytes_written]() {
+            message = api.raw_commands[i].callback(recv_buf, bytes_written);
+        });
+        if (result == TaskScheduler::AwaitResult::Timeout)
+            return req.send(500, "text/html", "Failed to call raw command. Task timed out.");
+
         if (message == "") {
             return req.send(200, "text/html", "");
         }
@@ -232,45 +244,27 @@ WebServerRequestReturnProtect Http::api_handler_put(WebServerRequest req) {
         } else if (bytes_written < 0) {
             logger.printfln("Failed to receive response payload: error code %d", bytes_written);
             return req.send(400);
-        } else if (bytes_written == 0 && api.responses[i].config->is_null()) {
-            uint32_t response_owner_id = response_ownership.current();
-            HTTPChunkedResponse http_response(&req);
-            QueuedChunkedResponse queued_response(&http_response, 500);
-            BufferedChunkedResponse buffered_response(&queued_response);
-            auto &callback = api.responses[i].callback;
-
-            task_scheduler.scheduleOnce([this, &callback, &buffered_response, response_owner_id]{callback(&buffered_response, &response_ownership, response_owner_id);}, 0);
-
-            String error = queued_response.wait();
-
-            if (error != "") {
-                logger.printfln("Response processing failed after receive: %s (%s %s)", error.c_str(), req.methodString(), req.uriCStr());
-            }
-
-            response_ownership.next();
-            return WebServerRequestReturnProtect{};
         }
 
-        String message = api.responses[i].config->update_from_cstr(recv_buf, bytes_written);
-        if (message == "") {
-            uint32_t response_owner_id = response_ownership.current();
-            HTTPChunkedResponse http_response(&req);
-            QueuedChunkedResponse queued_response(&http_response, 500);
-            BufferedChunkedResponse buffered_response(&queued_response);
-            auto &callback = api.responses[i].callback;
+        uint32_t response_owner_id = response_ownership.current();
+        HTTPChunkedResponse http_response(&req);
+        QueuedChunkedResponse queued_response(&http_response, 500);
+        BufferedChunkedResponse buffered_response(&queued_response);
 
-            task_scheduler.scheduleOnce([this, &callback, &buffered_response, response_owner_id]{callback(&buffered_response, &response_ownership, response_owner_id);}, 0);
+        task_scheduler.scheduleOnce(
+            [this, i, bytes_written, &buffered_response, response_owner_id]{
+                api.callResponse(api.responses[i], recv_buf, bytes_written, &buffered_response, &response_ownership, response_owner_id);
+            },
+            0);
 
-            String error = queued_response.wait();
+        String error = queued_response.wait();
 
-            if (error != "") {
-                logger.printfln("Response processing failed after update: %s (%s %s)", error.c_str(), req.methodString(), req.uriCStr());
-            }
-
-            response_ownership.next();
-            return WebServerRequestReturnProtect{};
+        if (error != "") {
+            logger.printfln("Response processing failed after update: %s (%s %s)", error.c_str(), req.methodString(), req.uriCStr());
         }
-        return req.send(400, "text/html", message.c_str());
+
+        response_ownership.next();
+        return WebServerRequestReturnProtect{};
     }
 
     if (req.uri().endsWith("_update")) {
@@ -295,9 +289,9 @@ WebServerRequestReturnProtect Http::api_handler_put(WebServerRequest req) {
 
 void Http::register_urls()
 {
-    server.on("/*", HTTP_GET, [this](WebServerRequest request){return api_handler_get(request);});
-    server.on("/*", HTTP_PUT, [this](WebServerRequest request){return api_handler_put(request);});
-    server.on("/*", HTTP_POST, [this](WebServerRequest request){return api_handler_put(request);});
+    server.on_HTTPThread("/*", HTTP_GET, [this](WebServerRequest request){return api_handler_get(request);});
+    server.on_HTTPThread("/*", HTTP_PUT, [this](WebServerRequest request){return api_handler_put(request);});
+    server.on_HTTPThread("/*", HTTP_POST, [this](WebServerRequest request){return api_handler_put(request);});
 }
 
 void Http::addCommand(size_t commandIdx, const CommandRegistration &reg)

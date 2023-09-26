@@ -153,8 +153,6 @@ public:
     String get_energy_manager_debug_header();
     String get_energy_manager_debug_line();
 
-    void apply_defaults();
-
     bool get_sdcard_info(struct sdcard_info *data);
     bool format_sdcard();
     uint16_t get_energy_meter_detailed_values(float *ret_values);
@@ -219,16 +217,17 @@ private:
     InputPin *input3;
     InputPin *input4;
 
-    uint32_t last_debug_keep_alive                    = 0;
+    uint32_t last_debug_keep_alive               = 0;
     bool     printed_not_seen_all_chargers       = false;
     bool     printed_seen_all_chargers           = false;
+    bool     printed_skipping_energy_update      = false;
     bool     uptime_past_hysteresis              = false;
     uint32_t consecutive_bricklet_errors         = 0;
     bool     bricklet_reachable                  = true;
     SwitchingState switching_state               = SwitchingState::Monitoring;
     uint32_t switching_start                     = 0;
     uint32_t mode                                = 0;
-    uint32_t  have_phases                        = 0;
+    uint32_t have_phases                         = 0;
     bool     wants_3phase                        = false;
     bool     wants_3phase_last                   = false;
     bool     is_on_last                          = false;

@@ -408,7 +408,10 @@ export class ChargeManager extends ConfigComponent<'charge_manager/config', {}, 
                         columnNames={[__("charge_manager.content.table_charger_name"), __("charge_manager.content.table_charger_host")]}
                         rows={state.chargers.map((charger, i) =>
                             { return {
-                                columnValues: [[charger.name], [<a target="_blank" rel="noopener noreferrer" href={(charger.host == '127.0.0.1' || charger.host == 'localhost') ? '/' : "http://" + charger.host}>{charger.host}</a>]],
+                                columnValues: [
+                                    charger.name,
+                                    <a target="_blank" rel="noopener noreferrer" href={(charger.host == '127.0.0.1' || charger.host == 'localhost') ? '/' : "http://" + charger.host}>{charger.host}</a>
+                                ],
                                 editTitle: __("charge_manager.content.edit_charger_title"),
                                 onEditStart: async () => this.setState({editCharger: {name: charger.name.trim(), host: charger.host.trim()}}),
                                 onEditGetRows: () => [
@@ -426,7 +429,7 @@ export class ChargeManager extends ConfigComponent<'charge_manager/config', {}, 
                                                         maxLength={64}
                                                         pattern="^[a-zA-Z0-9\-\.]+$"
                                                         required
-                                                        disabled={!energyManagerMode && i == 0 /* localhost */}
+                                                        disabled={!energyManagerMode && (charger.host == '127.0.0.1' || charger.host == 'localhost')}
                                                         class={check_host(state.editCharger.host, i) != undefined ? "is-invalid" : ""}
                                                         invalidFeedback={check_host(state.editCharger.host, i)}/>
                                     }
@@ -440,7 +443,7 @@ export class ChargeManager extends ConfigComponent<'charge_manager/config', {}, 
                                     this.hackToAllowSave();
                                 },
                                 onEditAbort: async () => this.setState({editCharger: {name: "", host: ""}}),
-                                onRemoveClick: !energyManagerMode && i == 0 /* localhost */ ? undefined : async () => {
+                                onRemoveClick: !energyManagerMode && (charger.host == '127.0.0.1' || charger.host == 'localhost') ? undefined : async () => {
                                     this.setState({chargers: state.chargers.filter((v, idx) => idx != i)});
                                     this.hackToAllowSave();
                                 }

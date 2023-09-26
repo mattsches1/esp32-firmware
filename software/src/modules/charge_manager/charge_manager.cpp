@@ -208,21 +208,20 @@ void ChargeManager::pre_setup()
     }};
     available_phases_update = available_phases;
 
-    control_pilot_disconnect = ConfigRoot{Config::Object({
+    control_pilot_disconnect = Config::Object({
         {"disconnect", Config::Bool(false)},
-    })};
+    });
 
 #if MODULE_CRON_AVAILABLE()
-    ConfUnionPrototype proto;
-    proto.tag = CRON_ACTION_SET_MANAGER_CURRENT;
-    proto.config = Config::Object({
-        {"current", Config::Uint(0)}
-    });
-
-    cron.register_action(proto, [this](const Config *config) {
-        this->available_current.get("current")->updateUint(config->get("current")->asUint());
-        this->last_available_current_update = millis();
-    });
+    cron.register_action(
+        CronActionID::SetManagerCurrent,
+        Config::Object({
+            {"current", Config::Uint(0)}
+        }),
+        [this](const Config *config) {
+            this->available_current.get("current")->updateUint(config->get("current")->asUint());
+            this->last_available_current_update = millis();
+        });
 #endif
 }
 

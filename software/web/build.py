@@ -59,6 +59,7 @@ def main():
         'npx',
         'esbuild',
         'src/main.ts',
+        '--metafile={}'.format(os.path.join(BUILD_DIR, 'meta.json')),
         '--bundle',
         '--minify',
         '--outfile={0}'.format(os.path.join(BUILD_DIR, 'bundle.min.js'))
@@ -68,23 +69,9 @@ def main():
         args += ['--analyze']
 
     if build_args.js_source_map:
-        args += ['--sourcemap']
+        args += ['--sourcemap=inline']
 
     subprocess.check_call(args, shell=sys.platform == 'win32')
-
-    if build_args.js_source_map:
-        with open(os.path.join(BUILD_DIR, 'bundle.min.js'), 'r', encoding='utf-8') as f:
-            js_src = f.read()
-
-        with open(os.path.join(BUILD_DIR, 'bundle.min.js.map'), 'rb') as f:
-            js_map = b64encode(f.read()).decode('ascii')
-
-        os.remove(os.path.join(BUILD_DIR, 'bundle.min.js.map'))
-
-        js_src = js_src.replace('sourceMappingURL=bundle.min.js.map', 'sourceMappingURL=data:text/json;base64,{0}'.format(js_map))
-
-        with open(os.path.join(BUILD_DIR, 'bundle.min.js'), 'w', encoding='utf-8') as f:
-            f.write(js_src)
 
     print('sass...')
     args = [
@@ -101,12 +88,6 @@ def main():
     ]
 
     subprocess.check_call(args, shell=sys.platform == 'win32')
-
-    print('update-browserslist-db...')
-    subprocess.check_call([
-        'npx',
-        'update-browserslist-db'
-    ], shell=sys.platform == 'win32')
 
     print('postcss...')
     subprocess.check_call([

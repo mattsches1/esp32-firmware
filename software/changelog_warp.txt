@@ -382,7 +382,6 @@
 - Improve translations
 - Update timezone database
 - Log connection duration when Ethernet, WiFi, MQTT or WireGuard connection is lost
-- Fix OCPP not reconnecting if a TLS connection was closed by the server immediately after establishing it
 - Reset energy meter only once if requested via Modbus TCP
 - Make sure action requests are never ignored if requested via Modbus TCP
 - Fix broken status page links if charge manager config is changed but not applied
@@ -438,7 +437,7 @@
 - Fix y-axis jump on double click in graphs
 - Auto-scale graph y-axis based on tick text width
 
-<unknown>: 2.1.4 (<unknown>)
+2023-08-23: 2.1.4 (2efbe7c5)
 - Add y-axis label to meter plot
 - Fix loading of RTC time on Sundays
 - Show firmware build time in human readable format
@@ -460,3 +459,9 @@
 - Make ID.3 mode work for state changes that go from C directly to A (through EVSE Bricklet firmware 2.1.6)
 - Wait for at least 30 seconds until contactor is turned on again after leaving state D (through EVSE Bricklet firmware 2.1.6)
 - Wait for at least 5 seconds until contactor is turned on again after charging was stopped (through EVSE Bricklet firmware 2.1.6)
+
+<unknown>: 2.1.5 (<unknown>)
+- Fix WiFi alternative DNS server config
+- Correctly mark WiFi DNS server and alternative NTP server as optional
+- Fix recovery page API call instructions
+- Fix MQTT subscriptions being dropped after (re)connect

@@ -54,20 +54,17 @@ void Rtc::pre_setup()
     });
 
 #if MODULE_CRON_AVAILABLE()
-    ConfUnionPrototype proto;
-    proto.tag = CRON_TRIGGER_CRON;
-    proto.config = Config::Object({
-        {"mday", Config::Int(-1, -1, 31)},
-        {"wday", Config::Int(-1, -1, 7)},
-        {"hour", Config::Int(-1, -1, 23)},
-        {"minute", Config::Int(-1, -1, 59)}
-    });
-
-    cron.register_trigger(proto);
+    cron.register_trigger(
+        CronTriggerID::Cron,
+        Config::Object({
+            {"mday", Config::Int(-1, -1, 31)},
+            {"wday", Config::Int(-1, -1, 7)},
+            {"hour", Config::Int(-1, -1, 23)},
+            {"minute", Config::Int(-1, -1, 59)}
+        })
+    );
 #endif
 }
-
-void Rtc::setup() {}
 
 #if MODULE_CRON_AVAILABLE()
 static bool trigger_action(Config *cfg, void *data) {
@@ -106,29 +103,29 @@ void Rtc::register_backend(IRtcBackend *_backend)
             return;
 
         timeval tv = backend->get_time();
+        if (tv.tv_sec == 0)
+            return;
 
         tm tm;
         gmtime_r(&tv.tv_sec, &tm);
-
-#if MODULE_CRON_AVAILABLE()
-        if (cron.is_trigger_active(CRON_TRIGGER_CRON)) {
-            uint32_t last_minute = time.get("minute")->asUint();
-            if (last_minute < tm.tm_min)
-                cron.trigger_action(CRON_TRIGGER_CRON, &tm, &trigger_action);
-        }
-#endif
 
         time.get("year")->updateUint(tm.tm_year + 1900);
         time.get("month")->updateUint(tm.tm_mon + 1);
         time.get("day")->updateUint(tm.tm_mday);
         time.get("hour")->updateUint(tm.tm_hour);
-        time.get("minute")->updateUint(tm.tm_min);
+        bool minute_changed = time.get("minute")->updateUint(tm.tm_min);
         time.get("second")->updateUint(tm.tm_sec);
         time.get("weekday")->updateUint(tm.tm_wday);
+
+#if MODULE_CRON_AVAILABLE()
+        if (minute_changed && cron.is_trigger_active(CronTriggerID::Cron))
+            cron.trigger_action(CronTriggerID::Cron, &tm, &trigger_action);
+#else
+        (void)minute_changed;
+#endif
     }, 0, 200);
 
     api.addFeature("rtc");
-    initialized = true;
 
     task_scheduler.scheduleWithFixedDelay([this]() {
         update_system_time();
@@ -181,8 +178,8 @@ bool Rtc::action_triggered(Config *conf, void *data) {
     triggered |= !(cfg->get("hour")->asInt() == time_struct->tm_hour || cfg->get("hour")->asInt() == -1);
     triggered |= !(cfg->get("minute")->asInt() == time_struct->tm_min || cfg->get("minute")->asInt() == -1);
 
-    switch (conf->getTag()) {
-        case CRON_TRIGGER_CRON:
+    switch (conf->getTag<CronTriggerID>()) {
+        case CronTriggerID::Cron:
             if (!triggered) {
                 return true;
             }

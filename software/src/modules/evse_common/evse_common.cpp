@@ -138,22 +138,21 @@ void EvseCommon::pre_setup() {
     require_meter_enabled_update = require_meter_enabled;
 
 #if MODULE_CRON_AVAILABLE()
-    ConfUnionPrototype proto;
-    proto.tag = CRON_TRIGGER_IEC_CHANGE;
-    proto.config = Config::Object({
-        {"charger_state", Config::Uint(0, 0, 4)}
-    });
+    cron.register_trigger(
+        CronTriggerID::IECChange,
+        Config::Object({
+            {"charger_state", Config::Uint(0, 0, 4)}
+        }));
 
-    cron.register_trigger(proto);
-
-    proto.tag = CRON_ACTION_SET_CURRENT;
-    proto.config = Config::Object({
-        {"current", Config::Uint(0, 0, 32000)}
-    });
-
-    cron.register_action(proto, [this](const Config *config) {
-        backend->set_charging_slot(CHARGING_SLOT_CRON, config->get("current")->asUint(), true, false);
-    });
+    cron.register_action(
+        CronActionID::SetCurrent,
+        Config::Object({
+            {"current", Config::Uint(0, 0, 32000)}
+        }),
+        [this](const Config *config) {
+            backend->set_charging_slot(CHARGING_SLOT_CRON, config->get("current")->asUint(), true, false);
+        }
+    );
 #endif
 }
 
@@ -207,7 +206,7 @@ void EvseCommon::apply_defaults()
         return;
     }
     // If this is the first start-up, this slot will not be active.
-    // In the old firmwares, the global current was not persistant
+    // In the old firmwares, the global current was not persistent
     // so setting it to 32000 is expected after start-up.
     if (!global_active)
         global_current = 32000;
@@ -272,9 +271,9 @@ void EvseCommon::setup() {
 #if MODULE_CRON_AVAILABLE()
 bool EvseCommon::action_triggered(Config *config, void *data) {
     Config *cfg = (Config*)config->get();
-    switch (config->getTag()) {
-        case CRON_TRIGGER_IEC_CHANGE:
-                if (cfg->get("iec61851_state")->asUint() == state.get("iec61851_state")->asUint())
+    switch (config->getTag<CronTriggerID>()) {
+        case CronTriggerID::IECChange:
+                if (cfg->get("charger_state")->asUint() == state.get("charger_state")->asUint())
                     return true;
             break;
 
@@ -370,12 +369,10 @@ void EvseCommon::register_urls() {
 
 #if MODULE_WS_AVAILABLE()
     server.on("/evse/start_debug", HTTP_GET, [this](WebServerRequest request) {
-        task_scheduler.scheduleOnce([this](){
-            last_debug_keep_alive = millis();
-            check_debug();
-            ws.pushRawStateUpdate(backend->get_evse_debug_header(), "evse/debug_header");
-            debug = true;
-        }, 0);
+        last_debug_keep_alive = millis();
+        check_debug();
+        ws.pushRawStateUpdate(backend->get_evse_debug_header(), "evse/debug_header");
+        debug = true;
         return request.send(200);
     });
 
@@ -385,9 +382,7 @@ void EvseCommon::register_urls() {
     });
 
     server.on("/evse/stop_debug", HTTP_GET, [this](WebServerRequest request){
-        task_scheduler.scheduleOnce([this](){
-            debug = false;
-        }, 0);
+        debug = false;
         return request.send(200);
     });
 #endif
@@ -496,7 +491,7 @@ void EvseCommon::register_urls() {
         if (enabled == external_enabled.get("enabled")->asBool())
             return;
 
-        backend->set_charging_slot_active(CHARGING_SLOT_EXTERNAL, enabled);
+        backend->set_charging_slot(CHARGING_SLOT_EXTERNAL, 32000, enabled, false);
         apply_slot_default(CHARGING_SLOT_EXTERNAL, 32000, enabled, false);
     }, false);
 
@@ -551,14 +546,14 @@ void EvseCommon::register_urls() {
     backend->post_register_urls();
 
 #if MODULE_CRON_AVAILABLE()
-    if (cron.is_trigger_active(CRON_TRIGGER_IEC_CHANGE)) {
+    if (cron.is_trigger_active(CronTriggerID::IECChange)) {
         event.registerEvent("evse/state", {}, [this](Config *cfg) {
 
             // we need this since not only iec state changes trigger this api event.
             static uint32_t last_state = 0;
             uint32_t state_now = cfg->get("charger_state")->asUint();
             if (last_state != state_now) {
-                cron.trigger_action(CRON_TRIGGER_IEC_CHANGE, nullptr, &trigger_action);
+                cron.trigger_action(CronTriggerID::IECChange, nullptr, &trigger_action);
                 last_state = state_now;
             }
         });

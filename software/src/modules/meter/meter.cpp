@@ -57,13 +57,13 @@ void Meter::pre_setup()
     });
 
 #if MODULE_CRON_AVAILABLE()
-    ConfUnionPrototype proto;
-    proto.tag = CRON_ACTION_METER_RESET;
-    proto.config = *Config::Null();
-
-    cron.register_action(proto, [this](const Config *config) {
-        resetMeters();
-    });
+    cron.register_action(
+        CronActionID::MeterReset,
+        *Config::Null(),
+        [this](const Config *config) {
+            resetMeters();
+        }
+    );
 #endif
 }
 

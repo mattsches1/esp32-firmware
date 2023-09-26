@@ -21,6 +21,10 @@
             "username_muted": "optional",
             "password": "Broker password",
             "password_muted": "optional",
+            "topic": "Topic",
+            "payload": "Message",
+            "retain": "Retain message",
+            "accept_retain": "Accept retained messages",
             "topic_prefix": "Topic prefix",
             "topic_prefix_muted": "optional",
             "topic_prefix_invalid": "The topic prefix can not start with $ or contain a # or +.",
@@ -33,7 +37,9 @@
             "auto_discovery_mode_generic": "Generic",
             "auto_discovery_mode_homeassistant": "Home Assistant",
             "auto_discovery_prefix": "Discovery topic prefix",
-            "auto_discovery_prefix_invalid": "The topic prefix can not start with $, contain a # or +, or be empty."
+            "auto_discovery_prefix_invalid": "The topic prefix can not start with $, contain a # or +, or be empty.",
+            "yes": "Yes",
+            "no": "No"
         },
         "script": {
             "save_failed": "Failed to save the MQTT configuration.",

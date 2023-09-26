@@ -34,8 +34,6 @@
 
 #define USERNAME_FILE "/users/all_usernames"
 
-#define MAX_ACTIVE_USERS 17
-
 // We have to do access the evse/evse_v2 configs manually
 // because a lot of the code runs in setup(), i.e. before APIs
 // are registered.
@@ -147,37 +145,6 @@ bool read_user_slot_info(UserSlotInfo *result)
     return result->version == USER_SLOT_INFO_VERSION;
 }
 
-
-volatile bool user_api_blocked = false;
-class RAIIUserApiUnblocker {
-public:
-    RAIIUserApiUnblocker(bool assume_blocked) : released(!assume_blocked) {}
-
-    ~RAIIUserApiUnblocker() {
-        if (!released)
-            user_api_blocked = false;
-
-    }
-
-    bool try_block() {
-        for(int i = 0; i < 50; ++i) {
-            if (!user_api_blocked) {
-                user_api_blocked = true;
-                released = false;
-                return true;
-            }
-            vTaskDelay(100 / portTICK_PERIOD_MS);
-        }
-        return false;
-    }
-
-    void release() {
-        released = true;
-    }
-
-    bool released = false;
-};
-
 void Users::pre_setup()
 {
     config = Config::Object({
@@ -215,11 +182,6 @@ void Users::pre_setup()
         {"username", Config::Str("", 0, USERNAME_LENGTH)},
         {"digest_hash", Config::Str("", 0, 32)},
     }), [this](Config &add) -> String {
-        RAIIUserApiUnblocker unblocker{false};
-
-        if (!unblocker.try_block())
-            return "Still applying the last operation. Please retry.";
-
         if (config.get("next_user_id")->asUint() == 0)
             return "Can't add user. All user IDs in use.";
 
@@ -244,8 +206,6 @@ void Users::pre_setup()
             }
         }
 
-        // Keep blocked for the users/add callback
-        unblocker.release();
         return "";
     });
     add.permit_null_updates = false;
@@ -253,18 +213,11 @@ void Users::pre_setup()
     remove = ConfigRoot(Config::Object({
         {"id", Config::Uint8(0)}
     }), [this](Config &remove) -> String {
-        RAIIUserApiUnblocker unblocker{false};
-
-        if (!unblocker.try_block())
-            return "Still applying the last operation. Please retry.";
-
         if (remove.get("id")->asUint() == 0)
             return "The anonymous user can't be removed.";
 
         for (int i = 0; i < config.get("users")->count(); ++i) {
             if (config.get("users")->get(i)->get("id")->asUint() == remove.get("id")->asUint()) {
-                // Keep blocked for the users/add callback
-                unblocker.release();
                 return "";
             }
         }
@@ -416,7 +369,7 @@ void Users::setup()
             return;
         }
 
-        server.setAuthentication([this](WebServerRequest req) -> bool {
+        server.onAuthenticate_HTTPThread([this](WebServerRequest req) -> bool {
             String auth = req.header("Authorization");
             if (auth == "") {
                 return false;
@@ -429,12 +382,19 @@ void Users::setup()
             auth = auth.substring(7);
             AuthFields fields = parseDigestAuth(auth.c_str());
 
-            for (int i = 0; i < config.get("users")->count(); ++i) {
-                if (config.get("users")->get(i)->get("username")->asString().equals(fields.username))
-                    return checkDigestAuthentication(fields, req.methodString(), fields.username.c_str(), config.get("users")->get(i)->get("digest_hash")->asEphemeralCStr(), nullptr, true, nullptr, nullptr, nullptr); // use of emphemeral C string ok
-            }
+            bool result = false;
 
-            return false;
+            // If this times out, result stays false.
+            task_scheduler.await([this, &req, &fields, &result]() {
+                for (int i = 0; i < config.get("users")->count(); ++i) {
+                    if (config.get("users")->get(i)->get("username")->asString().equals(fields.username)) {
+                        result = checkDigestAuthentication(fields, req.methodString(), fields.username.c_str(), config.get("users")->get(i)->get("digest_hash")->asEphemeralCStr(), nullptr, true, nullptr, nullptr, nullptr); // use of emphemeral C string ok
+                        break;
+                    }
+                }
+            });
+
+            return result;
         });
 
         logger.printfln("Web interface authentication enabled.");
@@ -515,11 +475,6 @@ void Users::register_urls()
     }
 
     api.addRawCommand("users/modify", [this](char *c, size_t s) -> String {
-        RAIIUserApiUnblocker unblocker{false};
-
-        if (!unblocker.try_block())
-            return "Still applying the last operation. Please retry.";
-
         StaticJsonDocument<96> doc;
 
         DeserializationError error = deserializeJson(doc, c, s);
@@ -659,26 +614,16 @@ void Users::register_urls()
         if (err != "")
             return err;
 
-        // Keep blocked for the task below
-        unblocker.release();
+        API::writeConfig("users/config", &config);
 
-        task_scheduler.scheduleOnce([this, display_name_changed, username_changed, user](){
-            // Blocked in users/modify raw command handler
-            RAIIUserApiUnblocker inner_unblocker{true};
-            API::writeConfig("users/config", &config);
-
-            if (display_name_changed || username_changed)
-                this->rename_user(user->get("id")->asUint(), user->get("username")->asString(), user->get("display_name")->asString());
-        }, 0);
+        if (display_name_changed || username_changed)
+            this->rename_user(user->get("id")->asUint(), user->get("username")->asString(), user->get("display_name")->asString());
 
         return "";
     }, true);
 
     api.addState("users/config", &config, {"digest_hash"}, 1000);
     api.addCommand("users/add", &add, {"digest_hash"}, [this](){
-        // Blocked in users/add validator
-        RAIIUserApiUnblocker inner_unblocker{true};
-
         config.get("users")->add();
         Config *user = (Config *)config.get("users")->get(config.get("users")->count() - 1);
 
@@ -696,9 +641,6 @@ void Users::register_urls()
     }, true);
 
     api.addCommand("users/remove", &remove, {}, [this](){
-        // Blocked in users/remove validator
-        RAIIUserApiUnblocker inner_unblocker{true};
-
         int idx = -1;
         for(int i = 0; i < config.get("users")->count(); ++i) {
             if (config.get("users")->get(i)->get("id")->asUint() == remove.get("id")->asUint()) {
@@ -742,13 +684,13 @@ void Users::register_urls()
     api.addCommand("users/http_auth_update", &http_auth_update, {}, [this](){
         bool enable = http_auth_update.get("enabled")->asBool();
         if (!enable)
-            server.setAuthentication([](WebServerRequest req){return true;});
+            server.onAuthenticate_HTTPThread([](WebServerRequest req){return true;});
 
         config.get("http_auth_enabled")->updateBool(enable);
         API::writeConfig("users/config", &config);
     }, false);
 
-    server.on("/users/all_usernames", HTTP_GET, [this](WebServerRequest request) {
+    server.on_HTTPThread("/users/all_usernames", HTTP_GET, [this](WebServerRequest request) {
         //std::lock_guard<std::mutex> lock{records_mutex};
         size_t len = MAX_PASSIVE_USERS * USERNAME_ENTRY_LENGTH;
         auto buf = heap_alloc_array<char>(len);

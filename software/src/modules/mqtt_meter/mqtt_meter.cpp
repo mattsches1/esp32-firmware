@@ -52,13 +52,13 @@ void MqttMeter::setup()
 
     api.restorePersistentConfig("mqtt_meter/config", &config);
 
-    enabled = config.get("enable")->asBool();
+    bool enabled = config.get("enable")->asBool();
     const String &source_meter_path = config.get("source_meter_path")->asString();
 
     if (!enabled || source_meter_path.isEmpty())
         return;
 
-    source_meter_values_topic = source_meter_path + "/values";
+    logger.printfln("mqtt_meter: Please ignore any log messages about ignored retained messages on values and all_values.");
 
     // Ignoring retained message. Need fresh data for the meter.
     mqtt.subscribe(source_meter_path + "/values",
@@ -82,7 +82,7 @@ void MqttMeter::setup()
 
 void MqttMeter::register_urls()
 {
-    api.addPersistentConfig("mqtt_meter/config", &config, {}, 1000);
+    api.addPersistentConfig("mqtt_meter/config", &config);
 }
 
 void MqttMeter::onMessage(const char *topic, size_t topic_len, char *data, size_t data_len, void (MqttMeter::*message_handler)(const JsonDocument &doc)) {
@@ -162,10 +162,6 @@ void MqttMeter::handle_mqtt_all_values(const JsonDocument &doc)
     all_values[METER_ALL_VALUES_CURRENT_L2_A] -= pv_phase_current;
     all_values[METER_ALL_VALUES_CURRENT_L3_A] -= pv_phase_current;
     all_values[METER_ALL_VALUES_TOTAL_SYSTEM_POWER_W] -= pv_power; // METER_ALL_VALUES_TOTAL_SYSTEM_POWER_DEMAND_W ?
-
-    // hide import/export energy to make the energy manager use its own energy calculation
-    all_values[METER_ALL_VALUES_TOTAL_IMPORT_KWH] = NAN;
-    all_values[METER_ALL_VALUES_TOTAL_EXPORT_KWH] = NAN;
 #endif
 
     meter.updateMeterAllValues(all_values);

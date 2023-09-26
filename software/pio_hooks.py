@@ -6,9 +6,7 @@ if sys.hexversion < 0x3060000:
     print('Error: Python >= 3.6 required')
     sys.exit(1)
 
-from collections import namedtuple
 import configparser
-import functools
 import os
 import shutil
 import subprocess
@@ -21,40 +19,6 @@ from zlib import crc32
 import util
 
 from hyphenations import hyphenations, allowed_missing
-
-NameFlavors = namedtuple('NameFlavors', 'space lower camel headless under upper dash camel_abbrv lower_no_space camel_constant_safe')
-
-class FlavoredName(object):
-    def __init__(self, name):
-        self.words = name.split(' ')
-        self.cache = {}
-
-    def get(self, skip=0, suffix=''):
-        key = str(skip) + ',' + suffix
-
-        try:
-            return self.cache[key]
-        except KeyError:
-            if skip < 0:
-                words = self.words[:skip]
-            else:
-                words = self.words[skip:]
-
-            words[-1] += suffix
-
-            self.cache[key] = NameFlavors(' '.join(words), # space
-                                          ' '.join(words).lower(), # lower
-                                          ''.join(words), # camel
-                                          ''.join([words[0].lower()] + words[1:]), # headless
-                                          '_'.join(words).lower(), # under
-                                          '_'.join(words).upper(), # upper
-                                          '-'.join(words).lower(), # dash
-                                          ''.join([word.capitalize() for word in words]),  # camel_abbrv; like camel, but produces GetSpiTfp... instead of GetSPITFP...
-                                          ''.join(words).lower(),
-                                          # camel_constant_safe; inserts '_' between digit-words to disambiguate between 1,1ms and 11ms
-                                          functools.reduce(lambda l, r: l + '_' + r if (l[-1].isdigit() and r[0].isdigit()) else l + r, words))
-
-            return self.cache[key]
 
 # use "with ChangedDirectory('/path/to/abc')" instead of "os.chdir('/path/to/abc')"
 class ChangedDirectory(object):
@@ -159,7 +123,7 @@ def generate_module_dependencies_header(info_path, header_path, backend_module, 
 
             allow_nonexist = config['Dependencies'].getboolean('AllowNonexist', False)
 
-            known_keys = set(['requires', 'optional', 'after', 'before', 'modulelist'])
+            known_keys = set(['requires', 'optional', 'conflicts', 'after', 'before', 'modulelist'])
             unknown_keys = set(config['Dependencies'].keys()).difference(known_keys)
             if len(unknown_keys) > 0:
                 print(f"Error: '{backend_module.under}/module.ini contains unknown keys {unknown_keys}  ", file=sys.stderr)
@@ -201,6 +165,20 @@ def generate_module_dependencies_header(info_path, header_path, backend_module, 
                             sys.exit(1)
                         available_optional_mods.append(opt_module)
                     all_optional_mods_upper.append(opt_name_upper)
+
+            conflicts = config['Dependencies'].get('Conflicts')
+            if conflicts is not None:
+                conflicts = conflicts.splitlines()
+                old_len = len(conflicts)
+                conflicts = list(dict.fromkeys(conflicts))
+                if len(conflicts) != old_len:
+                    print(f"List of conflicting modules for module '{module_name}' contains duplicates.", file=sys.stderr)
+                for conflict_name in conflicts:
+                    conflict_module, _ = find_backend_module_space(backend_modules, conflict_name)
+                    if conflict_module:
+                        print(f"Error: Module '{module_name}' conflicts with module '{conflict_name}'.", file=sys.stderr)
+                        sys.exit(1)
+
 
             if backend_module:
                 cur_module_index = backend_modules.index(backend_module)
@@ -601,15 +579,24 @@ def main():
     with open(os.path.join(env.subst('$BUILD_DIR'), 'firmware_basename'), 'w', encoding='utf-8') as f:
         f.write(firmware_basename)
 
-    frontend_modules = [FlavoredName(x).get() for x in env.GetProjectOption("custom_frontend_modules").splitlines()]
+    frontend_modules = [util.FlavoredName(x).get() for x in env.GetProjectOption("custom_frontend_modules").splitlines()]
     if nightly:
-        frontend_modules.append(FlavoredName("Nightly").get())
+        frontend_modules.append(util.FlavoredName("Nightly").get())
+        frontend_modules.append(util.FlavoredName("Debug").get())
 
     branding_module = find_branding_module(frontend_modules)
 
+    metadata = json.dumps({
+        'frontend_modules': [frontend_module.under for frontend_module in frontend_modules]
+    }, separators=(',', ':'))
+
     # Handle backend modules
     excluded_backend_modules = list(os.listdir('src/modules'))
-    backend_modules = [FlavoredName(x).get() for x in env.GetProjectOption("custom_backend_modules").splitlines()]
+    backend_modules = [util.FlavoredName(x).get() for x in env.GetProjectOption("custom_backend_modules").splitlines()]
+
+    if nightly:
+        backend_modules.append(util.FlavoredName("Debug").get())
+
     for backend_module in backend_modules:
         mod_path = os.path.join('src', 'modules', backend_module.under)
 
@@ -624,6 +611,7 @@ def main():
             environ = dict(os.environ)
             environ['PLATFORMIO_PROJECT_DIR'] = env.subst('$PROJECT_DIR')
             environ['PLATFORMIO_BUILD_DIR'] = env.subst('$BUILD_DIR')
+            environ['PLATFORMIO_METADATA'] = metadata
 
             abs_branding_module = os.path.abspath(branding_module)
             with ChangedDirectory(mod_path):
@@ -692,6 +680,7 @@ def main():
             environ = dict(os.environ)
             environ['PLATFORMIO_PROJECT_DIR'] = env.subst('$PROJECT_DIR')
             environ['PLATFORMIO_BUILD_DIR'] = env.subst('$BUILD_DIR')
+            environ['PLATFORMIO_METADATA'] = metadata
 
             abs_branding_module = os.path.abspath(branding_module)
             with ChangedDirectory(mod_path):

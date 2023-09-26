@@ -466,9 +466,9 @@ void ChargeTracker::setup()
     updateState();
 }
 
-bool user_configured(uint8_t user_id) {
-    for(int i = 0; i < users.config.get("users")->count(); ++i) {
-        if (users.config.get("users")->get(i)->get("id")->asUint() == user_id) {
+bool user_configured(const uint8_t configured_users[MAX_ACTIVE_USERS], uint8_t user_id) {
+    for(int i = 0; i < MAX_ACTIVE_USERS; ++i) {
+        if (configured_users[i] == user_id) {
             return true;
         }
     }
@@ -493,10 +493,16 @@ static size_t timestamp_min_to_date_time_string(char buf[17], uint32_t timestamp
     return sprintf(buf, "%2.2i.%2.2i.%4.4i %2.2i:%2.2i", t.tm_mday, t.tm_mon + 1, t.tm_year + 1900, t.tm_hour, t.tm_min);
 }
 
+static int get_display_name(uint8_t user_id, char *ret_buf) {
+    int result = 0;
+    task_scheduler.await([&result, user_id, ret_buf](){result = users.get_display_name(user_id, ret_buf);});
+    return result;
+}
+
 static char *tracked_charge_to_string(char *buf, ChargeStart cs, ChargeEnd ce, bool english, uint32_t electricity_price) {
     buf += 1 + timestamp_min_to_date_time_string(buf, cs.timestamp_minutes, english);
 
-    users.get_display_name(cs.user_id, buf);
+    get_display_name(cs.user_id, buf);
     buf += 1 + strnlen(buf, DISPLAY_NAME_LENGTH);
 
     if (charged_invalid(cs, ce)) {
@@ -663,7 +669,7 @@ void ChargeTracker::register_urls()
 {
     api.addPersistentConfig("charge_tracker/config", &config, {}, 1000);
 
-    server.on("/charge_tracker/charge_log", HTTP_GET, [this](WebServerRequest request) {
+    server.on_HTTPThread("/charge_tracker/charge_log", HTTP_GET, [this](WebServerRequest request) {
         std::lock_guard<std::mutex> lock{records_mutex};
 
         auto url_buf = heap_alloc_array<char>(CHARGE_RECORD_MAX_FILE_SIZE);
@@ -692,21 +698,11 @@ void ChargeTracker::register_urls()
     api.addState("charge_tracker/last_charges", &last_charges, {}, 1000);
     api.addState("charge_tracker/current_charge", &current_charge, {}, 1000);
     api.addState("charge_tracker/state", &state, {}, 1000);
-    api.addRawCommand("charge_tracker/remove_all_charges", [this](char *c, size_t s) -> String {
-        StaticJsonDocument<16> doc;
 
-        DeserializationError error = deserializeJson(doc, c, s);
-
-        if (error) {
-            return "Failed to deserialize string: " + String(error.c_str());
-        }
-
-        if (!doc["do_i_know_what_i_am_doing"].is<bool>()) {
-            return "you don't seem to know what you are doing";
-        }
-
-        if (!doc["do_i_know_what_i_am_doing"].as<bool>()) {
-            return "Charges will NOT be removed";
+    api.addCommand("charge_tracker/remove_all_charges", Config::Confirm(), {Config::ConfirmKey()}, [this](String &result){
+        if (!Config::Confirm()->get(Config::ConfirmKey())->asBool()) {
+            result = "Tracked charges will NOT be removed";
+            return;
         }
 
         task_scheduler.scheduleOnce([](){
@@ -715,10 +711,9 @@ void ChargeTracker::register_urls()
             users.remove_username_file();
             ESP.restart();
         }, 3000);
-        return "";
     }, true);
 
-    server.on("/charge_tracker/pdf", HTTP_PUT, [this](WebServerRequest request) {
+    server.on_HTTPThread("/charge_tracker/pdf", HTTP_PUT, [this](WebServerRequest request) {
         logger.printfln("Beginning PDF generation. Please ignore timeout errors (rc -1 etc.) for the next minute!");
         #define USER_FILTER_ALL_USERS -2
         #define USER_FILTER_DELETED_USERS -1
@@ -771,13 +766,13 @@ void ChargeTracker::register_urls()
             }
         }
 
-        char stats_buf[384];//42  9 "Wallbox: " + 32 display name + \0
+        char stats_buf[384];//55  9 "Wallbox: " + 32 display name + 13 " (warp2-AbCd)" + \0
                             //31  13 "Exportiert am " + 17 (date time + \0)
                             //55  22  "Exportierte Benutzer: " + 32 display name + \0
                             //63  "Exportierter Zeitraum: Aufzeichnungsbeginn - Aufzeichnungsende" + \0
                             //60  41 "Gesamtenergie exportierter Ladevorgänge: " + 19 "999.999.999,999kWh" + \0
                             //50 "Gesamtbetrag 99999.99€ (Strompreis 123.45 ct/kWh)" + \0
-                            //= 301
+                            //= 314
 
 
         double charged_sum = 0;
@@ -792,7 +787,21 @@ void ChargeTracker::register_urls()
 
         std::lock_guard<std::mutex> lock{records_mutex};
 
-        uint32_t electricity_price = this->config.get("electricity_price")->asUint();
+        uint8_t configured_users[MAX_ACTIVE_USERS] = {};
+        uint32_t electricity_price;
+        String dev_name;
+        auto await_result = task_scheduler.await([this, configured_users, &electricity_price, &dev_name]() mutable {
+            electricity_price = this->config.get("electricity_price")->asUint();
+            for(int i = 0; i < users.config.get("users")->count(); ++i) {
+                configured_users[i] = users.config.get("users")->get(i)->get("id")->asUint();
+            }
+            dev_name = device_name.display_name.get("display_name")->asString();
+            if (device_name.display_name.get("display_name")->asString() != device_name.name.get("name")->asString())
+                dev_name += " (" + device_name.name.get("name")->asString() + ")";
+        });
+        if (await_result == TaskScheduler::AwaitResult::Timeout)
+            return request.send(500, "text/plain", "Failed to generate PDF: Task timed out");
+
 
         {
             char charge_buf[sizeof(ChargeStart) + sizeof(ChargeEnd)];
@@ -828,7 +837,7 @@ void ChargeTracker::register_urls()
                         goto search_done;
                     }
 
-                    bool include_user = user_filter == USER_FILTER_ALL_USERS || (user_filter == USER_FILTER_DELETED_USERS && !user_configured(cs.user_id)) || cs.user_id == user_filter;
+                    bool include_user = user_filter == USER_FILTER_ALL_USERS || (user_filter == USER_FILTER_DELETED_USERS && !user_configured(configured_users, cs.user_id)) || cs.user_id == user_filter;
                     if (!include_user)
                         continue;
 
@@ -856,7 +865,7 @@ void ChargeTracker::register_urls()
 search_done:
 
         char *stats_head = stats_buf;
-        stats_head += 1 + sprintf(stats_head, "%s: %s", english ? "Charger" : "Wallbox", device_name.display_name.get("display_name")->asEphemeralCStr());
+        stats_head += 1 + sprintf(stats_head, "%s: %s", english ? "Charger" : "Wallbox", dev_name.c_str());
 
         stats_head += sprintf(stats_head, "%s: ", english ? "Exported on" : "Exportiert an");
         stats_head += 1 + timestamp_min_to_date_time_string(stats_head, current_timestamp_min, english);
@@ -867,7 +876,7 @@ search_done:
         else if (user_filter == -1)
             stats_head += sprintf(stats_head, "%s", english ? "deleted users" : "Gelöschte Benutzer");
         else
-            stats_head += users.get_display_name(user_filter, stats_head);
+            stats_head += get_display_name(user_filter, stats_head);
         ++stats_head;
 
         stats_head += sprintf(stats_head, "%s: ", english ? "Exported period" : "Exportierter Zeitraum");
@@ -958,7 +967,8 @@ search_done:
                             &current_file,
                             &current_charge,
                             electricity_price,
-                            english]
+                            english,
+                            configured_users]
                            (const char * * table_lines) {
             memset(table_lines_buffer, 0, ARRAY_SIZE(table_lines_buffer));
 
@@ -989,7 +999,7 @@ search_done:
                     memcpy(&ce, charge_buf + sizeof(ChargeStart), sizeof(ChargeEnd));
 
                     // No need to filter via start/end: we already know the first and last charge to be shown.
-                    bool include_user = user_filter == USER_FILTER_ALL_USERS || (user_filter == USER_FILTER_DELETED_USERS && !user_configured(cs.user_id)) || cs.user_id == user_filter;
+                    bool include_user = user_filter == USER_FILTER_ALL_USERS || (user_filter == USER_FILTER_DELETED_USERS && !user_configured(configured_users, cs.user_id)) || cs.user_id == user_filter;
                     if (!include_user)
                         continue;
 

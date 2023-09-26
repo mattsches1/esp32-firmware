@@ -31,7 +31,9 @@ Task::Task(std::function<void(void)> fn, uint64_t task_id, uint32_t first_run_de
           task_id(task_id),
           next_deadline_ms(millis() + first_run_delay_ms),
           delay_ms(delay_ms),
-          once(once) {
+          awaited_by(nullptr),
+          once(once),
+          cancelled(false) {
 
 }
 
@@ -83,9 +85,20 @@ bool TaskQueue::removeByTaskID(uint64_t task_id)  {
     return true;
 }
 
+Task *TaskQueue::findByTaskID(uint64_t task_id) {
+    auto it = std::find_if(this->c.begin(), this->c.end(), [task_id](const std::unique_ptr<Task> &t){return t->task_id == task_id;});
+
+    if (it == this->c.end()) {
+        // not found
+        return nullptr;
+    }
+
+    return it->get();
+}
+
 void TaskScheduler::pre_setup()
 {
-    mainTaskHandle = xTaskGetCurrentTaskHandle();
+    mainThreadHandle = xTaskGetCurrentTaskHandle();
 }
 
 void TaskScheduler::setup()
@@ -99,7 +112,7 @@ void TaskScheduler::register_urls()
 
 void TaskScheduler::loop()
 {
-    // We can't use defer to clean up currenTask on function level,
+    // We can't use defer to clean up currentTask on function level,
     // because we have to make sure currentTask is only written
     // while the task_mutex is locked.
 
@@ -115,8 +128,12 @@ void TaskScheduler::loop()
 
         this->currentTask = tasks.top_and_pop();
 
-        bool cancelled = this->currentTask->task_id == 0;
-        if (cancelled) {
+        if (this->currentTask->cancelled) {
+            if (this->currentTask->awaited_by != nullptr) {
+                xTaskNotifyGive(this->currentTask->awaited_by);
+                this->currentTask->awaited_by = nullptr;
+            }
+
             this->currentTask = nullptr;
             return;
         }
@@ -135,13 +152,17 @@ void TaskScheduler::loop()
         std::lock_guard<std::mutex> l{this->task_mutex};
         defer {this->currentTask = nullptr;};
 
+        if (this->currentTask->awaited_by != nullptr) {
+            xTaskNotifyGive(this->currentTask->awaited_by);
+            this->currentTask->awaited_by = nullptr;
+        }
+
         if (this->currentTask->once) {
             return;
         }
 
         // Check whether a repeated task was cancelled while it was being executed.
-        bool cancelled = this->currentTask->task_id == 0;
-        if (cancelled) {
+        if (this->currentTask->cancelled) {
             return;
         }
 
@@ -168,12 +189,9 @@ uint64_t TaskScheduler::scheduleWithFixedDelay(std::function<void(void)> &&fn, u
 }
 
 TaskScheduler::CancelResult TaskScheduler::cancel(uint64_t task_id) {
-    if (task_id == 0)
-        return TaskScheduler::CancelResult::NotFound;
-
     std::lock_guard<std::mutex> l{this->task_mutex};
     if (this->currentTask && this->currentTask->task_id == task_id) {
-        this->currentTask->task_id = 0;
+        this->currentTask->cancelled = true;
         return TaskScheduler::CancelResult::WillBeCancelled;
     }
     else
@@ -183,7 +201,7 @@ TaskScheduler::CancelResult TaskScheduler::cancel(uint64_t task_id) {
 uint64_t TaskScheduler::currentTaskId() {
     // currentTaskId is intended to write a self-canceling task.
     // Don't allow other threads to cancel tasks without knowing their ID.
-    if (this->mainTaskHandle != xTaskGetCurrentTaskHandle()) {
+    if (this->mainThreadHandle != xTaskGetCurrentTaskHandle()) {
         logger.printfln("Calling TaskScheduler::currentTask is only allowed in the main thread!");
         return 0;
     }
@@ -192,4 +210,67 @@ uint64_t TaskScheduler::currentTaskId() {
     if (this->currentTask != nullptr)
         return this->currentTask->task_id;
     return 0;
+}
+
+TaskScheduler::AwaitResult TaskScheduler::await(uint64_t task_id, uint32_t millis_to_wait) {
+    if (millis_to_wait == 0) {
+        logger.printfln("Calling TaskScheduler::await with millis_to_wait == 0 is not allowed. This is not scheduleOnce!");
+        return TaskScheduler::AwaitResult::Error;
+    }
+
+    TaskHandle_t thisThread = xTaskGetCurrentTaskHandle();
+
+    if (this->mainThreadHandle == thisThread) {
+        logger.printfln("Calling TaskScheduler::await is not allowed in the main thread!");
+        return TaskScheduler::AwaitResult::Error;
+    }
+
+    {
+        std::lock_guard<std::mutex> l{this->task_mutex};
+        // The awaited task either
+        // - is in the queue
+        // - is currently running, i.e. not in the queue but in this->currentTask
+        // - or was already executed, canceled or not yet created,
+        //   i.e. not in the queue and not in this->currentTask
+        Task *task = nullptr;
+
+        if (this->currentTask != nullptr && this->currentTask->task_id == task_id)
+            task = this->currentTask.get();
+        else
+            task = tasks.findByTaskID(task_id);
+
+        if (task == nullptr)
+            return TaskScheduler::AwaitResult::Done;
+
+        if (!task->once) {
+            logger.printfln("Calling TaskScheduler::await is not allowed for a non-single-shot task");
+            return TaskScheduler::AwaitResult::Error;
+        }
+
+        if (task->awaited_by != nullptr) {
+            logger.printfln("Task is already awaited by another thread!");
+            return TaskScheduler::AwaitResult::Error;
+        }
+
+        xTaskNotifyStateClear(thisThread);
+        task->awaited_by = thisThread;
+    }
+
+    if (ulTaskNotifyTake(true, pdMS_TO_TICKS(millis_to_wait)) == 0) {
+        switch(this->cancel(task_id)) {
+            case TaskScheduler::CancelResult::WillBeCancelled:
+                esp_system_abort("Awaited task timed out and can't be cancelled. Giving up.");
+                return TaskScheduler::AwaitResult::Timeout;
+            case TaskScheduler::CancelResult::Cancelled:
+                return TaskScheduler::AwaitResult::Timeout;
+            case  TaskScheduler::CancelResult::NotFound:
+                return TaskScheduler::AwaitResult::Done;
+        }
+    }
+
+    return TaskScheduler::AwaitResult::Done;
+}
+
+TaskScheduler::AwaitResult TaskScheduler::await(std::function<void(void)> &&fn, uint32_t millis_to_wait) {
+    return task_scheduler.await(task_scheduler.scheduleOnce(std::move(fn), 0), millis_to_wait);
 }

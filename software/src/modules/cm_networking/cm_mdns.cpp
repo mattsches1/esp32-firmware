@@ -25,6 +25,7 @@
 #include "api.h"
 #include "event_log.h"
 #include "task_scheduler.h"
+#include "tools.h"
 #include "cool_string.h"
 #include "web_server.h"
 
@@ -50,7 +51,7 @@ void CMNetworking::register_urls()
         start_scan();
     }, true);
 
-    server.on("/charge_manager/scan_result", HTTP_GET, [this](WebServerRequest request) {
+    server.on_HTTPThread("/charge_manager/scan_result", HTTP_GET, [this](WebServerRequest request) {
         String result = cm_networking.get_scan_results();
 
         if (result == "In progress or not started")
@@ -99,7 +100,7 @@ void CMNetworking::resolve_hostname(uint8_t charger_idx)
     }
 
     ip_addr_t ip;
-    int err = dns_gethostbyname_addrtype(hostnames[charger_idx].c_str(), &ip, dns_callback, &resolve_state[charger_idx], LWIP_DNS_ADDRTYPE_IPV4);
+    int err = dns_gethostbyname_addrtype_lwip_ctx(hostnames[charger_idx].c_str(), &ip, dns_callback, &resolve_state[charger_idx], LWIP_DNS_ADDRTYPE_IPV4);
 
     if (err == ERR_VAL)
         logger.printfln("Charge manager has charger configured with hostname %s, but no DNS server is configured!", hostnames[charger_idx].c_str());
@@ -281,7 +282,7 @@ void CMNetworking::add_scan_result_entry(mdns_result_t *entry, TFJsonSerializer 
         json.add("ip", buf);
 
         json.add("display_name", display_name);
-        json.add("error", error);
+        json.add("error", (uint64_t)error);
     json.endObject();
 }
 
