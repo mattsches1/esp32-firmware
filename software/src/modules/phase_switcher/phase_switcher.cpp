@@ -103,7 +103,9 @@ void PhaseSwitcher::setup()
         return;
     }
 
-    power_hist.setup();
+    available_charging_power_history.setup();
+    actual_charging_power_history.setup();
+    requested_phases_history.setup();
 
     api.restorePersistentConfig("phase_switcher/config", &api_config);
     api_config_in_use = api_config;
@@ -201,7 +203,9 @@ void PhaseSwitcher::register_urls()
         start_quick_charging();
     }, true);
 
-    power_hist.register_urls("phase_switcher");
+    available_charging_power_history.register_urls("phase_switcher_available_charging_power");
+    actual_charging_power_history.register_urls("phase_switcher_actual_charging_power");
+    requested_phases_history.register_urls("phase_switcher_requested_phases");
 
     server.on("/phase_switcher/start_debug", HTTP_GET, [this](WebServerRequest request) {
         task_scheduler.scheduleOnce([this](){
@@ -770,7 +774,8 @@ void PhaseSwitcher::contactor_check()
 void PhaseSwitcher::update_all_data()
 {
     // state
-    api_state.get("available_charging_power")->updateUint(api_available_charging_power.get("power")->asUint());
+    // api_state.get("available_charging_power")->updateUint(api_available_charging_power.get("power")->asUint());
+    api_state.get("available_charging_power")->updateUint(available_charging_power);
     api_state.get("requested_phases")->updateUint(requested_phases);
     api_state.get("requested_phases_pending")->updateUint(requested_phases_pending);
     api_state.get("active_phases")->updateUint(get_active_phases());
@@ -813,21 +818,18 @@ void PhaseSwitcher::update_all_data()
         api_low_level_state.get("current_off_delay_time")->get(i)->updateUint(delay_timer[i].current_value_off_delay / 1000);
     }
 
-    power_hist.add_sample(available_charging_power);
+    
+    // chart
+    int16_t actual_charging_power = -1;
+    if (modbus_meter.initialized){
+        static Config *meter_values = api.getState("meter/values", false);
+
+        if (meter_values != nullptr)
+            actual_charging_power = meter_values->get("power")->asFloat();
+    }
+    available_charging_power_history.add_sample(available_charging_power);
+    actual_charging_power_history.add_sample(actual_charging_power);
+    requested_phases_history.add_sample(requested_phases * 230 * 6);
 
 }
 
-// void PhaseSwitcher::update_history()
-// {
-//     int16_t actual_charging_power = -1;
-//     if (modbus_meter.initialized){
-//         static Config *meter_values = api.getState("meter/values", false);
-
-//         if (meter_values != nullptr)
-//             actual_charging_power = meter_values->get("power")->asFloat();
-//     }
-
-//     requested_power_history.push((int16_t)available_charging_power);
-//     charging_power_history.push((int16_t)(actual_charging_power));
-//     active_phases_history.push((int16_t)(requested_phases * 230 * 6));
-// }

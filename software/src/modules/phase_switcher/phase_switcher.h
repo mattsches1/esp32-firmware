@@ -123,6 +123,7 @@ private:
     void write_outputs();
     void contactor_check();
     void update_all_data();
+    void update_history();
     
     QuadRelayBricklet quad_relay_bricklet = QuadRelayBricklet(
             TF_INDUSTRIAL_QUAD_RELAY_V2_DEVICE_IDENTIFIER,
@@ -167,7 +168,9 @@ private:
     uint8_t auto_start_charging;
     bool contactor_error;
 
-    ValueHistory power_hist;
+    ValueHistory available_charging_power_history;
+    ValueHistory actual_charging_power_history;
+    ValueHistory requested_phases_history;
 
 };
                                     
