@@ -7,7 +7,9 @@ let x = {
             "connecting": "Connecting",
             "connected": "Connected",
             "error": "Error",
-            "status": "State"
+            "status": "OCPP state",
+            "waiting_for_tag": "Waiting for NFC tag ",
+            "waiting_for_cable": "Waiting for Cable connection "
         },
         "navbar": {
             "ocpp": "OCPP"
@@ -22,6 +24,8 @@ let x = {
             "enable_auth": "Authorization enabled",
             "enable_auth_desc": "Sends the configured password or 40 character long hex key be to authorized by the OCPP server",
             "pass": "Password or hex key",
+            "tls_cert": "TLS Certificate",
+            "use_cert_bundle": "Embedded certificate bundle",
 
             "reset": "Reset OCPP state",
             "reset_muted": "",
@@ -41,22 +45,37 @@ let x = {
             "tag_id": "Tag ID",
             "parent_tag_id": "Tag group ID",
             "tag_expiry_date": "Tag expiry date",
-            "tag_deadline": "Tag deadline",
-            "cable_deadline": "Cable deadlien",
+            "tag_timeout": "Tag timeout",
+            "cable_timeout": "Cable timeout",
             "txn_id": "Transaction ID",
             "txn_confirmed_time": "Transaction confirmed since",
             "txn_start_time": "Transaction start time",
-            "current": "Charge current",
+            "current": "Charge current in transaction",
             "txn_with_invalid_id": "Transaction with invalid ID",
             "unavailable_requested": "Change to \"unavailable\" requested",
             "message_in_flight_type": "Type of message in flight",
             "message_in_flight_id": "ID of message in flight",
             "message_in_flight_len": "Length of message in flight",
-            "message_deadline": "Message deadlien",
-            "txn_msg_retry_deadline": "Transaction message retry deadline",
+            "message_timeout": "Message timeout",
+            "txn_msg_retry_timeout": "Transaction message retry timeout",
             "message_queue_depth": "Messages enqueued",
             "status_queue_depth": "StatusNotifications enqueued",
             "txn_msg_queue_depth": "Transaction messages enqueued",
+            "is_connected": "Connection state",
+            "connected": "Connected",
+            "not_connected": "Not connected",
+            "connected_change_time": "Last connection state change time",
+            "last_ping_sent": "Last WS ping sent",
+            "pong_timeout": "WS pong timeout",
+            "connection_state_since": /*SFN*/ (connected: boolean, date: string) => (connected ? "Connected" : "Not connected") + " since " + date /*NF*/,
+
+            "not_waiting_for_tag": "No tag expected",
+            "not_waiting_for_cable": "No cable expected",
+            "no_message_in_flight": "No message in flight",
+            "no_ping_sent": "No WS ping sent",
+            "no_tag_seen": "No tag seen",
+            "no_transaction_running": "No transaction running",
+            "never_connected_since_reboot": "reboot",
 
             "charge_point_state_0": "Power on",
             "charge_point_state_1": "Flush persistent messages",
@@ -71,8 +90,8 @@ let x = {
             "status_0": "Available",
             "status_1": "Preparing",
             "status_2": "Charging",
-            "status_3": "SuspendedEV",
-            "status_4": "SuspendedEVSE",
+            "status_3": "Suspended by vehicle",
+            "status_4": "Suspended by charger",
             "status_5": "Finishing",
             "status_6": "Reserved",
             "status_7": "Unavailable",
@@ -155,7 +174,7 @@ let x = {
             "configuration": "Configuration"
         },
         "script": {
-            "save_failed": "Failed to save the OCPP configuration.",
+            "save_failed": "Failed to save the OCPP settings.",
             "reboot_content_changed": "OCPP settings"
         }
     }

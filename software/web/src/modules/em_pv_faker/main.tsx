@@ -19,16 +19,15 @@
 
 import $ from "../../ts/jq";
 
-import * as API  from "../../ts/api";
+import * as API from "../../ts/api";
 import * as util from "../../ts/util";
-import { __ }    from "../../ts/translation";
+import { __ } from "../../ts/translation";
 
 import { h, render, Fragment, Component } from "preact";
 import { ConfigComponent } from "../../ts/components/config_component";
 import { ConfigForm      } from "../../ts/components/config_form";
 import { FormRow         } from "../../ts/components/form_row";
 import { InputFloat      } from "../../ts/components/input_float";
-import { InputNumber     } from "../../ts/components/input_number";
 import { InputText       } from "../../ts/components/input_text";
 import { OutputFloat     } from "../../ts/components/output_float";
 import { Switch          } from "../../ts/components/switch";
@@ -59,7 +58,6 @@ export class EmPvFakerStatus extends Component {
 
 render(<EmPvFakerStatus/>, $('#status-em_pv_faker')[0])
 
-
 export class EmPvFaker extends ConfigComponent<'em_pv_faker/config', {}, API.getType['em_pv_faker/runtime_config']> {
     constructor() {
         super('em_pv_faker/config',
@@ -86,7 +84,7 @@ export class EmPvFaker extends ConfigComponent<'em_pv_faker/config', {}, API.get
             return <></>
 
         return <SubPage>
-            <ConfigForm id="em_pv_faker_config_form" title={__("em_pv_faker.content.page_header")} isModified={this.isModified()} onSave={this.save} onReset={this.reset} onDirtyChange={(d) => this.ignore_updates = d}>
+            <ConfigForm id="em_pv_faker_config_form" title={__("em_pv_faker.content.page_header")} isModified={this.isModified()} isDirty={this.isDirty()} onSave={this.save} onReset={this.reset} onDirtyChange={this.setDirty}>
 
                 <FormRow label={__("em_pv_faker.content.auto_fake")}>
                     <Switch desc=""
@@ -157,11 +155,11 @@ export class EmPvFaker extends ConfigComponent<'em_pv_faker/config', {}, API.get
     }
 }
 
-render(<EmPvFaker/>, $('#em_pv_faker')[0])
+render(<EmPvFaker />, $("#em_pv_faker")[0]);
 
 export function init() {}
 export function add_event_listeners(source: API.APIEventTarget) {}
 
 export function update_sidebar_state(module_init: any) {
-    $('#sidebar-em_pv_faker').prop('hidden', !module_init.em_pv_faker);
+    $("#sidebar-em_pv_faker").prop("hidden", !module_init.em_pv_faker);
 }

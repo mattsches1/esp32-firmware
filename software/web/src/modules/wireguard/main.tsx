@@ -22,7 +22,6 @@ import $ from "../../ts/jq";
 import * as util from "../../ts/util";
 import * as API from "../../ts/api";
 
-
 import { h, render, Fragment } from "preact";
 import { __ } from "../../ts/translation";
 
@@ -40,7 +39,7 @@ import { IndicatorGroup } from "../../ts/components/indicator_group";
 import { InputSubnet } from "../../ts/components/input_subnet";
 import { SubPage } from "../../ts/components/sub_page";
 
-type WireGuardConfig = API.getType['wireguard/config'];
+type WireGuardConfig = API.getType["wireguard/config"];
 
 export class WireGuard extends ConfigComponent<'wireguard/config'> {
     ipconfig_valid: boolean = true;
@@ -56,7 +55,7 @@ export class WireGuard extends ConfigComponent<'wireguard/config'> {
 
         return (
             <SubPage>
-                <ConfigForm id="wireguard_config_form" title={__("wireguard.content.wireguard")} isModified={this.isModified()} onSave={() => this.save()} onReset={() => this.reset()} onDirtyChange={(d) => this.ignore_updates = d}>
+                <ConfigForm id="wireguard_config_form" title={__("wireguard.content.wireguard")} isModified={this.isModified()} isDirty={this.isDirty()} onSave={this.save} onReset={this.reset} onDirtyChange={this.setDirty}>
                     <FormRow label={__("wireguard.content.enable_wireguard")}>
                         <Switch desc={__("wireguard.content.enable_wireguard_desc")}
                                 checked={state.enable}
@@ -81,19 +80,19 @@ export class WireGuard extends ConfigComponent<'wireguard/config'> {
                         forbidNetwork={[
                             {ip: util.parseIP("127.0.0.1"), subnet: util.parseIP("255.0.0.0"), name: "localhost"}
                         ].concat(
-                            !API.hasModule("ethernet") || API.get_maybe("ethernet/config").ip == "0.0.0.0" ? [] :
-                            [{ip: util.parseIP(API.get_maybe("ethernet/config").ip),
-                            subnet: util.parseIP(API.get_maybe("ethernet/config").subnet),
+                            !API.hasModule("ethernet") || API.get_unchecked("ethernet/config").ip == "0.0.0.0" ? [] :
+                            [{ip: util.parseIP(API.get_unchecked("ethernet/config").ip),
+                            subnet: util.parseIP(API.get_unchecked("ethernet/config").subnet),
                             name: __("component.ip_configuration.ethernet")}]
                         ).concat(
-                            !API.hasModule("wifi") || API.get_maybe("wifi/sta_config").ip == "0.0.0.0" ? [] :
-                            [{ip: util.parseIP(API.get_maybe("wifi/sta_config").ip),
-                            subnet: util.parseIP(API.get_maybe("wifi/sta_config").subnet),
+                            !API.hasModule("wifi") || API.get_unchecked("wifi/sta_config").ip == "0.0.0.0" ? [] :
+                            [{ip: util.parseIP(API.get_unchecked("wifi/sta_config").ip),
+                            subnet: util.parseIP(API.get_unchecked("wifi/sta_config").subnet),
                             name: __("component.ip_configuration.wifi_sta")}]
                         ).concat(
                             !API.hasModule("wifi") ? [] :
-                            [{ip: util.parseIP(API.get_maybe("wifi/ap_config").ip),
-                            subnet: util.parseIP(API.get_maybe("wifi/ap_config").subnet),
+                            [{ip: util.parseIP(API.get_unchecked("wifi/ap_config").ip),
+                            subnet: util.parseIP(API.get_unchecked("wifi/ap_config").subnet),
                             name: __("component.ip_configuration.wifi_ap")}]
                         )
                     }
@@ -184,12 +183,12 @@ function WireGuardStatus()
         </>;
 }
 
-render(<WireGuardStatus/>, $('#status-wireguard')[0]);
+render(<WireGuardStatus />, $("#status-wireguard")[0]);
 
 export function init() {}
 
 export function add_event_listeners(source: API.APIEventTarget) {}
 
 export function update_sidebar_state(module_init: any) {
-    $('#sidebar-wireguard').prop('hidden', !module_init.wireguard);
+    $("#sidebar-wireguard").prop("hidden", !module_init.wireguard);
 }

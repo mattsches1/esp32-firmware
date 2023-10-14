@@ -30,7 +30,10 @@
 
 #include "matchTopicFilter.h"
 
+#if MODULE_CRON_AVAILABLE()
 extern Mqtt mqtt;
+#endif
+
 extern char local_uid_str[32];
 
 #if MODULE_ESP32_ETHERNET_BRICK_AVAILABLE()
@@ -77,8 +80,16 @@ void Mqtt::pre_setup()
         Config::Object({
             {"topic", Config::Str("", 0, 64)},
             {"payload", Config::Str("", 0, 64)},
-            {"retain", Config::Bool(false)}
-        })
+            {"retain", Config::Bool(false)},
+            {"use_prefix", Config::Bool(false)}
+        }),
+        [this](const Config *cfg) {
+            auto &topic = cfg->get("topic")->asString();
+            if (topic.startsWith(this->config.get("global_topic_prefix")->asString())) {
+                return String("Mqtt-topic must not contain the global prefix.");
+            }
+            return String("");
+        }
     );
 
     cron.register_action(
@@ -86,10 +97,22 @@ void Mqtt::pre_setup()
         Config::Object({
             {"topic", Config::Str("", 0, 64)},
             {"payload", Config::Str("", 0, 64)},
-            {"retain", Config::Bool(false)}
+            {"retain", Config::Bool(false)},
+            {"use_prefix", Config::Bool(false)}
         }),
         [this](const Config *cfg) {
-            publish(cfg->get("topic")->asString(), cfg->get("payload")->asString(), cfg->get("retain")->asBool());
+            String topic = cfg->get("topic")->asString();
+            if (cfg->get("use_prefix")->asBool()) {
+                topic = config.get("global_topic_prefix")->asString() + "/cron_action/" + topic;
+            }
+            publish(topic, cfg->get("payload")->asString(), cfg->get("retain")->asBool());
+        },
+        [this](const Config *cfg) {
+            auto &topic = cfg->get("topic")->asString();
+            if (topic.startsWith(this->config.get("global_topic_prefix")->asString())) {
+                return String("Mqtt-topic must not contain the global prefix.");
+            }
+            return String("");
         }
     );
 #endif
@@ -321,9 +344,9 @@ void Mqtt::onMqttMessage(char *topic, size_t topic_len, char *data, size_t data_
         }
 
         esp_mqtt_client_disable_receive(client, 100);
-        api.callCommandNonBlocking(reg, data, data_len, [this](String error){
+        api.callCommandNonBlocking(reg, data, data_len, [this, reg](String error){
             if (error != "")
-                logger.printfln("MQTT: %s", error.c_str());
+                logger.printfln("MQTT: On %s: %s", reg.path.c_str(), error.c_str());
             esp_mqtt_client_enable_receive(this->client);
         });
 
@@ -346,7 +369,7 @@ void Mqtt::onMqttMessage(char *topic, size_t topic_len, char *data, size_t data_
         task_scheduler.scheduleOnce([this, reg, data_cpy, data_len](){
             String error = reg.callback(data_cpy, data_len);
             if (error != "")
-                logger.printfln("MQTT: %s", error.c_str());
+                logger.printfln("MQTT: On %s: %s", reg.path.c_str(), error.c_str());
 
             free(data_cpy);
             esp_mqtt_client_enable_receive(this->client);
@@ -362,20 +385,11 @@ void Mqtt::onMqttMessage(char *topic, size_t topic_len, char *data, size_t data_
         return;
     }
 
-#if MODULE_CRON_AVAILABLE()
-    MqttMessage msg;
-    msg.topic = String(topic).substring(0, topic_len);
-    msg.payload = String(data).substring(0, data_len);
-    msg.retained = retain;
-    if (cron.trigger_action(CronTriggerID::MQTT, &msg, &trigger_action))
-        return;
-#endif
-
     // Don't print error message if this packet was received because it was retained (as opposed to a newly published message)
     // The spec says:
     // It MUST set the RETAIN flag to 0 when a PUBLISH Packet is sent to a Client
     // because it matches an established subscription regardless of how the flag was set in the message it received [MQTT-3.3.1-9].
-    if (!retain)
+    if (!retain && memcmp(topic, "cron_action/", 12))
         logger.printfln("MQTT: Received message on unknown topic '%.*s' (data_len=%u)", static_cast<int>(topic_len), topic, data_len);
 }
 
@@ -543,7 +557,12 @@ void Mqtt::register_urls()
             }
             const size_t idx = conf.first;
             if (!already_subscribed) {
-                subscribe(conf.second->get("topic")->asString(), [this, idx](const char *tpic, size_t tpic_len, char * data, size_t data_len) {
+                String topic = conf.second->get("topic")->asString();
+                if (conf.second->get("use_prefix")->asBool()) {
+                    topic = config.get("global_topic_prefix")->asString() + "/cron_trigger/" + topic;
+                }
+
+                subscribe(topic, [this, idx](const char *tpic, size_t tpic_len, char * data, size_t data_len) {
                     MqttMessage msg;
                     msg.topic = String(tpic).substring(0, tpic_len);
                     msg.payload = String(data).substring(0, data_len);
@@ -551,7 +570,7 @@ void Mqtt::register_urls()
                     if (cron.trigger_action(CronTriggerID::MQTT, &msg, &trigger_action))
                         return;
                 }, false);
-                subscribed_topics.push_back(conf.second->get("topic")->asString());
+                subscribed_topics.push_back(topic);
             }
         }
     }
@@ -571,12 +590,19 @@ void Mqtt::register_events() {
 #if MODULE_ETHERNET_AVAILABLE()
     start_immediately = ethernet.get_connection_state() == EthernetState::CONNECTED;
 #endif
-    if (start_immediately)
+    if (start_immediately) {
         esp_mqtt_client_start(client);
-    else
+#if MODULE_DEBUG_AVAILABLE()
+        debug.register_task("mqtt_task", 6144); // stack size from mqtt_config.h
+#endif
+    } else {
         task_scheduler.scheduleOnce([this]() {
             esp_mqtt_client_start(client);
+#if MODULE_DEBUG_AVAILABLE()
+            debug.register_task("mqtt_task", 6144); // stack size from mqtt_config.h
+#endif
         }, 20000);
+    }
 }
 
 #if MODULE_CRON_AVAILABLE()

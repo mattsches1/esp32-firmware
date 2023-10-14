@@ -31,12 +31,13 @@ import { InputText } from "../../ts/components/input_text";
 import { ConfigForm } from "../../ts/components/config_form";
 import { ConfigComponent } from "../../ts/components/config_component";
 import { Button } from "react-bootstrap";
-import { CollapsedSection } from "../../ts/components/collapsed_section";
-import { InputPassword } from "../../ts/components/input_password";
-import { IndicatorGroup } from "../../ts/components/indicator_group";
-import { SubPage } from "../../ts/components/sub_page";
+import { CollapsedSection } from "src/ts/components/collapsed_section";
+import { InputPassword } from "src/ts/components/input_password";
+import { IndicatorGroup } from "src/ts/components/indicator_group";
+import { SubPage } from "src/ts/components/sub_page";
+import { InputSelect } from "src/ts/components/input_select";
 
-type OcppConfig = API.getType['ocpp/config']
+type OcppConfig = API.getType["ocpp/config"];
 
 interface OcppState {
     state: API.getType['ocpp/state'];
@@ -59,17 +60,17 @@ export class Ocpp extends ConfigComponent<'ocpp/config', {}, OcppState> {
     }
 
     override async sendSave(t: "ocpp/config", cfg: OcppConfig) {
-        await API.save_maybe('evse/ocpp_enabled', {enabled: this.state.enable}, __("evse.script.save_failed"));
+        await API.save_unchecked('evse/ocpp_enabled', {enabled: this.state.enable}, __("evse.script.save_failed"));
         await super.sendSave(t, cfg);
     }
 
     override async sendReset(t: "ocpp/config") {
-        await API.save_maybe('evse/ocpp_enabled', {enabled: false}, __("evse.script.save_failed"));
+        await API.save_unchecked('evse/ocpp_enabled', {enabled: false}, __("evse.script.save_failed"));
         await super.sendReset(t);
     }
 
     override getIsModified(t: "ocpp/config"): boolean {
-        let evse = API.get_maybe("evse/ocpp_enabled");
+        let evse = API.get_unchecked("evse/ocpp_enabled");
         if (evse != null)
             if (evse.enabled)
                 return true;
@@ -81,10 +82,11 @@ export class Ocpp extends ConfigComponent<'ocpp/config', {}, OcppState> {
             return <></>
 
         let ocpp_debug = API.hasFeature("ocpp_debug");
+        let msg_in_flight = state.state.message_in_flight_id_high != 0 || state.state.message_in_flight_id_low != 0;
 
         return (
             <SubPage>
-                <ConfigForm id="ocpp_config_form" title={__("ocpp.content.ocpp")} isModified={this.isModified()} onSave={this.save} onReset={this.reset} onDirtyChange={(d) => this.ignore_updates = d}>
+                <ConfigForm id="ocpp_config_form" title={__("ocpp.content.ocpp")} isModified={this.isModified()} isDirty={this.isDirty()} onSave={this.save} onReset={this.reset} onDirtyChange={this.setDirty}>
                     <FormRow label={__("ocpp.content.enable_ocpp")}>
                         <Switch desc={__("ocpp.content.enable_ocpp_desc")}
                                 checked={state.enable}
@@ -97,6 +99,17 @@ export class Ocpp extends ConfigComponent<'ocpp/config', {}, OcppState> {
                                    onValue={this.set("url")}
                                    pattern="wss?:\/\/.*[^\/]"
                                    invalidFeedback={__("ocpp.content.endpoint_url_invalid")}/>
+                    </FormRow>
+                    <FormRow label={__("ocpp.content.tls_cert")}>
+                        <InputSelect items={[
+                                ["-1", __("ocpp.content.use_cert_bundle")],
+                            ].concat(API.get('certs/state').certs.map(c => [c.id.toString(), c.name])) as [string, string][]
+                            }
+                            value={state.cert_id}
+                            onValue={(v) => this.setState({cert_id: parseInt(v)})}
+                            disabled={!state.url.startsWith("wss://")}
+                            required={state.url.startsWith("wss://")}
+                        />
                     </FormRow>
                     <FormRow label={__("ocpp.content.identity")}>
                         <InputText required
@@ -141,7 +154,7 @@ export class Ocpp extends ConfigComponent<'ocpp/config', {}, OcppState> {
                             <InputText value={translate_unchecked(`ocpp.content.status_${state.state.charge_point_status}`)} />
                         </FormRow>
                         <FormRow label={__("ocpp.content.next_profile_eval")}>
-                            <InputText value={new Date(state.state.next_profile_eval * 1000).toLocaleString()} />
+                            <InputText value={util.timestamp_sec_to_date(state.state.next_profile_eval)} />
                         </FormRow>
                         <FormRow label={__("ocpp.content.connector_state")}>
                             <InputText value={translate_unchecked(`ocpp.content.connector_state_${state.state.connector_state}`)} />
@@ -156,22 +169,22 @@ export class Ocpp extends ConfigComponent<'ocpp/config', {}, OcppState> {
                             <InputText value={state.state.parent_tag_id} />
                         </FormRow>
                         <FormRow label={__("ocpp.content.tag_expiry_date")}>
-                            <InputText value={new Date(state.state.tag_expiry_date * 1000).toLocaleString()} />
+                            <InputText value={util.timestamp_sec_to_date(state.state.tag_expiry_date, __('ocpp.content.no_tag_seen'))} />
                         </FormRow>
-                        <FormRow label={__("ocpp.content.tag_deadline")}>
-                            <InputText value={state.state.tag_timeout} />
+                        <FormRow label={__("ocpp.content.tag_timeout")}>
+                            <InputText value={util.format_timespan_ms(state.state.tag_timeout, {replace_u32max_with: __("ocpp.content.not_waiting_for_tag")})} />
                         </FormRow>
-                        <FormRow label={__("ocpp.content.cable_deadline")}>
-                            <InputText value={state.state.cable_timeout} />
+                        <FormRow label={__("ocpp.content.cable_timeout")}>
+                            <InputText value={util.format_timespan_ms(state.state.cable_timeout, {replace_u32max_with: __("ocpp.content.not_waiting_for_cable")})} />
                         </FormRow>
                         <FormRow label={__("ocpp.content.txn_id")}>
-                            <InputText value={state.state.txn_id} />
+                            <InputText value={state.state.txn_id == 0x7FFFFFFF ?  __('ocpp.content.no_transaction_running') : state.state.txn_id} />
                         </FormRow>
                         <FormRow label={__("ocpp.content.txn_confirmed_time")}>
-                            <InputText value={new Date(state.state.txn_confirmed_time * 1000).toLocaleString()} />
+                            <InputText value={util.timestamp_sec_to_date(state.state.txn_confirmed_time, __('ocpp.content.no_transaction_running'))} />
                         </FormRow>
                         <FormRow label={__("ocpp.content.txn_start_time")}>
-                            <InputText value={new Date(state.state.txn_start_time * 1000).toLocaleString()} />
+                            <InputText value={util.timestamp_sec_to_date(state.state.txn_start_time, __('ocpp.content.no_transaction_running'))} />
                         </FormRow>
                         <FormRow label={__("ocpp.content.current")}>
                             <InputText value={state.state.current / 1000.0 + " A"} />
@@ -183,19 +196,23 @@ export class Ocpp extends ConfigComponent<'ocpp/config', {}, OcppState> {
                             <InputText value={state.state.unavailable_requested ? "true" : "false"} />
                         </FormRow>
                         <FormRow label={__("ocpp.content.message_in_flight_type")}>
-                            <InputText value={translate_unchecked(`ocpp.content.message_in_flight_type_${state.state.message_in_flight_type}`)} />
+                            <InputText value={!msg_in_flight ? __("ocpp.content.no_message_in_flight") : translate_unchecked(`ocpp.content.message_in_flight_type_${state.state.message_in_flight_type}`)} />
                         </FormRow>
                         <FormRow label={__("ocpp.content.message_in_flight_id")}>
-                            <InputText value={state.state.message_in_flight_id_high == 0 ? state.state.message_in_flight_id_low : "0x" + state.state.message_in_flight_id_high.toString(16) + state.state.message_in_flight_id_low.toString(16)} />
+                            <InputText value={!msg_in_flight ?
+                                                __("ocpp.content.no_message_in_flight") :
+                                                (state.state.message_in_flight_id_high == 0 ?
+                                                    state.state.message_in_flight_id_low :
+                                                    ("0x" + state.state.message_in_flight_id_high.toString(16) + state.state.message_in_flight_id_low.toString(16)))} />
                         </FormRow>
                         <FormRow label={__("ocpp.content.message_in_flight_len")}>
-                            <InputText value={state.state.message_in_flight_len} />
+                            <InputText value={!msg_in_flight ? __("ocpp.content.no_message_in_flight") : state.state.message_in_flight_len} />
                         </FormRow>
-                        <FormRow label={__("ocpp.content.message_deadline")}>
-                            <InputText value={state.state.message_timeout} />
+                        <FormRow label={__("ocpp.content.message_timeout")}>
+                            <InputText value={util.format_timespan_ms(state.state.message_timeout, {replace_u32max_with: __("ocpp.content.no_message_in_flight")})} />
                         </FormRow>
-                        <FormRow label={__("ocpp.content.txn_msg_retry_deadline")}>
-                            <InputText value={state.state.txn_msg_retry_timeout} />
+                        <FormRow label={__("ocpp.content.txn_msg_retry_timeout")}>
+                            <InputText value={util.format_timespan_ms(state.state.txn_msg_retry_timeout, {replace_u32max_with: __("ocpp.content.no_message_in_flight")})} />
                         </FormRow>
                         <FormRow label={__("ocpp.content.message_queue_depth")}>
                             <InputText value={state.state.message_queue_depth} />
@@ -205,6 +222,15 @@ export class Ocpp extends ConfigComponent<'ocpp/config', {}, OcppState> {
                         </FormRow>
                         <FormRow label={__("ocpp.content.txn_msg_queue_depth")}>
                             <InputText value={state.state.txn_msg_queue_depth} />
+                        </FormRow>
+                        <FormRow label={__("ocpp.content.is_connected")}>
+                            <InputText value={__("ocpp.content.connection_state_since")(state.state.connected, util.timestamp_sec_to_date(state.state.connected_change_time, __('ocpp.content.never_connected_since_reboot')))} />
+                        </FormRow>
+                        <FormRow label={__("ocpp.content.last_ping_sent")}>
+                            <InputText value={util.format_timespan_ms(state.state.last_ping_sent, {replace_u32max_with: __("ocpp.content.no_ping_sent")})} />
+                        </FormRow>
+                        <FormRow label={__("ocpp.content.pong_timeout")}>
+                            <InputText value={util.format_timespan_ms(state.state.pong_timeout, {replace_u32max_with: __("ocpp.content.no_ping_sent")})} />
                         </FormRow>
                     </CollapsedSection>
 
@@ -253,13 +279,14 @@ export class OcppStatus extends Component<{}, OcppStatusState>
     }
 
     getConnectionState() {
+        // TODO: we need some mechanism to get access to backend module magic numbers/defines/enums.
         switch(this.state.state.charge_point_state) {
             case 0:
             case 1:
             case 3:
                 return 0;
             case 2:
-                return 1;
+                return this.state.state.connected ? 1 : 0;
             case 4:
             case 5:
             case 6:
@@ -288,14 +315,23 @@ export class OcppStatus extends Component<{}, OcppStatusState>
             if (ocpp.connector_state != 8)
                 return translate_unchecked(`ocpp.content.connector_state_${ocpp.connector_state}`);
 
+            if (ocpp.txn_with_invalid_id)
+                return __("ocpp.content.txn_with_invalid_id");
+
             // txn running
             return translate_unchecked(`ocpp.content.status_${ocpp.connector_status}`);
         }
     }
 
     getStatusLine() {
-        // TODO add cable/tag deadline info here
-        return this.getStatusPrefix();
+        let result = this.getStatusPrefix();
+
+        if (this.state.state.tag_timeout != 0xFFFFFFFF)
+            result = __("ocpp.status.waiting_for_tag") + util.format_timespan_ms(this.state.state.tag_timeout)
+        if (this.state.state.cable_timeout != 0xFFFFFFFF)
+            result = __("ocpp.status.waiting_for_cable") + util.format_timespan_ms(this.state.state.cable_timeout)
+
+        return result;
     }
 
     render(props: {}, state: OcppStatusState)
@@ -324,12 +360,12 @@ export class OcppStatus extends Component<{}, OcppStatusState>
     }
 }
 
-render(<OcppStatus/>, $('#status-ocpp')[0]);
+render(<OcppStatus />, $("#status-ocpp")[0]);
 
 export function add_event_listeners(source: API.APIEventTarget) {}
 
 export function init() {}
 
 export function update_sidebar_state(module_init: any) {
-    $('#sidebar-ocpp').prop('hidden', !module_init.ocpp);
+    $("#sidebar-ocpp").prop("hidden", !module_init.ocpp);
 }

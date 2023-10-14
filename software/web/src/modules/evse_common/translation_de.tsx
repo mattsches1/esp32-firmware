@@ -68,9 +68,12 @@ let x = {
             "led_state": "LED-Zustand",
             "led_state_off": "Aus",
             "led_state_on": "An",
-            "led_state_blinking": "Blinkend",
-            "led_state_flickering": "Flackernd",
-            "led_state_breathing": "Atmend",
+            "led_state_blinking": "Bestätigendes Blinken",
+            "led_state_flickering": "Ablehnendes Blinken",
+            "led_state_breathing": "Auffordendes Blinken",
+            "led_state_error": /*SFN*/(count: number) => {
+                return "Blinken (" + count + "x)";
+            }/*NF*/,
             "led_state_api": "API",
             "led_duration": "Dauer",
             "cp_pwm_dc": "CP-PWM-Tastverhältnis",
@@ -121,6 +124,33 @@ let x = {
 
             "enable_led_api": "Status-LED Steuerung",
             "enable_led_api_desc": "Erlaubt die externe Steuerung der Status-LED.",
+            "api_must_be_enabled": "Die API muss aktiviert sein, um die Status-LED steuern zu können.",
+            "cron_state_change_trigger": /*FFN*/(state: string) => {
+                return (
+                  <>
+                    Wenn der Ladecontroller in den Zustand "<b>{state}</b>" wechselt,{" "}
+                  </>
+                );
+              }/*NF*/,
+              "cron_action_text": /*FFN*/(current: number) => {
+                return (
+                  <>
+                    setze den erlaubten Ladestrom auf <b>{current} A</b>.
+                  </>
+                );
+              }/*NF*/,
+              "cron_led_action_text": /*FFN*/(state: string, duration: number) => {
+                if (state == "An" || state == "Aus") {
+                  return (
+                    <>
+                      schalte die Status-LED für <b>{duration / 1000} Sekunden</b> <b>{state}</b>.
+                    </>
+                  );
+                }
+                return <>
+                  zeige <b>{state}</b> für <b>{duration / 1000} Sekunden</b> auf der Status-LED.
+                </>
+              }/*NF*/,
 
             "slot_0": "Zuleitung",
             "slot_1": "Typ-2-Ladekabel",
@@ -128,7 +158,7 @@ let x = {
             "slot_3": "Konfigurierbarer Eingang",
             "slot_4": "Manuelle Ladefreigabe",
             "slot_5": "Konfiguration",
-            "slot_6": "Benutzer",
+            "slot_6": "Benutzer/NFC",
             "slot_7": "Lastmanagement",
             "slot_8": "Externe Steuerung",
             "slot_9": "Modbus TCP-Strom",
@@ -158,7 +188,7 @@ let x = {
             "acc_blocked": "Blockiert",
             "by": "durch",
 
-            "save_failed": "Speichern der Ladeeinstellungen fehlgeschlagen",
+            "save_failed": "Speichern der Ladeeinstellungen fehlgeschlagen.",
 
             "reset_slot_failed": "Freigeben der Stromgrenze fehlgeschlagen",
 
@@ -171,7 +201,7 @@ let x = {
             "slot_2": "Abschalteingang",
             "slot_3": "konfigurierbaren Eingang",
             "slot_5": "Konfiguration",
-            "slot_6": "Benutzer",
+            "slot_6": "Benutzer/NFC",
             "slot_7": "Lastmanagement",
             "slot_8": "externe Steuerung",
             "slot_9": "Modbus TCP",

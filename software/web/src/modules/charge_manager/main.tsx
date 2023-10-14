@@ -33,13 +33,12 @@ import { Button, Collapse, ListGroup } from "react-bootstrap";
 import { InputSelect } from "../../ts/components/input_select";
 import { InputFloat } from "../../ts/components/input_float";
 import { Switch } from "../../ts/components/switch";
-import { config } from "./api";
 import { IndicatorGroup } from "../../ts/components/indicator_group";
 import { InputNumber } from "../../ts/components/input_number";
 import { SubPage } from "../../ts/components/sub_page";
 import { Table } from "../../ts/components/table";
 
-type ChargeManagerConfig = API.getType['charge_manager/config'];
+type ChargeManagerConfig = API.getType["charge_manager/config"];
 type ChargerConfig = ChargeManagerConfig["chargers"][0];
 type ScanCharger = Exclude<API.getType['charge_manager/scan_result'], string>[0];
 
@@ -59,26 +58,24 @@ export class ChargeManager extends ConfigComponent<'charge_manager/config', {}, 
     constructor() {
         super('charge_manager/config',
               __("charge_manager.script.save_failed"),
-              __("charge_manager.script.reboot_content_changed"));
-
-        this.state = {
-            addCharger: {host: "", name: ""},
-            editCharger: {host: "", name: ""},
-            managementEnabled: false,
-            showExpert: false,
-            scanResult: []
-        } as any;
+              __("charge_manager.script.reboot_content_changed"), {
+                  addCharger: {host: "", name: ""},
+                  editCharger: {host: "", name: ""},
+                  managementEnabled: false,
+                  showExpert: false,
+                  scanResult: []
+              });
 
         // Does not check if the event exists, in case the evse module is not compiled in.
         util.addApiEventListener_unchecked('evse/management_enabled', () => {
-            let evse_enabled = API.get_maybe('evse/management_enabled');
+            let evse_enabled = API.get_unchecked('evse/management_enabled');
             if (evse_enabled != null) {
                 this.setState({managementEnabled: evse_enabled.enabled});
             }
         });
 
         util.addApiEventListener('charge_manager/scan_result', () => {
-            this.addScanResults( API.get('charge_manager/scan_result') as ScanCharger[]);
+            this.addScanResults(API.get('charge_manager/scan_result') as ScanCharger[]);
         });
     }
 
@@ -116,11 +113,7 @@ export class ChargeManager extends ConfigComponent<'charge_manager/config', {}, 
         this.setState({chargers: chargers});
     }
 
-    hackToAllowSave() {
-        document.getElementById("charge_manager_config_form").dispatchEvent(new Event('input'));
-    }
-
-    override async isSaveAllowed(cfg: config): Promise<boolean> {
+    override async isSaveAllowed(cfg: ChargeManagerConfig): Promise<boolean> {
         for (let i = 0; i < cfg.chargers.length; i++)
             for (let a = i + 1; a < cfg.chargers.length; a++)
                 if (cfg.chargers[a].host == cfg.chargers[i].host)
@@ -128,7 +121,7 @@ export class ChargeManager extends ConfigComponent<'charge_manager/config', {}, 
         return true;
     }
 
-    override async sendSave(t: "charge_manager/config", cfg: config) {
+    override async sendSave(t: "charge_manager/config", cfg: ChargeManagerConfig) {
         const modal = util.async_modal_ref.current;
         let illegal_chargers = "";
         for (let i = 0; i < cfg.chargers.length; i++)
@@ -147,17 +140,17 @@ export class ChargeManager extends ConfigComponent<'charge_manager/config', {}, 
         }))
             return;
 
-        await API.save_maybe('evse/management_enabled', {"enabled": this.state.managementEnabled}, translate_unchecked("charge_manager.script.save_failed"));
+        await API.save_unchecked('evse/management_enabled', {"enabled": this.state.managementEnabled}, translate_unchecked("charge_manager.script.save_failed"));
         await super.sendSave(t, cfg);
     }
 
     override async sendReset(t: "charge_manager/config"){
-        await API.save_maybe('evse/management_enabled', {"enabled": false}, translate_unchecked("charge_manager.script.save_failed"));
+        await API.save_unchecked('evse/management_enabled', {"enabled": false}, translate_unchecked("charge_manager.script.save_failed"));
         await super.sendReset(t);
     }
 
     override getIsModified(t: "charge_manager/config"): boolean {
-        let evse_enabled = API.get_maybe("evse/management_enabled");
+        let evse_enabled = API.get_unchecked("evse/management_enabled");
         if (evse_enabled != null)
             if (evse_enabled.enabled)
                 return true;
@@ -187,10 +180,10 @@ export class ChargeManager extends ConfigComponent<'charge_manager/config', {}, 
     }
 
     intToIP(int: number) {
-        var part1 = int & 255;
-        var part2 = ((int >> 8) & 255);
-        var part3 = ((int >> 16) & 255);
-        var part4 = ((int >> 24) & 255);
+        let part1 = int & 255;
+        let part2 = ((int >> 8) & 255);
+        let part3 = ((int >> 16) & 255);
+        let part4 = ((int >> 24) & 255);
 
         return part4 + "." + part3 + "." + part2 + "." + part1;
     }
@@ -210,11 +203,11 @@ export class ChargeManager extends ConfigComponent<'charge_manager/config', {}, 
             return true;
 
         if (API.hasFeature("ethernet")) {
-            const eth_subnet = util.parseIP(API.get_maybe("ethernet/config").subnet);
-            const eth_ip = util.parseIP(API.get_maybe("ethernet/config").ip);
+            const eth_subnet = util.parseIP(API.get_unchecked("ethernet/config").subnet);
+            const eth_ip = util.parseIP(API.get_unchecked("ethernet/config").ip);
             const eth_network = eth_ip & eth_subnet;
             const eth_broadcast = (~eth_subnet) | eth_network;
-            if (API.get_maybe("ethernet/config")?.subnet != "255.255.255.254" && (v == this.intToIP(eth_broadcast) || v == this.intToIP(eth_network)))
+            if (API.get_unchecked("ethernet/config")?.subnet != "255.255.255.254" && (v == this.intToIP(eth_broadcast) || v == this.intToIP(eth_network)))
                 return true;
         }
 
@@ -435,17 +428,12 @@ export class ChargeManager extends ConfigComponent<'charge_manager/config', {}, 
                                     }
                                 ],
                                 onEditCommit: async () => {
-                                    this.setState({
-                                        chargers: state.chargers.map((charger, k) => i === k ? state.editCharger : charger),
-                                        editCharger: {name: "", host: ""}
-                                    });
-
-                                    this.hackToAllowSave();
+                                    this.setState({chargers: state.chargers.map((charger, k) => i === k ? state.editCharger : charger)});
+                                    this.setDirty(true);
                                 },
-                                onEditAbort: async () => this.setState({editCharger: {name: "", host: ""}}),
                                 onRemoveClick: !energyManagerMode && (charger.host == '127.0.0.1' || charger.host == 'localhost') ? undefined : async () => {
                                     this.setState({chargers: state.chargers.filter((v, idx) => idx != i)});
-                                    this.hackToAllowSave();
+                                    this.setDirty(true);
                                 }
                             }})
                         }
@@ -502,24 +490,17 @@ export class ChargeManager extends ConfigComponent<'charge_manager/config', {}, 
                             }
                         ]}
                         onAddCommit={async () => {
-                            window.clearInterval(this.intervalID);
-
-                            this.setState({
-                                chargers: state.chargers.concat({name: state.addCharger.name.trim(), host: state.addCharger.host.trim()}),
-                                addCharger: {name: "", host: ""}
-                            });
-
-                            this.hackToAllowSave();
+                            this.setState({chargers: state.chargers.concat({name: state.addCharger.name.trim(), host: state.addCharger.host.trim()})});
+                            this.setDirty(true);
                         }}
-                        onAddAbort={async () => {
+                        onAddHide={async () => {
                             window.clearInterval(this.intervalID);
-                            this.setState({addCharger: {name: "", host: ""}});
                         }} />
             </FormRow>
 
         return (
             <SubPage>
-                <ConfigForm id="charge_manager_config_form" title={__("charge_manager.content.charge_manager")} isModified={this.isModified()} onSave={() => this.save()} onReset={this.reset} onDirtyChange={(d) => this.ignore_updates = d}>
+                <ConfigForm id="charge_manager_config_form" title={__("charge_manager.content.charge_manager")} isModified={this.isModified()} isDirty={this.isDirty()} onSave={this.save} onReset={this.reset} onDirtyChange={this.setDirty}>
                     {!energyManagerMode || warpUltimateMode ?
                         charge_manager_mode
                     :
@@ -583,15 +564,15 @@ export class ChargeManagerStatus extends Component<{}, ChargeManagerStatusState>
         super();
 
         util.addApiEventListener('charge_manager/state', () => {
-            this.setState({state: API.get_maybe('charge_manager/state')})
+            this.setState({state: API.get('charge_manager/state')})
         });
 
         util.addApiEventListener('charge_manager/available_current', () => {
-            this.setState({available_current: API.get_maybe('charge_manager/available_current')})
+            this.setState({available_current: API.get('charge_manager/available_current')})
         });
 
         util.addApiEventListener('charge_manager/config', () => {
-            this.setState({config: API.get_maybe('charge_manager/config')})
+            this.setState({config: API.get('charge_manager/config')})
         });
 
         util.addApiEventListener('info/keep_alive', () => {
@@ -689,7 +670,7 @@ export class ChargeManagerStatus extends Component<{}, ChargeManagerStatusState>
 
 }
 
-render(<ChargeManagerStatus/>, $('#status-charge_manager')[0]);
+render(<ChargeManagerStatus />, $("#status-charge_manager")[0]);
 
 export function init() {
 }
@@ -698,5 +679,5 @@ export function add_event_listeners(source: API.APIEventTarget) {
 }
 
 export function update_sidebar_state(module_init: any) {
-    $('#sidebar-charge_manager').prop('hidden', !module_init.charge_manager);
+    $("#sidebar-charge_manager").prop("hidden", !module_init.charge_manager);
 }

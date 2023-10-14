@@ -17,15 +17,11 @@
  * Boston, MA 02111-1307, USA.
  */
 
-import $ from "../../ts/jq";
-
 import * as util from "../../ts/util";
-import * as API from "../../ts/api";
-
 import { h, Component, Fragment } from "preact";
 import { Button } from "react-bootstrap";
 import { FormRow } from "./form_row";
-import { __, translate_unchecked} from "../translation";
+import { __, translate_unchecked } from "../translation";
 import { ConfigMap } from "../api_defs";
 import { InputText } from "./input_text";
 

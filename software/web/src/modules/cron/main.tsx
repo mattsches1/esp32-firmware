@@ -26,31 +26,36 @@ import { Fragment, render, h, ComponentChild } from "preact";
 import { ConfigComponent } from "../../ts/components/config_component";
 import { ConfigForm } from "../../ts/components/config_form";
 import { Table, TableModalRow, TableRow } from "../../ts/components/table";
-import { CronAction, cron_action_components, CronTrigger, cron_trigger_components, Task } from "./api";
 import { InputSelect } from "../../ts/components/input_select";
 import { __ } from "../../ts/translation";
+import { CronTriggerID, CronActionID } from "./cron_defs";
+import { CronAction, CronTrigger, Task, CronTriggerComponents, CronActionComponents } from "./types";
 import { plugins_init } from "./plugins";
 
+const MAXRULES = 10;
+
 type CronState = {
-    edit_task: Task,
     displayed_trigger: number,
-    displayed_action: number
+    displayed_action: number,
+    edit_task: Task,
 };
 
-export class Cron extends ConfigComponent<'cron/config', {}, CronState> {
+let cron_trigger_components: CronTriggerComponents = {};
+let cron_action_components: CronActionComponents = {};
+
+export class Cron extends ConfigComponent<"cron/config", {}, CronState> {
     constructor() {
         super('cron/config',
-        __("charge_manager.script.save_failed"),
-        __("charge_manager.script.reboot_content_changed"));
-        this.state = {
-            tasks: [],
-            edit_task: {
-                trigger: [0, null],
-                action: [0, null]
-            },
-            displayed_action: 0,
-            displayed_trigger: 0
-        }
+              __("charge_manager.script.save_failed"),
+              __("charge_manager.script.reboot_content_changed"), {
+                  tasks: [],
+                  displayed_trigger: CronTriggerID.None,
+                  displayed_action: CronActionID.None,
+                  edit_task: {
+                      trigger: [CronTriggerID.None, null],
+                      action: [CronActionID.None, null]
+                  }
+             });
     }
 
     setTriggerFromComponent(update: CronTrigger) {
@@ -63,10 +68,6 @@ export class Cron extends ConfigComponent<'cron/config', {}, CronState> {
         let edit_task = this.state.edit_task;
         edit_task.action = update;
         this.setState({edit_task: edit_task});
-    }
-
-    hackToAllowSave() {
-        document.getElementById("cron-config-form").dispatchEvent(new Event('input'));
     }
 
     createSelectors() {
@@ -87,56 +88,48 @@ export class Cron extends ConfigComponent<'cron/config', {}, CronState> {
         }
 
         let triggerSelector: TableModalRow[] = [{
-            name: __("cron.content.condition_category"),
+            name: __("cron.content.condition"),
             value: <InputSelect
+                        required
                         placeholder={__("cron.content.select")}
                         items={trigger}
                         onValue={(v) => {
-                            if (v == "0") {
-                                this.setState({displayed_trigger: this.state.displayed_trigger})
-                                return;
-                            }
-                            this.setState(
-                            {
-                                displayed_trigger: Number(v),
+                            this.setState({
+                                displayed_trigger: parseInt(v),
                                 edit_task: {
-                                    trigger: cron_trigger_components[Number(v)].config_builder(),
+                                    trigger: cron_trigger_components[parseInt(v)].config_builder(),
                                     action: this.state.edit_task.action
                                 }
                             })
                         }}
                         value={this.state.displayed_trigger.toString()}/>
         }];
-        if (this.state.displayed_trigger != 0) {
+        if (this.state.displayed_trigger != CronTriggerID.None) {
             const trigger_config = cron_trigger_components[this.state.displayed_trigger].config_component(this, this.state.edit_task.trigger);
             triggerSelector = triggerSelector.concat(trigger_config);
         }
         triggerSelector = triggerSelector.concat({name: null, value: <hr/>});
 
         let actionSelector: TableModalRow[] = [{
-            name: __("cron.content.action_category"),
+            name: __("cron.content.action"),
             value: <>
             <InputSelect
-                        items={action}
+                        required
                         placeholder={__("cron.content.select")}
+                        items={action}
                         onValue={(v) => {
-                            if (v == "0") {
-                                this.setState({displayed_action: this.state.displayed_action});
-                                return;
-                            }
-                            this.setState(
-                            {
-                                displayed_action: Number(v),
+                            this.setState({
+                                displayed_action: parseInt(v),
                                 edit_task: {
-                                    action: cron_action_components[Number(v)].config_builder(),
-                                    trigger: this.state.edit_task.trigger
+                                    trigger: this.state.edit_task.trigger,
+                                    action: cron_action_components[parseInt(v)].config_builder()
                                 }
                             });
                         }}
                         value={this.state.displayed_action.toString()}/></>
         }]
 
-        if (this.state.displayed_action != 0) {
+        if (this.state.displayed_action != CronActionID.None) {
             const action_config = cron_action_components[this.state.displayed_action].config_component(this, this.state.edit_task.action);
             actionSelector = actionSelector.concat(action_config);
         }
@@ -147,64 +140,47 @@ export class Cron extends ConfigComponent<'cron/config', {}, CronState> {
     assembleTable() {
         let rows: TableRow[] = [];
         this.state.tasks.forEach((task, idx) => {
-            let action: number = task.action[0];
-            let action_obj: any = task.action[1];
-            let trigger: number = task.trigger[0];
-            let trigger_obj: any = task.trigger[1];
+            let trigger_id: number = task.trigger[0];
+            let action_id: number = task.action[0];
 
-            const ActionComponent = cron_action_components[action];
-            const TriggerComponent = cron_trigger_components[trigger];
+            const trigger_component = cron_trigger_components[trigger_id];
+            const action_component = cron_action_components[action_id];
 
             const task_copy: Task = {
-                action: [action, {...action_obj}],
-                trigger: [trigger, {...trigger_obj}]
+                trigger: trigger_component.clone(task.trigger),
+                action: action_component.clone(task.action)
             };
-            const trigger_row = TriggerComponent.table_row(task.trigger);
-            const action_row = ActionComponent.table_row(task.action);
-            trigger_row.fieldNames = [__("cron.content.condition")].concat(trigger_row.fieldNames);
-            trigger_row.fieldValues = [TriggerComponent.name as ComponentChild].concat(trigger_row.fieldValues);
-            trigger_row.fieldNames.push(null);
-            trigger_row.fieldValues.push(<hr/>);
-
-            action_row.fieldNames = [__("cron.content.action")].concat(action_row.fieldNames);
-            action_row.fieldValues = [ActionComponent.name as ComponentChild].concat(action_row.fieldValues);
+            const trigger_row = trigger_component.table_row(task.trigger);
+            const action_row = action_component.table_row(task.action);
 
             let row: TableRow = {
                 columnValues: [
                     [idx + 1],
-                    [TriggerComponent.name],
-                    [trigger_row.text],
-                    [ActionComponent.name],
-                    [action_row.text]
+                    [trigger_row],
+                    [action_row]
                 ],
-                fieldNames: [""].concat(trigger_row.fieldNames.concat(action_row.fieldNames)),
-                fieldValues: [__("cron.content.task") + " #" + (idx + 1) as ComponentChild].concat(trigger_row.fieldValues.concat(action_row.fieldValues)),
+                fieldNames: ["", ""],
+                fieldValues: [__("cron.content.rule") + " #" + (idx + 1) as ComponentChild, <div class="pb-3">{trigger_row}{action_row}</div>],
                 onEditStart: async () => {
-                    this.setState(
-                        {
-                            edit_task: {
-                                action: task_copy.action,
-                                trigger: task_copy.trigger
-                            },
-                            displayed_trigger: task.trigger[0] as number,
-                            displayed_action: task.action[0] as number
-                        })
+                    this.setState({
+                        displayed_trigger: task.trigger[0] as number,
+                        displayed_action: task.action[0] as number,
+                        edit_task: {
+                            trigger: task_copy.trigger,
+                            action: task_copy.action
+                        }
+                    });
                 },
                 onEditGetRows: () => {
                     return this.createSelectors();
                 },
                 onEditCommit: async () => {
-                    if (this.state.displayed_action == 0 || this.state.displayed_trigger == 0) {
-                        return;
-                    }
-
                     this.setState({tasks: this.state.tasks.map((task, k) => k === idx ? this.state.edit_task : task)});
-                    this.hackToAllowSave();
+                    this.setDirty(true);
                 },
-                onEditAbort: async () => {},
                 onRemoveClick: async () => {
                     this.setState({tasks: this.state.tasks.filter((_, k) => idx != k)})
-                    this.hackToAllowSave();
+                    this.setDirty(true);
                 },
                 editTitle: __("cron.content.edit_rule")
             };
@@ -221,68 +197,75 @@ export class Cron extends ConfigComponent<'cron/config', {}, CronState> {
                 id="cron-config-form"
                 title={__("cron.content.cron")}
                 isModified={this.isModified()}
+                isDirty={this.isDirty()}
                 onSave={this.save}
                 onReset={this.reset}
-                onDirtyChange={(d) => this.ignore_updates = d}
+                onDirtyChange={this.setDirty}
                 >
                     <div class="col-xl-12">
                     <Table tableTill="md"
                         columnNames={[
                             "#",
                             __("cron.content.condition"),
-                            "",
-                            __("cron.content.action"),
-                            ""]}
+                            __("cron.content.action")]}
                         rows={this.assembleTable()}
-                        addEnabled={this.state.tasks.length < 20}
+                        addEnabled={this.state.tasks.length < MAXRULES}
                         addTitle={__("cron.content.add_rule")}
-                        addMessage={__("cron.content.add_rule")}
-                        onAddStart={async () => this.setState(
-                            {
-                                edit_task: {trigger: [0, null], action: [0, null]},
-                                displayed_action: 0,
-                                displayed_trigger: 0
-                            })}
+                        addMessage={__("cron.content.add_rule_text")(this.state.tasks.length, MAXRULES)}
+                        onAddStart={async () => {
+                            this.setState({
+                                displayed_trigger: CronTriggerID.None,
+                                displayed_action: CronActionID.None,
+                                edit_task: {
+                                    trigger: [CronTriggerID.None, null],
+                                    action: [CronActionID.None, null]
+                                }
+                            });
+                        }}
                         onAddGetRows={() => {
                             return this.createSelectors()
                         }}
                         onAddCommit={async () => {
-                            if (this.state.displayed_action == 0 || this.state.displayed_trigger == 0) {
-                                return;
-                            }
                             this.setState({tasks: this.state.tasks.concat([this.state.edit_task])});
-                            this.hackToAllowSave();
+                            this.setDirty(true);
                         }}
-
                         />
                     </div>
             </ConfigForm>
     }
 }
 
-render(<Cron/>, $('#cron')[0]);
+render(<Cron />, $("#cron")[0]);
 
 export function init() {
-    plugins_init();
+    let result = plugins_init();
+
+    for (let item of result) {
+        if (item.trigger_components) {
+            for (let i in item.trigger_components) {
+                if (cron_trigger_components[i]) {
+                    console.log('Cron: Overwriting trigger ID ' + i);
+                }
+
+                cron_trigger_components[i] = item.trigger_components[i];
+            }
+        }
+
+        if (item.action_components) {
+            for (let i in item.action_components) {
+                if (cron_action_components[i]) {
+                    console.log('Cron: Overwriting action ID ' + i);
+                }
+
+                cron_action_components[i] = item.action_components[i];
+            }
+        }
+    }
 }
 
 export function add_event_listeners(source: API.APIEventTarget) {
 }
 
 export function update_sidebar_state(module_init: any) {
-    $('#sidebar-cron').prop('hidden', !module_init.cron);
+    $("#sidebar-cron").prop("hidden", !module_init.cron);
 }
-
-// cron_trigger_components[0] = {
-//     config_builder: () => [0, null],
-//     config_component: () => [],
-//     table_row: () => "",
-//     name: __("cron.content.select")
-// };
-
-// cron_action_components[0] = {
-//     config_builder: () => [0, null],
-//     config_component: () => [],
-//     table_row: () => "",
-//     name: __("cron.content.select")
-// }

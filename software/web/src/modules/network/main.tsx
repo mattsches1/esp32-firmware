@@ -22,7 +22,6 @@ import $ from "../../ts/jq";
 import * as util from "../../ts/util";
 import * as API from "../../ts/api";
 
-
 import { h, render, Fragment } from "preact";
 import { __ } from "../../ts/translation";
 import { Switch } from "../../ts/components/switch";
@@ -33,7 +32,7 @@ import { InputText } from "../../ts/components/input_text";
 import { InputNumber } from "../../ts/components/input_number";
 import { SubPage } from "../../ts/components/sub_page";
 
-type NetworkConfig = API.getType['network/config'];
+type NetworkConfig = API.getType["network/config"];
 
 export class Network extends ConfigComponent<'network/config'> {
     constructor() {
@@ -50,10 +49,11 @@ export class Network extends ConfigComponent<'network/config'> {
             <SubPage>
                 <ConfigForm id="network_config_form"
                             title={__("network.content.network")}
+                            isModified={this.isModified()}
+                            isDirty={this.isDirty()}
                             onSave={this.save}
                             onReset={this.reset}
-                            onDirtyChange={(d) => this.ignore_updates = d}
-                            isModified={this.isModified()}>
+                            onDirtyChange={this.setDirty}>
                     <FormRow label={__("network.content.hostname")}>
                         <InputText maxLength={32}
                                    pattern="[a-zA-Z0-9\-]*"
@@ -83,12 +83,12 @@ export class Network extends ConfigComponent<'network/config'> {
     }
 }
 
-render(<Network/>, $('#network')[0])
+render(<Network />, $("#network")[0]);
 
 export function init() {}
 
 export function add_event_listeners(source: API.APIEventTarget) {}
 
 export function update_sidebar_state(module_init: any) {
-    $('#sidebar-network').prop('hidden', !module_init.network);
+    $("#sidebar-network").prop("hidden", !module_init.network);
 }

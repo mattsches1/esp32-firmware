@@ -31,7 +31,7 @@
 #include "config.h"
 
 #define MAX_WEB_SOCKET_CLIENTS 5
-#define MAX_WEB_SOCKET_WORK_ITEMS_IN_QUEUE 20
+#define MAX_WEB_SOCKET_WORK_ITEMS_IN_QUEUE 32
 
 class WebSockets;
 
@@ -39,8 +39,8 @@ struct WebSocketsClient {
     int fd;
     WebSockets *ws;
 
-    void send(const char *payload, size_t payload_len);
-    void sendOwned(char *payload, size_t payload_len);
+    bool sendOwnedBlocking_HTTPThread(char *payload, size_t payload_len);
+    void close_HTTPThread();
 };
 
 struct ws_work_item {
@@ -66,10 +66,10 @@ public:
     {
     }
 
-    void sendToClient(const char *payload, size_t payload_len, int sock);
-    void sendToClientOwned(char *payload, size_t payload_len, int sock);
-    void sendToAll(const char *payload, size_t payload_len);
-    void sendToAllOwned(char *payload, size_t payload_len);
+    bool sendToClient(const char *payload, size_t payload_len, int sock);
+    bool sendToClientOwned(char *payload, size_t payload_len, int sock);
+    bool sendToAll(const char *payload, size_t payload_len);
+    bool sendToAllOwned(char *payload, size_t payload_len);
 
     bool haveFreeSlot();
     bool haveActiveClient();
@@ -80,7 +80,7 @@ public:
     void cleanUpQueue();
     bool queueFull();
 
-    void onConnect(std::function<void(WebSocketsClient)> fn);
+    void onConnect_HTTPThread(std::function<void(WebSocketsClient)> fn);
 
     void triggerHttpThread();
     bool haveWork(ws_work_item *item);

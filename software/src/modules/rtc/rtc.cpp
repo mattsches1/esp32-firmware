@@ -25,7 +25,9 @@
 #include "time.h"
 #include "module_dependencies.h"
 
+#if MODULE_CRON_AVAILABLE()
 extern Rtc rtc;
+#endif
 
 void Rtc::pre_setup()
 {
@@ -93,6 +95,14 @@ void Rtc::register_backend(IRtcBackend *_backend)
         tm.tm_min = time_update.get("minute")->asUint();
         tm.tm_sec = time_update.get("second")->asUint();
         tm.tm_wday = time_update.get("weekday")->asUint();
+
+        logger.printfln("Setting RTC time to %u-%02u-%02u %02u:%02u:%02u UTC",
+                        tm.tm_year + 1900,
+                        tm.tm_mon + 1,
+                        tm.tm_mday,
+                        tm.tm_hour,
+                        tm.tm_min,
+                        tm.tm_sec);
 
         backend->set_time(tm);
         update_system_time();

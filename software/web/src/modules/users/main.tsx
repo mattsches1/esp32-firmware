@@ -24,18 +24,17 @@ import * as API from "../../ts/api";
 
 import YaMD5 from "../../ts/yamd5";
 
-
 import { h, render, Fragment } from "preact";
 import { __ } from "../../ts/translation";
 
-import { ConfigComponent } from "../../ts/components/config_component";
+import { ConfigComponent, ConfigComponentState } from "../../ts/components/config_component";
 import { ConfigForm } from "../../ts/components/config_form";
 import { FormRow } from "../../ts/components/form_row";
 import { InputText } from "../../ts/components/input_text";
 import { InputFloat } from "../../ts/components/input_float";
 import { Switch } from "../../ts/components/switch";
 import { InputPassword } from "../../ts/components/input_password";
-import { Slash, User } from "react-feather";
+import { Slash } from "react-feather";
 import { EVSE_SLOT_USER } from "../evse_common/api";
 import { SubPage } from "../../ts/components/sub_page";
 import { Table } from "../../ts/components/table";
@@ -91,31 +90,29 @@ export class Users extends ConfigComponent<'users/config', {}, UsersState> {
     constructor() {
         super('users/config',
               __("users.script.save_failed"),
-              __("users.script.reboot_content_changed"));
-
-        this.state = {
-            userSlotEnabled: false,
-            addUser: {
-                id: -1,
-                roles: 0xFFFF,
-                username: "",
-                display_name: "",
-                current: 32000,
-                digest_hash: "",
-                password: "",
-                is_invalid: 0,
-            },
-            editUser: {
-                id: -1,
-                roles: 0xFFFF,
-                username: "",
-                display_name: "",
-                current: 32000,
-                digest_hash: "",
-                password: "",
-                is_invalid: 0,
-            },
-        } as any;
+              __("users.script.reboot_content_changed"), {
+                userSlotEnabled: false,
+                addUser: {
+                    id: -1,
+                    roles: 0xFFFF,
+                    username: "",
+                    display_name: "",
+                    current: 32000,
+                    digest_hash: "",
+                    password: "",
+                    is_invalid: 0,
+                },
+                editUser: {
+                    id: -1,
+                    roles: 0xFFFF,
+                    username: "",
+                    display_name: "",
+                    current: 32000,
+                    digest_hash: "",
+                    password: "",
+                    is_invalid: 0,
+                },
+            });
 
         util.addApiEventListener('evse/slots', () => {
             this.setState({userSlotEnabled: API.get('evse/slots')[EVSE_SLOT_USER].active});
@@ -203,8 +200,8 @@ export class Users extends ConfigComponent<'users/config', {}, UsersState> {
     }
 
     http_auth_allowed() {
-        return (this.state as Readonly<UsersState & UsersConfig>).users.some(u => this.user_has_password(u))
-    };
+        return (this.state as Readonly<UsersState & UsersConfig & ConfigComponentState>).users.some(u => this.user_has_password(u))
+    }
 
     override async sendSave(t: "users/config", new_config: UsersConfig) {
         let old_config = API.get('users/config');
@@ -257,7 +254,7 @@ export class Users extends ConfigComponent<'users/config', {}, UsersState> {
 
         await this.save_authentication_config(new_config.http_auth_enabled);
 
-        await API.save_maybe('evse/user_enabled', {"enabled": this.state.userSlotEnabled}, __("evse.script.save_failed"));
+        await API.save_unchecked('evse/user_enabled', {"enabled": this.state.userSlotEnabled}, __("evse.script.save_failed"));
     }
 
     setUser(i: number, val: Partial<User>) {
@@ -266,10 +263,6 @@ export class Users extends ConfigComponent<'users/config', {}, UsersState> {
 
         users[i] = {...users[i], ...val};
         this.setState({users: users});
-    }
-
-    hackToAllowSave() {
-        document.getElementById("users_config_form").dispatchEvent(new Event('input'));
     }
 
     override async sendReset(t: "users/config"){
@@ -336,7 +329,7 @@ export class Users extends ConfigComponent<'users/config', {}, UsersState> {
         return user.username != configured.username;
     }
 
-    override render(props: {}, state: UsersConfig & UsersState) {
+    override render(props: {}, state: UsersConfig & UsersState & ConfigComponentState) {
         if (!util.render_allowed())
             return <></>
 
@@ -347,9 +340,9 @@ export class Users extends ConfigComponent<'users/config', {}, UsersState> {
 
         return (
             <SubPage>
-                <ConfigForm id="users_config_form" title={__("users.content.users")} isModified={this.isModified()} onSave={async () =>{this.save();}}
+                <ConfigForm id="users_config_form" title={__("users.content.users")} isModified={this.isModified()} isDirty={this.isDirty()} onSave={this.save}
                     onReset={this.reset}
-                    onDirtyChange={(d) => this.ignore_updates = d}>
+                    onDirtyChange={this.setDirty}>
                     <FormRow label={__("users.content.enable_authentication")}>
                         <Switch desc={__("users.content.enable_authentication_desc")}
                                 checked={auth_allowed && state.http_auth_enabled}
@@ -449,12 +442,11 @@ export class Users extends ConfigComponent<'users/config', {}, UsersState> {
                                     onEditCommit: async () => {
                                         this.setUser(i + 1, state.editUser);
                                         this.setState({editUser: {id: -1, roles: 0xFFFF, username: "", display_name: "", current: 32000, digest_hash: "", password: "", is_invalid: 0}});
-                                        this.hackToAllowSave();
+                                        this.setDirty(true);
                                     },
-                                    onEditAbort: async () => this.setState({editUser: {id: -1, roles: 0xFFFF, username: "", display_name: "", current: 32000, digest_hash: "", password: "", is_invalid: 0}}),
                                     onRemoveClick: async () => {
                                         this.setState({users: state.users.filter((v, idx) => idx != i + 1)});
-                                        this.hackToAllowSave();
+                                        this.setDirty(true);
                                     }}
                                 })
                             }
@@ -514,23 +506,18 @@ export class Users extends ConfigComponent<'users/config', {}, UsersState> {
                                 });
                             }}
                             onAddCommit={async () => {
-                                this.setState({
-                                    users: state.users.concat({...state.addUser, id: -1, roles: 0xFFFF}),
-                                    addUser: {id: -1, roles: 0xFFFF, username: "", display_name: "", current: 32000, digest_hash: "", password: "", is_invalid: 0},
-                                });
-
-                                this.hackToAllowSave();
+                                this.setState({users: state.users.concat({...state.addUser, id: -1, roles: 0xFFFF})});
+                                this.setDirty(true);
                             }}
-                            onAddAbort={async () => this.setState({addUser: {id: -1, roles: 0xFFFF, username: "", display_name: "", current: 32000, digest_hash: "", password: "", is_invalid: 0}})}
                             />
                     </FormRow>
                 </ConfigForm>
             </SubPage>
-        )
+        );
     }
 }
 
-render(<Users/>, $('#users')[0])
+render(<Users />, $("#users")[0]);
 
 export function getAllUsernames() {
     return util.download('/users/all_usernames')
@@ -567,5 +554,5 @@ export function add_event_listeners(source: API.APIEventTarget) {
 }
 
 export function update_sidebar_state(module_init: any) {
-    $('#sidebar-users').prop('hidden', !module_init.users);
+    $("#sidebar-users").prop("hidden", !module_init.users);
 }

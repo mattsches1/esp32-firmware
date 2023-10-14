@@ -34,7 +34,7 @@ import { SubPage } from "../../ts/components/sub_page";
 import { EVSE_SLOT_MODBUS_TCP } from "../evse_common/api";
 import { CollapsedSection } from "../../ts/components/collapsed_section";
 
-type ModbusTCPConfig = API.getType['modbus_tcp/config'];
+type ModbusTCPConfig = API.getType["modbus_tcp/config"];
 
 interface config {
     evse_enable: boolean
@@ -58,17 +58,17 @@ export class ModbusTCP extends ConfigComponent<'modbus_tcp/config', {}, config> 
     }
 
     override async sendSave(t: "modbus_tcp/config", cfg: config & ModbusTCPConfig) {
-        await API.save_maybe('evse/modbus_tcp_enabled', {enabled: this.state.evse_enable}, __("evse.script.save_failed"));
+        await API.save_unchecked('evse/modbus_tcp_enabled', {enabled: this.state.evse_enable}, __("evse.script.save_failed"));
         await super.sendSave(t, cfg);
     }
 
     override async sendReset(t: "modbus_tcp/config"){
-        await API.save_maybe('evse/modbus_tcp_enabled', {enabled: false}, __("evse.script.save_failed"));
+        await API.save_unchecked('evse/modbus_tcp_enabled', {enabled: false}, __("evse.script.save_failed"));
         await super.sendReset(t);
     }
 
     override getIsModified(t: "modbus_tcp/config"): boolean {
-        let evse = API.get_maybe("evse/modbus_tcp_enabled");
+        let evse = API.get_unchecked("evse/modbus_tcp_enabled");
         if (evse != null)
             if (evse.enabled)
                 return true;
@@ -87,7 +87,7 @@ export class ModbusTCP extends ConfigComponent<'modbus_tcp/config', {}, config> 
 
         return (
             <SubPage>
-                <ConfigForm id="modbus_tcp_config_form" title={__("modbus_tcp.content.modbus_tcp")} isModified={this.isModified()} onSave={() => this.save()} onReset={this.reset} onDirtyChange={(d) => this.ignore_updates = d}>
+                <ConfigForm id="modbus_tcp_config_form" title={__("modbus_tcp.content.modbus_tcp")} isModified={this.isModified()} isDirty={this.isDirty()} onSave={this.save} onReset={this.reset} onDirtyChange={this.setDirty}>
                     <FormRow label={__("modbus_tcp.content.enable")}>
                         <InputSelect items={[
                             ["0", __("modbus_tcp.content.disabled")],
@@ -125,7 +125,7 @@ export class ModbusTCP extends ConfigComponent<'modbus_tcp/config', {}, config> 
     }
 }
 
-render(<ModbusTCP/>, $('#modbus_tcp')[0])
+render(<ModbusTCP />, $("#modbus_tcp")[0]);
 
 export function add_event_listeners(source: API.APIEventTarget) {
 }
@@ -134,5 +134,5 @@ export function init() {
 }
 
 export function update_sidebar_state(module_init: any) {
-    $('#sidebar-modbus_tcp').prop('hidden', !module_init.modbus_tcp);
+    $("#sidebar-modbus_tcp").prop("hidden", !module_init.modbus_tcp);
 }

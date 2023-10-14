@@ -1,35 +1,49 @@
+/* esp32-firmware
+ * Copyright (C) 2023 Frederic Henrichs <frederic@tinkerforge.com>
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the
+ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+ * Boston, MA 02111-1307, USA.
+ */
+
+import { h, Fragment } from "preact";
+import { __ } from "../../ts/translation";
 import { CronActionID } from "../cron/cron_defs";
+import { CronComponent, CronAction } from "../cron/types"
+import { Cron } from "../cron/main"
+import { InputSelect } from "../../ts/components/input_select"
+import { InputFloat } from "../../ts/components/input_float"
+import { InputNumber } from "../../ts/components/input_number"
 
 export type EvseCronAction = [
     CronActionID.SetCurrent,
     {
-        current: number
-    }
+        current: number;
+    },
 ];
 
 export type EvseLedCronAction = [
     CronActionID.LED,
     {
-        state: number,
-        duration: number
-    }
+        state: number;
+        duration: number;
+    },
 ];
 
-import { __ } from "../../ts/translation"
-import { CronComponent, CronAction, cron_action_components } from "../cron/api"
-import { Cron } from "../cron/main"
-import { InputSelect } from "../../ts/components/input_select"
-import { InputFloat } from "../../ts/components/input_float"
-import { h } from 'preact'
-import { InputNumber } from "../../ts/components/input_number"
-
-function EvseSetCurrentCronActionComponent(action: CronAction): CronComponent {
+function EvseSetCurrentCronActionComponent(action: CronAction): VNode {
     const value = (action as EvseCronAction)[1];
-    return {
-        text: __("evse.content.allowed_charging_current") + ": " + value.current / 1000 + " A",
-        fieldNames: [__("evse.content.allowed_charging_current")],
-        fieldValues: [value.current / 1000 + " A"]
-    };
+    return __("evse.content.cron_action_text")(value.current / 1000);
 }
 
 function EvseSetCurrentCronActionConfigComponent(cron: Cron, action: CronAction) {
@@ -55,19 +69,14 @@ function EvseSetCurrentCronActionConfigFactory(): CronAction {
     return [
         CronActionID.SetCurrent,
         {
-            current: 0
-        }
-    ]
+            current: 0,
+        },
+    ];
 }
 
-function EvseLedCronActionComponent(action: CronAction): CronComponent {
+function EvseLedCronActionComponent(action: CronAction): VNode {
     const value = (action as EvseLedCronAction)[1];
-    let ret = __("evse.content.led_state") + ": ";
-    const fieldNames = [
-        __("evse.content.led_state"),
-        __("evse.content.led_duration"),
-    ];
-    let state = ""
+    let state = "";
     switch (value.state) {
         case 0:
             state = __("evse.content.led_state_off");
@@ -89,33 +98,29 @@ function EvseLedCronActionComponent(action: CronAction): CronComponent {
             state = __("evse.content.led_state_breathing");
             break;
     }
-
-    const fieldValues = [
-        value.duration + " ms",
-        state
-    ];
-    ret = ret + "\n" + __("evse.content.led_duration") + ": " + value.duration + " ms"
-    return {
-        text: ret,
-        fieldNames: fieldNames,
-        fieldValues: fieldValues
+    if (value.state > 2000 && value.state < 2011) {
+        state = __("evse.content.led_state_error")(value.state - 2000);
     }
+
+    return __("evse.content.cron_led_action_text")(state, value.duration)
 }
 
 function EvseLedCronActionConfigComponent(cron: Cron, action: CronAction) {
     const value = (action as EvseLedCronAction)[1];
+    const items: [string, string][] = [
+        ["0", __("evse.content.led_state_off")],
+        ["255", __("evse.content.led_state_on")],
+        ["1001", __("evse.content.led_state_blinking")],
+        ["1002", __("evse.content.led_state_flickering")],
+        ["1003", __("evse.content.led_state_breathing")]];
+    for (let i = 1; i <= 10; i++) {
+        items.push([String(2000 + i), __("evse.content.led_state_error")(i)]);
+    }
     return [
         {
             name: __("evse.content.led_state"),
             value: <InputSelect
-                items={[
-                    // TODO: Add more led-states
-                    ["0", __("evse.content.led_state_off")],
-                    ["255", __("evse.content.led_state_on")],
-                    ["1001", __("evse.content.led_state_blinking")],
-                    ["1002", __("evse.content.led_state_flickering")],
-                    ["1003", __("evse.content.led_state_breathing")]
-                ]}
+                items={items}
                 value={value.state.toString()}
                 onValue={(v) => {
                     value.state = parseInt(v);
@@ -124,13 +129,15 @@ function EvseLedCronActionConfigComponent(cron: Cron, action: CronAction) {
         },
         {
             name: __("evse.content.led_duration"),
-            value: <InputNumber
-                value={value.duration}
-                unit="ms"
+            value: <> <InputNumber
+                value={value.duration / 1000}
+                unit="s"
                 onValue={(v) => {
-                    value.duration = v;
+                    value.duration = v * 1000;
                     cron.setActionFromComponent(action);
                 }} />
+                <span class="text-muted mt-1">{__("evse.content.api_must_be_enabled")}</span>
+            </>
         }
     ]
 }
@@ -140,23 +147,28 @@ function EvseLedCronActionConfigFactory(): CronAction {
         CronActionID.LED,
         {
             duration: 0,
-            state: 0
-        }
-    ]
+            state: 0,
+        },
+    ];
 }
 
 export function init() {
-    cron_action_components[CronActionID.SetCurrent] = {
-        config_builder: EvseSetCurrentCronActionConfigFactory,
-        config_component: EvseSetCurrentCronActionConfigComponent,
-        table_row: EvseSetCurrentCronActionComponent,
-        name: __("evse.content.allowed_charging_current")
-    };
-
-    cron_action_components[CronActionID.LED] = {
-        config_builder: EvseLedCronActionConfigFactory,
-        config_component: EvseLedCronActionConfigComponent,
-        table_row: EvseLedCronActionComponent,
-        name: __("evse.content.led_state")
+    return {
+        action_components: {
+            [CronActionID.SetCurrent]: {
+                clone: (action: CronAction) => [action[0], {...action[1]}] as CronAction,
+                config_builder: EvseSetCurrentCronActionConfigFactory,
+                config_component: EvseSetCurrentCronActionConfigComponent,
+                table_row: EvseSetCurrentCronActionComponent,
+                name: __("evse.content.allowed_charging_current"),
+            },
+            [CronActionID.LED]: {
+                clone: (action: CronAction) => [action[0], {...action[1]}] as CronAction,
+                config_builder: EvseLedCronActionConfigFactory,
+                config_component: EvseLedCronActionConfigComponent,
+                table_row: EvseLedCronActionComponent,
+                name: __("evse.content.led_state"),
+            },
+        },
     };
 }

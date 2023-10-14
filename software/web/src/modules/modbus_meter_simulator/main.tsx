@@ -19,9 +19,9 @@
 
 import $ from "../../ts/jq";
 
-import * as API  from "../../ts/api";
+import * as API from "../../ts/api";
 import * as util from "../../ts/util";
-import { __ }    from "../../ts/translation";
+import { __ } from "../../ts/translation";
 
 import { h, render, Fragment } from "preact";
 import { ConfigComponent } from "../../ts/components/config_component";
@@ -42,7 +42,7 @@ export class ModbusMeterSimulator extends ConfigComponent<'modbus_meter_simulato
             return <></>
 
         return <SubPage>
-            <ConfigForm id="modbus_meter_simulator_config_form" title={__("modbus_meter_simulator.content.page_header")} isModified={this.isModified()} onSave={this.save} onReset={this.reset} onDirtyChange={(d) => this.ignore_updates = d}>
+            <ConfigForm id="modbus_meter_simulator_config_form" title={__("modbus_meter_simulator.content.page_header")} isModified={this.isModified()} isDirty={this.isDirty()} onSave={this.save} onReset={this.reset} onDirtyChange={this.setDirty}>
 
                 <FormRow label={__("modbus_meter_simulator.content.meter_type")} label_muted={__("modbus_meter_simulator.content.meter_type_muted")}>
                     <InputSelect
@@ -64,7 +64,7 @@ export class ModbusMeterSimulator extends ConfigComponent<'modbus_meter_simulato
     }
 }
 
-render(<ModbusMeterSimulator/>, $('#modbus_meter_simulator')[0])
+render(<ModbusMeterSimulator />, $("#modbus_meter_simulator")[0]);
 
 export function init() {}
 export function add_event_listeners(source: API.APIEventTarget) {}

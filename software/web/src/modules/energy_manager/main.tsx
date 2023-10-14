@@ -19,13 +19,13 @@
 
 import $ from "../../ts/jq";
 
-import * as API  from "../../ts/api";
+import * as API from "../../ts/api";
 import * as util from "../../ts/util";
-import { __ }    from "../../ts/translation";
+import { __ } from "../../ts/translation";
 
 import { h, render, Fragment, Component } from "preact";
-import { Button, ButtonGroup, Collapse  } from "react-bootstrap";
-import { CheckCircle, Circle            } from "react-feather";
+import { Button, ButtonGroup, Collapse } from "react-bootstrap";
+import { CheckCircle, Circle } from "react-feather";
 import { ConfigComponent } from "../../ts/components/config_component";
 import { ConfigForm      } from "../../ts/components/config_form";
 import { FormRow         } from "../../ts/components/form_row";
@@ -257,7 +257,7 @@ export class EnergyManager extends ConfigComponent<'energy_manager/config', {}, 
 
         return (
             <SubPage>
-                <ConfigForm id="energy_manager_config_form" title={__("energy_manager.content.page_header")} isModified={this.isModified()} onSave={() => this.save()} onReset={this.reset} onDirtyChange={(d) => this.ignore_updates = d}>
+                <ConfigForm id="energy_manager_config_form" title={__("energy_manager.content.page_header")} isModified={this.isModified()} isDirty={this.isDirty()} onSave={this.save} onReset={this.reset} onDirtyChange={this.setDirty}>
 
                     <FormSeparator heading={__("energy_manager.content.header_phase_switching")} first={true} />
                     <FormRow label={__("energy_manager.content.contactor_installed")}>
@@ -642,16 +642,16 @@ export class EnergyManager extends ConfigComponent<'energy_manager/config', {}, 
                     </> : null }
                 </ConfigForm>
             </SubPage>
-        )
+        );
     }
 }
 
-render(<EnergyManager/>, $('#energy_manager')[0])
+render(<EnergyManager />, $("#energy_manager")[0]);
 
 export function init() {}
 
 export function add_event_listeners(source: API.APIEventTarget) {}
 
 export function update_sidebar_state(module_init: any) {
-    $('#sidebar-energy_manager').prop('hidden', !module_init.energy_manager);
+    $("#sidebar-energy_manager").prop("hidden", !module_init.energy_manager);
 }

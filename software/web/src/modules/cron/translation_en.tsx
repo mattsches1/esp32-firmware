@@ -3,17 +3,18 @@ import { h } from "preact";
 let x = {
     "cron": {
         "navbar": {
-            "cron": "Events"
+            "cron": "Automation"
         },
         "content": {
-            "cron": "Events",
-            "task": "Task",
-            "condition_category": "Condition category",
-            "action_category": "Action category",
+            "cron": "Automation",
+            "rule": "Rule",
             "condition": "Condition",
             "action": "Action",
-            "add_rule": "Regel hinzufügen",
-            "edit_rule": "Edit Rule",
+            "add_rule": "Add rule",
+            "add_rule_text": /*SFN*/(count: number, max: number) => {
+                return count + " of " + max + " rules configured.";
+            }/*NF*/,
+            "edit_rule": "Edit rule",
             "select": "Select..."
         }
     }

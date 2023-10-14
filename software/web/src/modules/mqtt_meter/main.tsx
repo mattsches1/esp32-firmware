@@ -19,9 +19,9 @@
 
 import $ from "../../ts/jq";
 
-import * as API  from "../../ts/api";
+import * as API from "../../ts/api";
 import * as util from "../../ts/util";
-import { __ }    from "../../ts/translation";
+import { __ } from "../../ts/translation";
 
 import { h, render, Fragment } from "preact";
 import { ConfigComponent } from "../../ts/components/config_component";
@@ -43,7 +43,7 @@ export class MqttMeter extends ConfigComponent<'mqtt_meter/config'> {
             return <></>
 
         return <SubPage>
-            <ConfigForm id="mqtt_meter_config_form" title={__("mqtt_meter.content.title")} isModified={this.isModified()} onSave={this.save} onReset={this.reset} onDirtyChange={(d) => this.ignore_updates = d}>
+            <ConfigForm id="mqtt_meter_config_form" title={__("mqtt_meter.content.title")} isModified={this.isModified()} isDirty={this.isDirty()} onSave={this.save} onReset={this.reset} onDirtyChange={this.setDirty}>
                 <FormRow label={__("mqtt_meter.content.enable_meter")}>
                     <Switch desc={__("mqtt_meter.content.enable_meter_desc")}
                         checked={state.enable}
@@ -72,11 +72,11 @@ export class MqttMeter extends ConfigComponent<'mqtt_meter/config'> {
     }
 }
 
-render(<MqttMeter/>, $('#mqtt_meter')[0])
+render(<MqttMeter />, $("#mqtt_meter")[0]);
 
 export function init() {}
 export function add_event_listeners(source: API.APIEventTarget) {}
 
 export function update_sidebar_state(module_init: any) {
-    $('#sidebar-mqtt_meter').prop('hidden', !module_init.mqtt_meter);
+    $("#sidebar-mqtt_meter").prop("hidden", !module_init.mqtt_meter);
 }

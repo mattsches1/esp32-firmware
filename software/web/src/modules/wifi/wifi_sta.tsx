@@ -33,7 +33,7 @@ import { InputPassword } from "../../ts/components/input_password";
 import { Lock, Unlock } from "react-feather";
 import { SubPage } from "../../ts/components/sub_page";
 
-type STAConfig = API.getType['wifi/sta_config'];
+type STAConfig = API.getType["wifi/sta_config"];
 
 type WifiSTAState = {
     scan_running: boolean
@@ -61,8 +61,12 @@ export class WifiSTA extends ConfigComponent<'wifi/sta_config', {}, WifiSTAState
 
     constructor() {
         super('wifi/sta_config',
-              __("wifi.script.sta_config_failed"),
-              __("wifi.script.sta_reboot_content_changed"));
+              __("wifi.script.sta_save_failed"),
+              __("wifi.script.sta_reboot_content_changed"), {
+                passphrase_placeholder: __("component.input_password.unchanged"),
+                passphrase_required: false,
+                scan_running: false
+            });
 
         util.addApiEventListener('wifi/scan_results', (e) => {
             if (e.data == "scan in progress")
@@ -80,10 +84,6 @@ export class WifiSTA extends ConfigComponent<'wifi/sta_config', {}, WifiSTAState
             if (typeof e.data !== "string")
                 this.setState({scan_running: false, scan_results: e.data});
         }, false);
-
-        this.state = {passphrase_placeholder: __("component.input_password.unchanged"),
-                      passphrase_required: false,
-                      scan_running: false} as any;
     }
 
     override async isSaveAllowed(cfg: STAConfig) {
@@ -126,10 +126,6 @@ export class WifiSTA extends ConfigComponent<'wifi/sta_config', {}, WifiSTAState
             let data: WifiInfo[] = JSON.parse(result);
             this.setState({scan_running: false, scan_results: data});
         }, 12000);
-    }
-
-    hackToAllowSave() {
-        document.getElementById("wifi_sta_config_form").dispatchEvent(new Event('input'));
     }
 
     get_scan_results(state: Readonly<STAConfig & WifiSTAState>) {
@@ -181,7 +177,7 @@ export class WifiSTA extends ConfigComponent<'wifi/sta_config', {}, WifiSTAState
                                 enable_sta: true,
                                 bssid_lock: enable_bssid_lock
                             });
-                            this.hackToAllowSave();
+                            this.setDirty(true);
                         }}
                         key={ap.bssid}>
                     {wifi_symbol(ap.rssi)}
@@ -206,10 +202,11 @@ export class WifiSTA extends ConfigComponent<'wifi/sta_config', {}, WifiSTAState
             <SubPage>
                 <ConfigForm id="wifi_sta_config_form"
                             title={__("wifi.content.sta_settings")}
+                            isModified={this.isModified()}
+                            isDirty={this.isDirty()}
                             onSave={this.save}
                             onReset={this.reset}
-                            onDirtyChange={(d) => this.ignore_updates = d}
-                            isModified={this.isModified()}>
+                            onDirtyChange={this.setDirty}>
                     <FormRow label={__("wifi.content.sta_enable_sta")}>
                         <Switch desc={__("wifi.content.sta_enable_sta_desc")}
                                 checked={state.enable_sta}
@@ -268,9 +265,9 @@ export class WifiSTA extends ConfigComponent<'wifi/sta_config', {}, WifiSTAState
                                 subnet: util.parseIP(API.get("wifi/ap_config").subnet),
                                 name: __("component.ip_configuration.wifi_ap")}]
                             ).concat(
-                                !API.hasModule("wireguard") || API.get_maybe("wireguard/config").internal_ip == "0.0.0.0" ? [] :
-                                [{ip: util.parseIP(API.get_maybe("wireguard/config").internal_ip),
-                                subnet: util.parseIP(API.get_maybe("wireguard/config").internal_subnet),
+                                !API.hasModule("wireguard") || API.get_unchecked("wireguard/config").internal_ip == "0.0.0.0" ? [] :
+                                [{ip: util.parseIP(API.get_unchecked("wireguard/config").internal_ip),
+                                subnet: util.parseIP(API.get_unchecked("wireguard/config").internal_subnet),
                                 name: __("component.ip_configuration.wireguard")}]
                             )
                         }

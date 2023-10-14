@@ -279,12 +279,7 @@ TSX_FUNCTION_PATTERN = re.compile(r'/\*[SF]FN\*/.*?/\*NF\*/', re.MULTILINE | re.
 
 TSX_FUNCTION_ARGS_PATTERN = re.compile(r'FN\*/\s*\(([^\)]*)\)', re.MULTILINE | re.DOTALL)
 
-TSX_JSON_REPLACEMENTS = [
-    ('"', '\\"'),
-    ('\t', '\\t'),
-    ('\n', '\\n'),
-    ('\r', '\\r'),
-    # Escape nested fragments in functions
+TSX_JSON_REPLACEMENTS = [# Escape nested fragments in functions
     ('<>', '___START_FRAGMENT___'),
     ('</>', '___END_FRAGMENT___'),
 ]
@@ -295,7 +290,7 @@ def tsx_to_json(match):
     for old, new in TSX_JSON_REPLACEMENTS:
         s = s.replace(old, new)
 
-    return '"' + s + '"'
+    return json.dumps(s)
 
 def json_to_tsx(s):
     for old, new in TSX_JSON_REPLACEMENTS:
@@ -646,6 +641,7 @@ def main():
     })
 
     print("Generating module_dependencies.h from module.ini", flush=True)
+    generate_module_dependencies_header('src/event_log_dependencies.ini', 'src/event_log_dependencies.h', None, backend_modules, all_mods)
     generate_module_dependencies_header('src/web_dependencies.ini', 'src/web_dependencies.h', None, backend_modules, all_mods)
     for backend_module in backend_modules:
         mod_path = os.path.join('src', 'modules', backend_module.under)
@@ -835,7 +831,7 @@ def main():
                         string = json_to_tsx(value)
                     elif is_string_function or is_fragment_function:
                         # removeprefix/suffix are new in Python 3.9. We have to support 3.8.
-                        string = json_to_tsx(value)[len("/*SFN*/"):-len("/*NF*/")]
+                        string = json_to_tsx(value)#[len("/*SFN*/"):-len("/*NF*/")]
                     else:
                         string = '"{0}"'.format(value.replace('"', '\\"'))
 
@@ -907,23 +903,38 @@ def main():
 
         util.remove_digest('web', 'node_modules', env=env)
 
-        rmtree_tries = 10
 
-        while rmtree_tries > 0:
+        def clear_directory(path):
+            if not os.path.exists(path):
+                return
+
+            with os.scandir(path) as entries:
+                for entry in entries:
+                    if entry.is_dir() and not entry.is_symlink():
+                        shutil.rmtree(entry.path)
+                    else:
+                        os.remove(entry.path)
+
+            if len(os.listdir(path)) == 0:
+                return
+
+            raise Exception('Failed to clear ' + path)
+
+        # On Windows, for some unknown reason, sometimes a directory
+        # stays or becomes non-empty during the shutil.rmtree call and
+        # cannot be removed anymore. If that happens, just try again.
+        #
+        # Only clear (not remove) the node_modules directory,
+        # in case it is a mount point, soft-, hardlink or in some other way special.
+        attempts = 10
+        for i in range(attempts):
             try:
-                shutil.rmtree('web/node_modules')
-                break
-            except FileNotFoundError:
+                clear_directory('web/node_modules')
                 break
             except:
-                # on windows for some unknown reason sometimes a directory stays
-                # or becomes non-empty during the shutil.rmtree call and and
-                # cannot be removed anymore. if that happens jus try again
                 time.sleep(0.5)
 
-                rmtree_tries -= 1
-
-                if rmtree_tries == 0:
+                if i == attempts - 1:
                     raise
 
         with ChangedDirectory('web'):

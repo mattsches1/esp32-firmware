@@ -77,11 +77,18 @@ let x = {
 
             "host_exists": "Host already exists",
 
-            "set_charge_manager": "Charge Manager"
+            "set_charge_manager": "Charge Manager",
+            "cron_action_text": /*FFN*/(current: number) => {
+              return (
+                <>
+                  set the maximum total current to <b>{current / 1000} A</b>.
+                </>
+              );
+            }/*NF*/
         },
         "script": {
             "charge_state_0": "No vehicle connected",
-            "charge_state_1": "Waiting for user release",
+            "charge_state_1": "Waiting for user/NFC release",
             "charge_state_2": "Waiting for manager release",
             "charge_state_3": "Charging cleared",
             "charge_state_4": "Charging",
@@ -113,10 +120,10 @@ let x = {
 
             "last_update_prefix": "Unavailable for",
             "last_update_suffix": "",
-            "save_failed": "Failed to save the charge manager configuration",
+            "save_failed": "Failed to save the charge manager settings.",
             "set_available_current_failed": "Failed to set the available current",
 
-            "reboot_content_changed": "charge manager configuration",
+            "reboot_content_changed": "charge manager settings",
 
             "scan_failed": "Scan failed",
 

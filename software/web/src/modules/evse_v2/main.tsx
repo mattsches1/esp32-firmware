@@ -22,7 +22,7 @@ import $ from "../../ts/jq";
 import * as util from "../../ts/util";
 import * as API from "../../ts/api";
 
-import { h, render, Fragment, Component} from "preact";
+import { h, render, Fragment, Component } from "preact";
 import { __, translate_unchecked } from "../../ts/translation";
 import { PageHeader } from "../../ts/components/page_header";
 
@@ -33,7 +33,7 @@ import { FormSeparator } from "../../ts/components/form_separator";
 import { InputText } from "../../ts/components/input_text";
 import { InputIndicator } from "../../ts/components/input_indicator";
 import { Switch } from "../../ts/components/switch";
-import { Button} from "react-bootstrap";
+import { Button } from "react-bootstrap";
 import { InputSelect } from "../../ts/components/input_select";
 import { CollapsedSection } from "../../ts/components/collapsed_section";
 import { EVSE_SLOT_EXTERNAL } from "../evse_common/api";
@@ -213,11 +213,11 @@ export class EVSEV2 extends Component<{}, EVSEState> {
                     </div>
 
                     <FormRow label={__("evse.content.time_since_state_change")}>
-                        <InputText value={util.format_timespan(Math.floor(ll_state.time_since_state_change / 1000.0))}/>
+                        <InputText value={util.format_timespan_ms(ll_state.time_since_state_change)}/>
                     </FormRow>
 
                     <FormRow label={__("evse.content.uptime")}>
-                        <InputText value={util.format_timespan(Math.floor(ll_state.uptime / 1000.0))}/>
+                        <InputText value={util.format_timespan_ms(ll_state.uptime)}/>
                     </FormRow>
 
 
@@ -384,11 +384,11 @@ export class EVSEV2 extends Component<{}, EVSEState> {
                         </div>
 
                         <FormRow label={__("evse.content.charging_time")}>
-                            <InputText value={util.format_timespan(Math.floor(ll_state.charging_time / 1000))}/>
+                            <InputText value={util.format_timespan_ms(ll_state.charging_time)}/>
                         </FormRow>
 
                         <FormRow label={__("evse.content.time_since_dc_fault_check")}>
-                            <InputText value={util.format_timespan(Math.floor(ll_state.time_since_dc_fault_check / 1000.0))}/>
+                            <InputText value={util.format_timespan_ms(ll_state.time_since_dc_fault_check)}/>
                         </FormRow>
 
                         <FormRow label={__("evse.content.reset_description")} label_muted={__("evse.content.reset_description_muted")}>
@@ -527,7 +527,7 @@ class EVSEV2Settings extends ConfigComponent<"charge_limits/default_limits", {},
                                     </FormRow>;
 
         return <SubPage>
-                <ConfigForm id="evse_settings" title={__("evse.content.settings")} isModified={this.isModified()} onSave={this.save} onReset={this.reset} onDirtyChange={(d) => this.ignore_updates = d}>
+                <ConfigForm id="evse_settings" title={__("evse.content.settings")} isModified={this.isModified()} isDirty={this.isDirty()} onSave={this.save} onReset={this.reset} onDirtyChange={this.setDirty}>
                     <FormRow label={__("evse.content.auto_start_description")} label_muted={__("evse.content.auto_start_description_muted")}>
                         <Switch desc={__("evse.content.auto_start_enable")}
                                 checked={!auto_start_charging.auto_start_charging}

@@ -278,7 +278,7 @@ Config::Wrap Config::add() {
     children = this->asArray();
 
     children.push_back(std::move(copy));
-
+    this->set_updated(0xFF);
     return Wrap(&children.back());
 }
 
@@ -295,6 +295,7 @@ bool Config::removeLast()
         return false;
 
     children.pop_back();
+    this->set_updated(0xFF);
     return true;
 }
 
@@ -309,7 +310,7 @@ bool Config::removeAll()
     std::vector<Config> &children = this->asArray();
 
     children.clear();
-
+    this->set_updated(0xFF);
     return true;
 }
 
@@ -326,6 +327,7 @@ bool Config::remove(size_t i)
         return false;
 
     children.erase(children.begin() + i);
+    this->set_updated(0xFF);
     return true;
 }
 
@@ -405,6 +407,17 @@ const std::vector<Config> &Config::asArray() const
     return *this->get<ConfArray>()->getVal();
 }
 
+bool Config::clearString() {
+    if (!this->is<ConfString>()) {
+        logger.printfln("Config is not a string!");
+        esp_system_abort("");
+    }
+    CoolString *val = this->get<ConfString>()->getVal();
+    val->clear();
+    val->shrinkToFit();
+    return true;
+}
+
 bool Config::updateString(const String &value)
 {
     return update_value<String, ConfString>(value, "String");
@@ -472,11 +485,16 @@ size_t Config::json_size(bool zero_copy) const
 
 size_t Config::max_string_length() const
 {
+    return Config::apply_visitor(max_string_length_visitor{}, value);
+}
+
+size_t Config::string_length() const
+{
     return Config::apply_visitor(string_length_visitor{}, value);
 }
 
 DynamicJsonDocument Config::to_json(const std::vector<String> &keys_to_censor) const {
-    DynamicJsonDocument doc(json_size(false));
+    DynamicJsonDocument doc(json_size(true));
 
     JsonVariant var;
     if (is<Config::ConfObject>()) {
@@ -495,10 +513,15 @@ void Config::save_to_file(File &file)
     auto doc = this->to_json({});
 
     if (doc.overflowed()) {
-        logger.printfln("JSON doc overflow while writing file %s! Doc capacity is %u. Truncated doc follows.", file.name(), doc.capacity());
-        String str;
-        serializeJson(doc, str);
-        logger.write(str.c_str(), str.length());
+        auto capacity = doc.capacity();
+        if (capacity == 0) {
+            logger.printfln("JSON doc overflow while writing file %s! Doc capacity is zero but needed %u.", file.name(), json_size(false));
+        } else {
+            logger.printfln("JSON doc overflow while writing file %s! Doc capacity is %u. Truncated doc follows.", file.name(), capacity);
+            String str;
+            serializeJson(doc, str);
+            logger.write(str.c_str(), str.length());
+        }
     }
     serializeJson(doc, file);
 }
@@ -513,10 +536,15 @@ void Config::write_to_stream_except(Print &output, const std::vector<String> &ke
     auto doc = this->to_json(keys_to_censor);
 
     if (doc.overflowed()) {
-        logger.printfln("JSON doc overflow while writing to stream! Doc capacity is %u. Truncated doc follows.", doc.capacity());
-        String str;
-        serializeJson(doc, str);
-        logger.write(str.c_str(), str.length());
+        auto capacity = doc.capacity();
+        if (capacity == 0) {
+            logger.printfln("JSON doc overflow while writing to stream! Doc capacity is zero but needed %u.", json_size(false));
+        } else {
+            logger.printfln("JSON doc overflow while writing to stream! Doc capacity is %u. Truncated doc follows.", capacity);
+            String str;
+            serializeJson(doc, str);
+            logger.write(str.c_str(), str.length());
+        }
     }
     serializeJson(doc, output);
 }
@@ -534,8 +562,13 @@ String Config::to_string_except(const std::vector<String> &keys_to_censor) const
     serializeJson(doc, result);
 
     if (doc.overflowed()) {
-        logger.printfln("JSON doc overflow while converting to string! Doc capacity is %u. Truncated doc follows.", doc.capacity());
-        logger.write(result.c_str(), result.length());
+        auto capacity = doc.capacity();
+        if (capacity == 0) {
+            logger.printfln("JSON doc overflow while converting to string! Doc capacity is zero but needed %u.", json_size(false));
+        } else {
+            logger.printfln("JSON doc overflow while converting to string! Doc capacity is %u. Truncated doc follows.", capacity);
+            logger.write(result.c_str(), result.length());
+        }
     }
     return result;
 }

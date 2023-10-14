@@ -31,7 +31,7 @@ import { InputSelect } from "../../ts/components/input_select";
 import { CollapsedSection } from "../../ts/components/collapsed_section";
 import { OutputFloat } from "../../ts/components/output_float";
 import { Zap, ZapOff } from "react-feather";
-import uPlot from 'uplot';
+import uPlot from "uplot";
 import { FormSeparator } from "../../ts/components/form_separator";
 import { SubPage } from "../../ts/components/sub_page";
 
@@ -188,7 +188,7 @@ class UplotWrapper extends Component<UplotWrapperProps, {}> {
                                 return util.timestamp_sec_to_date(rawValue)
                             }
                             else {
-                                return util.timestamp_min_to_date((rawValue / 60), '???');
+                                return util.timestamp_min_to_date(rawValue / 60);
                             }
                         }
 
@@ -808,7 +808,7 @@ export class MeterStatus extends Component<{}, {}> {
 
         // As we don't check util.render_allowed(),
         // we have to handle rendering before the web socket connection is established.
-        let power = API.get_maybe('meter/values')?.power ?? 0;
+        let power = API.get_unchecked('meter/values')?.power ?? 0;
 
         return (
             <>
@@ -834,7 +834,7 @@ export class MeterStatus extends Component<{}, {}> {
     }
 }
 
-render(<MeterStatus />, $('#status-meter')[0]);
+render(<MeterStatus />, $("#status-meter")[0]);
 
 export function init() {
 }

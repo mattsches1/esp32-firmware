@@ -33,9 +33,9 @@ import { IndicatorGroup } from "../../ts/components/indicator_group";
 import { OutputFloat } from "../../ts/components/output_float";
 import { SubPage } from "../../ts/components/sub_page";
 
-type Co2Config = API.getType['co2/config'];
+type Co2Config = API.getType["co2/config"];
 
-export class Co2 extends ConfigComponent<'co2/config'> {
+export class Co2 extends ConfigComponent<"co2/config"> {
     constructor() {
         super('co2/config',
               __("co2.script.save_failed"),
@@ -48,7 +48,7 @@ export class Co2 extends ConfigComponent<'co2/config'> {
 
         return (
             <SubPage>
-                <ConfigForm id="co2_config_form" title={__("co2.content.co2")} isModified={this.isModified()} onSave={() => this.save()} onReset={this.reset} onDirtyChange={(d) => this.ignore_updates = d}>
+                <ConfigForm id="co2_config_form" title={__("co2.content.co2")} isModified={this.isModified()} isDirty={this.isDirty()} onSave={this.save} onReset={this.reset} onDirtyChange={this.setDirty}>
                     <FormRow label={__("co2.content.temperature_offset")} label_muted={__("co2.content.temperature_offset_muted")}>
                         <InputFloat
                             unit="°C"
@@ -65,10 +65,10 @@ export class Co2 extends ConfigComponent<'co2/config'> {
     }
 }
 
-render(<Co2/>, $('#co2ampel')[0])
+render(<Co2 />, $("#co2ampel")[0]);
 
 interface Co2StatusState {
-    state: API.getType['co2/state'];
+    state: API.getType["co2/state"];
 }
 
 export class Co2Status extends Component<{}, Co2StatusState>
@@ -116,7 +116,7 @@ export class Co2Status extends Component<{}, Co2StatusState>
     }
 }
 
-render(<Co2Status/>, $('#status-co2')[0]);
+render(<Co2Status />, $("#status-co2")[0]);
 
 export function add_event_listeners(source: API.APIEventTarget) {
 }
@@ -125,5 +125,5 @@ export function init() {
 }
 
 export function update_sidebar_state(module_init: any) {
-    $('#sidebar-co2ampel').prop('hidden', !module_init.co2ampel);
+    $("#sidebar-co2ampel").prop("hidden", !module_init.co2ampel);
 }

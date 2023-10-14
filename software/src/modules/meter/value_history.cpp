@@ -60,7 +60,7 @@ void ValueHistory::setup()
     ++chars_per_value;
 
 #if MODULE_WS_AVAILABLE()
-    ws.addOnConnectCallback([this](WebSocketsClient client) {
+    ws.addOnConnectCallback_HTTPThread([this](WebSocketsClient client) {
         const size_t buf_size = RING_BUF_SIZE * chars_per_value + 200;
 
         // live
@@ -74,7 +74,7 @@ void ValueHistory::setup()
         buf_written += format_live(buf + buf_written, buf_size - buf_written);
         buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, "}\n");
 
-        client.sendOwned(buf, buf_written);
+        client.sendOwnedBlocking_HTTPThread(buf, buf_written);
 
         // history
         buf_written = 0;
@@ -87,7 +87,7 @@ void ValueHistory::setup()
         buf_written += format_history(buf + buf_written, buf_size - buf_written);
         buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, "}\n");
 
-        client.sendOwned(buf, buf_written);
+        client.sendOwnedBlocking_HTTPThread(buf, buf_written);
     });
 #endif
 }
@@ -152,7 +152,7 @@ void ValueHistory::add_sample(float sample)
 #endif
 
     // start history task when first sample arrives. this adds the first sample to the
-    // history immediately to avoid and empty history for the first history period
+    // history immediately to avoid an empty history for the first history period
     if (live.used() == 1) {
         task_scheduler.scheduleWithFixedDelay([this, val_min](){
             METER_VALUE_HISTORY_VALUE_TYPE history_val;

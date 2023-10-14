@@ -19,8 +19,6 @@
 
 import { h, Component, Context, createContext, toChildArray, VNode, cloneElement } from "preact";
 import { Button, Modal, ModalProps } from "react-bootstrap";
-import { __ } from "../translation";
-
 
 interface ItemModalProps extends ModalProps {
     onCheck?: () => Promise<boolean>
@@ -38,13 +36,11 @@ interface ItemModalProps extends ModalProps {
     yes_text: string
 }
 
-
 let id_counter = 0;
 
 export class ItemModal extends Component<ItemModalProps, any> {
     idContext: Context<string>;
     id: string;
-
 
     constructor() {
         super();
@@ -57,26 +53,27 @@ export class ItemModal extends Component<ItemModalProps, any> {
         let {onCheck, onSubmit, onHide, show, title, children, no_variant, no_text, yes_variant, yes_text, ...p} = props;
 
         return (
-            <Modal show={show} onHide={() => onHide()} centered {...p}>
-                <Modal.Header closeButton>
+            <Modal size={"xl"} show={show} onHide={() => onHide()} centered {...p}>
+                {/* There seems to be an incompatibility between preact's and react-bootstrap's typings*/ }
+                <Modal.Header {...{closeButton: true} as any}>
                     <label class="modal-title form-label">{title}</label>
                 </Modal.Header>
                 <form onSubmit={async (e) => {
                     e.preventDefault();
                     e.stopPropagation();
 
-                    if (onCheck && !await onCheck()) {
+                    if (!(e.target as HTMLFormElement).checkValidity() || (e.target as HTMLFormElement).querySelector(".is-invalid")) {
                         return;
                     }
 
-                    if (!(e.target as HTMLFormElement).checkValidity() || (e.target as HTMLFormElement).querySelector(".is-invalid")) {
+                    if (onCheck && !await onCheck()) {
                         return;
                     }
 
                     await onSubmit();
                     await onHide();
                 }}>
-                    <Modal.Body>
+                    <Modal.Body className="pb-0">
                         {(toChildArray(children) as VNode[]).map(c => cloneElement(c, {idContext: this.idContext}))}
                     </Modal.Body>
                     <Modal.Footer>

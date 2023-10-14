@@ -20,7 +20,7 @@
 import * as util from "../../ts/util";
 
 import { h, Context, Fragment } from "preact";
-import {useContext, useState} from "preact/hooks";
+import { useContext, useState } from "preact/hooks";
 import { JSXInternal } from "preact/src/jsx";
 import { Button } from "react-bootstrap";
 import { __ } from "../../ts/translation";
@@ -46,7 +46,7 @@ export function InputFile(props: InputFileProps) {
 
     const percent = (progress * 100).toFixed(0);
 
-    const id = props.idContext ? useContext(props.idContext) : undefined;
+    const id = !props.idContext ? util.useId() : useContext(props.idContext);
 
     const upload = async () => {
         if(props.onUploadStart && !await props.onUploadStart(file))
@@ -86,8 +86,8 @@ export function InputFile(props: InputFileProps) {
         <div hidden={!uploading}>
             <div class="form-progress mb-1">
                 <div class="progress-bar form-control progress-bar-no-transition"
-                    role="progressbar" style={"width: " + percent + "%"} aria-valuenow={percent} aria-valuemin="0"
-                    aria-valuemax="100"></div>
+                    role="progressbar" style={"width: " + percent + "%"} aria-valuenow={progress * 100} aria-valuemin={0}
+                    aria-valuemax={100}></div>
             </div>
             <label>{__("component.input_file.uploading")}</label>
         </div>

@@ -19,12 +19,9 @@
 
 import { h, Component, render, ComponentChildren } from "preact";
 import { Button, Modal } from "react-bootstrap";
-import { __ } from "../translation";
-
 import * as util from "../../ts/util";
 
 interface AsyncModalProps {
-
 }
 
 interface AsyncModalStrings {
@@ -69,7 +66,8 @@ export class AsyncModal extends Component<AsyncModalProps, AsyncModalState> {
     render(props: AsyncModalProps, state: Readonly<AsyncModalState>) {
         return (
            <Modal show={state.show} onHide={() => {this.hide(false)}} centered>
-                <Modal.Header closeButton>
+                {/* There seems to be an incompatibility between preact's and react-bootstrap's typings*/ }
+                <Modal.Header {...{closeButton: true} as any}>
                     <label class="modal-title form-label">{state.title}</label>
                 </Modal.Header>
                 <Modal.Body>{state.body}</Modal.Body>

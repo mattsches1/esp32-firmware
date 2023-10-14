@@ -1,4 +1,30 @@
+/* esp32-firmware
+ * Copyright (C) 2023 Frederic Henrichs <frederic@tinkerforge.com>
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the
+ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+ * Boston, MA 02111-1307, USA.
+ */
+
+import { h } from "preact";
+import { __ } from "../../ts/translation";
+import * as util from "../../ts/util";
+import * as API from "../../ts/api";
+import { Cron } from "../cron/main";
 import { CronActionID } from "../cron/cron_defs";
+import { CronComponent, CronAction } from "../cron/types";
+import { InputSelect } from "../../ts/components/input_select";
 
 export type ChargeLimitsCronAction = [
     CronActionID.ChargeLimits,
@@ -8,15 +34,7 @@ export type ChargeLimitsCronAction = [
     }
 ];
 
-import * as util from "../../ts/util";
-import * as API from "../../ts/api"
-import { h } from "preact"
-import { __ } from "../../ts/translation";
-import { Cron } from "../cron/main";
-import { CronComponent, CronAction, cron_action_components } from "../cron/api";
-import { InputSelect } from "../../ts/components/input_select";
-
-function ChargeLimitsCronActionComponent(action: CronAction): CronComponent {
+function ChargeLimitsCronActionComponent(action: CronAction): VNode {
     const value = (action as ChargeLimitsCronAction)[1];
     const durations = [
         __("charge_limits.content.unlimited"),
@@ -29,28 +47,10 @@ function ChargeLimitsCronActionComponent(action: CronAction): CronComponent {
         __("charge_limits.content.h4"),
         __("charge_limits.content.h6"),
         __("charge_limits.content.h8"),
-        __("charge_limits.content.h12")
+        __("charge_limits.content.h12"),
     ]
 
-    let fieldNames = [
-        __("charge_limits.content.duration")
-    ];
-    let fieldValues = [
-        durations[value.duration]
-    ];
-    let ret =  __("charge_limits.content.duration") + ": " + durations[value.duration];
-    if (API.hasFeature("meter")) {
-        fieldNames = fieldNames.concat([__("charge_limits.content.energy")]);
-        fieldValues = fieldValues.concat([(value.energy_wh != 0 ? value.energy_wh / 1000 + " kWh" : __("charge_limits.content.unlimited"))]);
-
-        ret += ", " + __("charge_limits.content.energy") + ": " + (value.energy_wh != 0 ? value.energy_wh / 1000 + " kWh" : __("charge_limits.content.unlimited"));
-    }
-
-    return {
-        text: ret,
-        fieldNames: fieldNames,
-        fieldValues: fieldValues
-    };
+    return __("charge_limits.content.cron_action_text")(durations[value.duration], value.energy_wh);
 }
 
 function ChargeLimitsCronActionConfig(cron: Cron, action: CronAction) {
@@ -69,7 +69,7 @@ function ChargeLimitsCronActionConfig(cron: Cron, action: CronAction) {
         ["70000", util.toLocaleFixed(70, 0) + " kWh"],
         ["80000", util.toLocaleFixed(80, 0) + " kWh"],
         ["90000", util.toLocaleFixed(90, 0) + " kWh"],
-        ["100000", util.toLocaleFixed(100, 0) + " kWh"]
+        ["100000", util.toLocaleFixed(100, 0) + " kWh"],
     ];
 
     const duration_items: [string, string][] = [
@@ -83,7 +83,7 @@ function ChargeLimitsCronActionConfig(cron: Cron, action: CronAction) {
         ["7", __("charge_limits.content.h4")],
         ["8", __("charge_limits.content.h6")],
         ["9", __("charge_limits.content.h8")],
-        ["10", __("charge_limits.content.h12")]
+        ["10", __("charge_limits.content.h12")],
     ];
 
     const meter_entry = API.hasFeature("meter") ? [
@@ -114,16 +114,21 @@ function ChargeLimitsCronActionFactory(): CronAction {
         CronActionID.ChargeLimits,
         {
             duration: 0,
-            energy_wh: 0
-        }
+            energy_wh: 0,
+        },
     ];
 }
 
 export function init() {
-    cron_action_components[CronActionID.ChargeLimits] = {
-        config_builder: ChargeLimitsCronActionFactory,
-        config_component: ChargeLimitsCronActionConfig,
-        table_row: ChargeLimitsCronActionComponent,
-        name: __("charge_limits.content.charge_limits")
+    return {
+        action_components: {
+            [CronActionID.ChargeLimits]: {
+                clone: (action: CronAction) => [action[0], {...action[1]}] as CronAction,
+                config_builder: ChargeLimitsCronActionFactory,
+                config_component: ChargeLimitsCronActionConfig,
+                table_row: ChargeLimitsCronActionComponent,
+                name: __("charge_limits.content.charge_limits"),
+            },
+        },
     };
 }

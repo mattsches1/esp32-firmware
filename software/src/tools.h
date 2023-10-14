@@ -24,14 +24,14 @@
 #include <time.h>
 #include <new>
 
-#include "config.h"
-
 #include "bindings/hal_common.h"
 
 #include "esp_log.h"
+#include "FS.h"
 #include "driver/i2c.h"
 #include "lwip/dns.h"
 
+#include "event_log.h"
 #include "strong_typedef.h"
 
 #define MACRO_NAME_TO_STRING(x) #x
@@ -78,6 +78,10 @@ void remove_directory(const char *path);
 
 bool is_in_subnet(IPAddress ip, IPAddress subnet, IPAddress to_check);
 bool is_valid_subnet_mask(IPAddress subnet);
+
+extern TaskHandle_t mainTaskHandle;
+void set_main_task_handle();
+inline bool running_in_main_task() {return mainTaskHandle == xTaskGetCurrentTaskHandle();}
 
 void led_blink(int8_t led_pin, int interval, int blinks_per_interval, int off_time_ms);
 

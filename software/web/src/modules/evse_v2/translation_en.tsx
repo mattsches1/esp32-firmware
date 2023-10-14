@@ -52,7 +52,47 @@ let x = {
             "abort": "Abort",
             "reset": "Reset",
             "trigger_dc_fault_test": "Test DC fault protector",
-            "time_since_dc_fault_check": "Time since last DC fault protector test"
+            "time_since_dc_fault_check": "Time since last DC fault protector test",
+            "cron_sd_trigger_text": /*FFN*/(state: boolean) => {
+                let ret = "";
+                if (state) {
+                    ret += "open";
+                } else {
+                    ret += "closed";
+                }
+                return <>
+                    If the shutdown input switches to <b>{ret}</b>{" "}
+                </>
+            }/*NF*/,
+            "cron_gpin_trigger_text": /*FFN*/(state: boolean) => {
+                let ret = "";
+                if (state) {
+                    ret += "open";
+                } else {
+                    ret += "closed";
+                }
+                return <>
+                    If the General Purpose input switches to <b>{ret}</b>{" "}
+                </>
+            }/*NF*/,
+            "cron_button_trigger_text": /*FFN*/(state: boolean) => {
+                let ret = "";
+                if (state) {
+                    ret = "pressed";
+                } else {
+                    ret = "released";
+                }
+                return <>
+                    If the button is <b>{ret}</b>{" "}
+                </>
+            }/*NF*/,
+            "cron_gpout_action_text": /*FFN*/(state: number) => {
+                if (state) {
+                    return <>set general purpose output to <b>high impedance</b>.</>;
+                } else {
+                    return <><b>connect</b> general purpose output <b>to ground</b>.</>;
+                }
+            }/*NF*/
         },
         "script": {
             "reset_dc_fault_current_failed": "Reset of the DC fault protector failed",

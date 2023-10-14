@@ -1,4 +1,6 @@
-{
+/** @jsxImportSource preact */
+import { h } from "preact";
+let x = {
     "nfc": {
         "status": {
         },
@@ -41,11 +43,25 @@
             "trigger_charge_any": "Ladevorgang Start/Stopp",
             "trigger_charge_start": "Ladevorgang Start",
             "trigger_charge_stop": "Ladevorgang Stopp",
-            "tag_action": "Tag Aktion"
+            "tag_action": "Tag Aktion",
+
+            "last_seen_and_known_tags": "Zuletzt erkannte und bekannte Tags",
+            "cron_action_text": /*FFN*/(tag_id: string, tag_type: string, tag_action: number) => {
+                return <>
+                    fake das vorhalten des NFC-Tag <b>{tag_id}</b> ({tag_type}) um einen Ladevorgang zu {tag_action == 1 ? "starten." : tag_action == 2 ? "stoppen." : "."}.
+                </>
+            }/*NF*/,
+            "cron_trigger_text": /*FFN*/(tag_id: string, tag_type: string) => {
+                return (
+                <>
+                    Wenn das NFC-Tag '<b>{tag_id}</b>' ({tag_type}) erkannt wird,{" "}
+                </>
+                );
+  }/*NF*/
         },
         "script": {
             "not_seen": "Unbekannt",
-            "save_failed": "Aktualisieren der NFC-Einstellungen fehlgeschlagen",
+            "save_failed": "Speichern der NFC-Einstellungen fehlgeschlagen.",
             "reboot_content_changed": "NFC-Einstellungen",
             "not_assigned": "Nicht zugeordnet",
             "not_assigned_desc": "Dieses Tag kann keinen Ladevorgang freigeben."

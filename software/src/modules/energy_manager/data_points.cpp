@@ -670,20 +670,20 @@ bool EnergyManager::set_energy_manager_daily_data_point(const struct tm *local,
         char energy_general_in_str[6][13] = {"null", "null", "null", "null", "null", "null"};
         char energy_general_out_str[6][13] = {"null", "null", "null", "null", "null", "null"};
 
-        if (energy_grid_in != INT32_MAX) {
+        if (energy_grid_in != UINT32_MAX) {
             snprintf(energy_grid_in_str, sizeof(energy_grid_in_str), "%.2f", (double)energy_grid_in / 100.0); // dWh -> kWh
         }
 
-        if (energy_grid_out != INT32_MAX) {
+        if (energy_grid_out != UINT32_MAX) {
             snprintf(energy_grid_out_str, sizeof(energy_grid_out_str), "%.2f", (double)energy_grid_out / 100.0); // dWh -> kWh
         }
 
         for (int i = 0; i < 6; ++i) {
-            if (energy_general_in[i] != INT32_MAX) {
+            if (energy_general_in[i] != UINT32_MAX) {
                 snprintf(energy_general_in_str[i], sizeof(energy_general_in_str[i]), "%.2f", (double)energy_general_in[i] / 100.0); // dWh -> kWh
             }
 
-            if (energy_general_out[i] != INT32_MAX) {
+            if (energy_general_out[i] != UINT32_MAX) {
                 snprintf(energy_general_out_str[i], sizeof(energy_general_out_str[i]), "%.2f", (double)energy_general_out[i] / 100.0); // dWh -> kWh
             }
         }

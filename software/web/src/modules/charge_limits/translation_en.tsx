@@ -1,4 +1,6 @@
-{
+/** @jsxImportSource preact */
+import { h } from "preact";
+let x = {
     "charge_limits": {
         "content": {
             "charge_limits": "Charge limits",
@@ -22,7 +24,20 @@
             "h4": "4 Hours",
             "h6": "6 Hours",
             "h8": "8 Hours",
-            "h12": "12 Hours"
+            "h12": "12 Hours",
+            "cron_trigger_text": "If the charge limit is reached, ",
+            "cron_action_text": /*FFN*/(duration: string, energy: number) => {
+                return (
+                  <>
+                    set the charge limit to{" "}
+                    {duration !== "Unlimited" && <b>{duration}</b>}
+                    {duration !== "Unlimited" && energy !== 0 && " and "}
+                    {energy !== 0 && <b>{energy / 1000} kWh</b>}
+                    {duration === "Unlimited" && energy === 0 && "unlimited"}
+                    {"."}
+                  </>
+                );
+            }/*NF*/
         },
         "script": {
             "override_failed": "Override failed"

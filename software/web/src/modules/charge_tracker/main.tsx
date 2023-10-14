@@ -39,8 +39,8 @@ import { InputFloat } from "../../ts/components/input_float";
 import { SubPage } from "../../ts/components/sub_page";
 import { useMemo } from "preact/hooks";
 
-type Charge = API.getType['charge_tracker/last_charges'][0];
-type ChargetrackerConfig = API.getType['charge_tracker/config'];
+type Charge = API.getType["charge_tracker/last_charges"][0];
+type ChargeTrackerConfig = API.getType["charge_tracker/config"];
 
 interface S {
     user_filter: string
@@ -93,11 +93,15 @@ function TrackedCharge(props: {charge: Charge, users: API.getType['users/config'
     </ListGroupItem>
 }
 
-export class ChargeTracker extends ConfigComponent<'charge_tracker/config', {}, ChargeTrackerState & ChargetrackerConfig> {
+export class ChargeTracker extends ConfigComponent<'charge_tracker/config', {}, ChargeTrackerState & ChargeTrackerConfig> {
     constructor() {
         super('charge_tracker/config',
-                __("charge_tracker.script.save_failed"),
-                __("charge_tracker.script.reboot_content_changed"));
+              __("charge_tracker.script.save_failed"),
+              __("charge_tracker.script.reboot_content_changed"), {
+                  user_filter: "-2",
+                  file_type: "0",
+                  csv_flavor: 'excel'
+              });
 
         util.addApiEventListener('users/config', () => {
             let user_filter_items: [string, string][] = API.get('users/config').users.map(x => [x.id.toString(), (x.display_name == "Anonymous" && x.id == 0) ? __("charge_tracker.script.unknown_users") : x.display_name]);
@@ -118,12 +122,6 @@ export class ChargeTracker extends ConfigComponent<'charge_tracker/config', {}, 
             let conf = API.get('charge_tracker/config');
             this.setState({electricity_price: conf.electricity_price});
         });
-
-        this.state = {
-            user_filter: "-2",
-            file_type: "0",
-            csv_flavor: 'excel'
-        } as any
     }
 
     get_last_charges(charges: Readonly<Charge[]>, price: number) {
@@ -191,7 +189,7 @@ export class ChargeTracker extends ConfigComponent<'charge_tracker/config', {}, 
                         default:
                             return x != user_filter;
                     }
-                }
+                };
 
                 if (start <= end) {
                     for(let i = 0; i < buffer.byteLength; i += 16) {
@@ -220,7 +218,7 @@ export class ChargeTracker extends ConfigComponent<'charge_tracker/config', {}, 
                         let filtered = users_config.users.filter(x => x.id == user_id);
 
                         let display_name = "";
-                        let username = ""
+                        let username = "";
                         if (user_id == 0) {
                             if (filtered[0].display_name == "Anonymous")
                                 display_name = __("charge_tracker.script.unknown_user");
@@ -273,17 +271,17 @@ export class ChargeTracker extends ConfigComponent<'charge_tracker/config', {}, 
             .catch(err => util.add_alert("download-charge-log", "alert-danger", __("charge_tracker.script.download_charge_log_failed"), err));
     }
 
-    override async isSaveAllowed(cfg: ChargetrackerConfig) {
+    override async isSaveAllowed(cfg: ChargeTrackerConfig) {
         return cfg.electricity_price == 0 || cfg.electricity_price >= 100
     }
 
-    render(props: {}, state: Readonly<ChargeTrackerState> & ChargetrackerConfig) {
+    render(props: {}, state: Readonly<ChargeTrackerState> & ChargeTrackerConfig) {
         if (!util.render_allowed())
             return <></>
 
         return (
             <SubPage>
-                <ConfigForm id="charge_tracker_config_form" title={__("charge_tracker.content.charge_tracker")} onSave={this.save} isModified={this.isModified()} onReset={this.reset} onDirtyChange={(d) => this.ignore_updates = d}>
+                <ConfigForm id="charge_tracker_config_form" title={__("charge_tracker.content.charge_tracker")} isModified={this.isModified()} isDirty={this.isDirty()} onSave={this.save} onReset={this.reset} onDirtyChange={this.setDirty}>
                     <FormRow label={__("charge_tracker.content.price")}>
                         <InputFloat class={state.electricity_price == 0 || state.electricity_price >= 100 ? "" : "is-invalid"} value={state.electricity_price} onValue={this.set('electricity_price')} digits={2} unit={'ct/kWh'} max={65535} min={0}/>
                         <div class="invalid-feedback">{__("charge_tracker.content.price_invalid")}</div>
@@ -523,12 +521,12 @@ function ChargeTrackerStatus() {
         </>;
 }
 
-render(<ChargeTrackerStatus/>, $('#status-charge_tracker')[0]);
+render(<ChargeTrackerStatus />, $("#status-charge_tracker")[0]);
 
 export function init() {}
 
 export function add_event_listeners(source: API.APIEventTarget) {}
 
 export function update_sidebar_state(module_init: any) {
-    $('#sidebar-charge_tracker').prop('hidden', !module_init.charge_tracker);
+    $("#sidebar-charge_tracker").prop("hidden", !module_init.charge_tracker);
 }

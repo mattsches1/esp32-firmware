@@ -85,43 +85,44 @@ bool WebSockets::queueFull()
     return false;
 }
 
-const char *work_state = "";
+static bool send_ws_work_item(WebSockets *ws, ws_work_item wi) {
+    httpd_ws_frame_t ws_pkt;
+    memset(&ws_pkt, 0, sizeof(httpd_ws_frame_t));
+
+    ws_pkt.payload = (uint8_t *)wi.payload;
+    ws_pkt.len = wi.payload_len;
+    ws_pkt.type = wi.payload_len == 0 ? HTTPD_WS_TYPE_PING : HTTPD_WS_TYPE_TEXT;
+
+    bool result = true;
+
+    for (int i = 0; i < MAX_WEB_SOCKET_CLIENTS; ++i) {
+        if (wi.fds[i] == -1) {
+            continue;
+        }
+
+        if (httpd_ws_get_fd_info(wi.hd, wi.fds[i]) != HTTPD_WS_CLIENT_WEBSOCKET) {
+            continue;
+        }
+
+        if (httpd_ws_send_frame_async(wi.hd, wi.fds[i], &ws_pkt) != ESP_OK) {
+            ws->keepAliveCloseDead(wi.fds[i]);
+            result = false;
+        }
+    }
+
+    return result;
+}
+
 static void work(void *arg)
 {
-    work_state = "start";
     WebSockets *ws = (WebSockets *)arg;
 
     ws_work_item wi;
     while (ws->haveWork(&wi)) {
-        work_state = "have_work";
-        httpd_ws_frame_t ws_pkt;
-        memset(&ws_pkt, 0, sizeof(httpd_ws_frame_t));
-
-        ws_pkt.payload = (uint8_t *)wi.payload;
-        ws_pkt.len = wi.payload_len;
-        ws_pkt.type = wi.payload_len == 0 ? HTTPD_WS_TYPE_PING : HTTPD_WS_TYPE_TEXT;
-
-        work_state = "loop";
-        for (int i = 0; i < MAX_WEB_SOCKET_CLIENTS; ++i) {
-            if (wi.fds[i] == -1) {
-                continue;
-            }
-            work_state = "get_info";
-            if (httpd_ws_get_fd_info(wi.hd, wi.fds[i]) != HTTPD_WS_CLIENT_WEBSOCKET) {
-                continue;
-            }
-            work_state = "send";
-            if (httpd_ws_send_frame_async(wi.hd, wi.fds[i], &ws_pkt) != ESP_OK) {
-                work_state = "close_dead";
-                ws->keepAliveCloseDead(wi.fds[i]);
-            }
-            work_state = "send_done";
-        }
-        work_state = "clear";
+        send_ws_work_item(ws, wi);
         clear_ws_work_item(&wi);
-        work_state = "loop_end";
     }
-    work_state = "done";
+
     ws->worker_start_errors = 0;
     ws->worker_active = false;
 #if MODULE_WATCHDOG_AVAILABLE()
@@ -352,24 +353,27 @@ void WebSockets::receivedPong(int fd)
     }
 }
 
-void WebSocketsClient::send(const char *payload, size_t payload_len)
+bool WebSocketsClient::sendOwnedBlocking_HTTPThread(char *payload, size_t payload_len)
 {
-    ws->sendToClient(payload, payload_len, fd);
+    ws_work_item wi{server.httpd, {this->fd, -1, -1, -1, -1}, payload, payload_len};
+    bool result = send_ws_work_item(ws, wi);
+    clear_ws_work_item(&wi);
+    return result;
 }
 
-void WebSocketsClient::sendOwned(char *payload, size_t payload_len)
-{
-    ws->sendToClientOwned(payload, payload_len, fd);
+void WebSocketsClient::close_HTTPThread() {
+    ws->keepAliveCloseDead(fd);
 }
 
-void WebSockets::sendToClient(const char *payload, size_t payload_len, int fd)
+bool WebSockets::sendToClient(const char *payload, size_t payload_len, int fd)
 {
+    // Connection was closed -> message was "sent", as in it has not to be resent
     if (httpd_ws_get_fd_info(server.httpd, fd) != HTTPD_WS_CLIENT_WEBSOCKET)
-        return;
+        return true;
 
     char *payload_copy = (char *)malloc(payload_len * sizeof(char));
     if (payload_copy == nullptr) {
-        return;
+        return false;
     }
 
     memcpy(payload_copy, payload, payload_len);
@@ -377,26 +381,28 @@ void WebSockets::sendToClient(const char *payload, size_t payload_len, int fd)
     std::lock_guard<std::recursive_mutex> lock{work_queue_mutex};
     if (queueFull()) {
         free(payload_copy);
-        return;
+        return false;
     }
 
     work_queue.push_back({server.httpd, {fd, -1, -1, -1, -1}, payload_copy, payload_len});
+    return true;
 }
 
-void WebSockets::sendToClientOwned(char *payload, size_t payload_len, int fd)
+bool WebSockets::sendToClientOwned(char *payload, size_t payload_len, int fd)
 {
     if (httpd_ws_get_fd_info(server.httpd, fd) != HTTPD_WS_CLIENT_WEBSOCKET) {
         free(payload);
-        return;
+        return true;
     }
 
     std::lock_guard<std::recursive_mutex> lock{work_queue_mutex};
     if (queueFull()) {
         free(payload);
-        return;
+        return false;
     }
 
     work_queue.push_back({server.httpd, {fd, -1, -1, -1, -1}, payload, payload_len});
+    return true;
 }
 
 bool WebSockets::haveActiveClient()
@@ -419,11 +425,11 @@ bool WebSockets::haveFreeSlot()
     return false;
 }
 
-void WebSockets::sendToAllOwned(char *payload, size_t payload_len)
+bool WebSockets::sendToAllOwned(char *payload, size_t payload_len)
 {
     if (!this->haveActiveClient()) {
         free(payload);
-        return;
+        return true;
     }
 
     // Copy over to not hold both mutexes at the same time.
@@ -436,20 +442,21 @@ void WebSockets::sendToAllOwned(char *payload, size_t payload_len)
     std::lock_guard<std::recursive_mutex> lock{work_queue_mutex};
     if (queueFull()) {
         free(payload);
-        return;
+        return false;
     }
     work_queue.push_back({server.httpd, {}, payload, payload_len});
     memcpy(work_queue.back().fds, fds, sizeof(fds));
+    return true;
 }
 
-void WebSockets::sendToAll(const char *payload, size_t payload_len)
+bool WebSockets::sendToAll(const char *payload, size_t payload_len)
 {
     if (!this->haveActiveClient())
-        return;
+        return true;
 
     char *payload_copy = (char *)malloc(payload_len * sizeof(char));
     if (payload_copy == nullptr) {
-        return;
+        return false;
     }
     memcpy(payload_copy, payload, payload_len);
 
@@ -463,11 +470,12 @@ void WebSockets::sendToAll(const char *payload, size_t payload_len)
     std::lock_guard<std::recursive_mutex> lock{work_queue_mutex};
     if (queueFull()) {
         free(payload_copy);
-        return;
+        return false;
     }
 
     work_queue.push_back({server.httpd, {}, payload_copy, payload_len});
     memcpy(work_queue.back().fds, fds, sizeof(fds));
+    return true;
 }
 
 static uint32_t last_worker_run = 0;
@@ -586,7 +594,7 @@ void WebSockets::start(const char *uri)
     api.addState("info/ws", &state, {}, 1000);
 }
 
-void WebSockets::onConnect(std::function<void(WebSocketsClient)> fn)
+void WebSockets::onConnect_HTTPThread(std::function<void(WebSocketsClient)> fn)
 {
     on_client_connect_fn = fn;
 }

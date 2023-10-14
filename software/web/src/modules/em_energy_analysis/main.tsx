@@ -31,7 +31,7 @@ import { InputSelect } from "../../ts/components/input_select";
 import { FormRow } from "../../ts/components/form_row";
 import { OutputFloat } from "../../ts/components/output_float";
 import { SubPage } from "../../ts/components/sub_page";
-import uPlot from 'uplot';
+import uPlot from "uplot";
 import { InputText } from "../../ts/components/input_text";
 import { uPlotTimelinePlugin } from "../../ts/uplot-plugins";
 
@@ -59,13 +59,13 @@ interface Wallbox5minData extends CachedData {
     complete: boolean;
     flags: number[]; // bit 0-2 = charger state, bit 7 = no data
     power: number[];
-};
+}
 
 interface WallboxDailyData extends CachedData {
     empty: boolean;
     complete: boolean;
     energy: number[]; // kWh
-};
+}
 
 interface EnergyManager5minData extends CachedData {
     empty: boolean;
@@ -74,7 +74,7 @@ interface EnergyManager5minData extends CachedData {
     power_grid: number[]; // W
     power_grid_empty: boolean;
     power_general: number[][]; // W
-};
+}
 
 interface EnergyManagerDailyData extends CachedData {
     empty: boolean;
@@ -83,7 +83,7 @@ interface EnergyManagerDailyData extends CachedData {
     energy_grid_out: number[]; // kWh
     energy_general_in: number[][]; // kWh
     energy_general_out: number[][]; // kWh
-};
+}
 
 // https://seaborn.pydata.org/tutorial/color_palettes.html#qualitative-color-palettes
 // sns.color_palette("tab10")
@@ -209,7 +209,7 @@ interface UplotLoaderProps {
     show: boolean;
     marker_class: 'h3'|'h4';
     children: ComponentChildren;
-};
+}
 
 class UplotLoader extends Component<UplotLoaderProps, {}> {
     no_data_ref = createRef();
@@ -323,7 +323,7 @@ class UplotFlagsWrapper extends Component<UplotFlagsWrapperProps, {}> {
                     value: (self: uPlot, rawValue: number) => {
                         if (rawValue !== null) {
                             if (this.props.legend_time_with_minutes) {
-                                return util.timestamp_min_to_date((rawValue / 60), '???');
+                                return util.timestamp_min_to_date(rawValue / 60);
                             }
                             else {
                                 return new Date(rawValue * 1000).toLocaleDateString([], {year: 'numeric', month: '2-digit', day: '2-digit'});
@@ -474,7 +474,7 @@ class UplotFlagsWrapper extends Component<UplotFlagsWrapperProps, {}> {
         }
 
         this.uplot.setSize(size);
-    };
+    }
 
     get_size() {
         let div = this.div_ref.current;
@@ -674,7 +674,7 @@ class UplotWrapper extends Component<UplotWrapperProps, {}> {
                     value: (self: uPlot, rawValue: number) => {
                         if (rawValue !== null) {
                             if (this.props.legend_time_with_minutes) {
-                                return util.timestamp_min_to_date((rawValue / 60), '???');
+                                return util.timestamp_min_to_date(rawValue / 60);
                             }
                             else {
                                 return new Date(rawValue * 1000).toLocaleDateString([], {year: 'numeric', month: '2-digit', day: '2-digit'});
@@ -699,6 +699,8 @@ class UplotWrapper extends Component<UplotWrapperProps, {}> {
                         3600 * 12,
                         3600 * 24,
                         3600 * 48,
+                        3600 * 72,
+                        3600 * 168,
                     ],
                     values: (self: uPlot, splits: number[]) => {
                         let values: string[] = new Array(splits.length);
@@ -881,7 +883,7 @@ class UplotWrapper extends Component<UplotWrapperProps, {}> {
         }
 
         this.uplot.setSize(size);
-    };
+    }
 
     get_size() {
         let div = this.div_ref.current;
@@ -1146,7 +1148,7 @@ export class EMEnergyAnalysisStatus extends Component<{}, {force_render: number}
 
         // As we don't check util.render_allowed(),
         // we have to handle rendering before the web socket connection is established.
-        let power = API.get_maybe('meter/values')?.power ?? 0;
+        let power = API.get_unchecked('meter/values')?.power ?? 0;
 
         return (
             <>
@@ -2097,7 +2099,7 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
             all.push(this.update_wallbox_5min_cache(charger.uid, date));
         }
 
-        let result = await Promise<boolean[]>.all(all);
+        let result = await (Promise<boolean[]>).all(all);
 
         for (let success of result) {
             if (!success) {
@@ -2276,7 +2278,7 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
             all.push(this.update_wallbox_daily_cache(charger.uid, date));
         }
 
-        let result = await Promise<boolean[]>.all(all);
+        let result = await (Promise<boolean[]>).all(all);
 
         for (let success of result) {
             if (!success) {

@@ -39,18 +39,38 @@ void WS::setup()
 
 void WS::register_urls()
 {
-    web_sockets.onConnect([this](WebSocketsClient client) {
+    web_sockets.onConnect_HTTPThread([this](WebSocketsClient client) {
         CoolString to_send;
         auto result = task_scheduler.await([&to_send](){
+            size_t required = 1; // \0
+            for (auto &reg : api.states) {
+                required += 10;
+                required += reg.path.length();
+                required += 12;
+                required += reg.config->string_length();
+                required += 2;
+            }
+
+            if (!to_send.reserve(required)) {
+                return;
+            }
+
+
             for (auto &reg : api.states) {
                 to_send += "{\"topic\":\"" + reg.path + "\",\"payload\":" + reg.config->to_string_except(reg.keys_to_censor) + "}\n";
             }
         });
 
         if (result == TaskScheduler::AwaitResult::Done) {
+            if (to_send.length() == 0) {
+                client.close_HTTPThread();
+                return;
+            }
+
             size_t len;
             char *p = to_send.releaseOwnership(&len);
-            client.sendOwned(p, len);
+            if (!client.sendOwnedBlocking_HTTPThread(p, len))
+                return;
         }
 
         for (auto &callback : on_connect_callbacks) {
@@ -68,7 +88,7 @@ void WS::register_urls()
     }, 1000, 1000);
 }
 
-void WS::addOnConnectCallback(std::function<void(WebSocketsClient)> callback)
+void WS::addOnConnectCallback_HTTPThread(std::function<void(WebSocketsClient)> callback)
 {
     on_connect_callbacks.push_back(callback);
 }
@@ -125,9 +145,7 @@ bool WS::pushStateUpdate(size_t stateIdx, const String &payload, const String &p
     memcpy(ptr, suffix, suffix_len);
     ptr += suffix_len;
 
-    web_sockets.sendToAllOwned(to_send, to_send_len);
-
-    return true;
+    return web_sockets.sendToAllOwned(to_send, to_send_len);
 }
 
 bool WS::pushRawStateUpdate(const String &payload, const String &path)

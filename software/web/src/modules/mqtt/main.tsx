@@ -36,7 +36,7 @@ import { Switch } from "../../ts/components/switch";
 import { IndicatorGroup } from "../../ts/components/indicator_group";
 import { SubPage } from "../../ts/components/sub_page";
 
-type MqttConfig = API.getType['mqtt/config'];
+type MqttConfig = API.getType["mqtt/config"];
 
 interface MqttState {
     auto_discovery_config: API.getType['mqtt/auto_discovery_config'];
@@ -65,7 +65,7 @@ export class Mqtt extends ConfigComponent<'mqtt/config', {}, MqttState> {
 
         return (
             <SubPage>
-                <ConfigForm id="mqtt_config_form" title={__("mqtt.content.mqtt")} isModified={this.isModified()} onSave={() => this.save()} onReset={this.reset} onDirtyChange={(d) => this.ignore_updates = d}>
+                <ConfigForm id="mqtt_config_form" title={__("mqtt.content.mqtt")} isModified={this.isModified()} isDirty={this.isDirty()} onSave={this.save} onReset={this.reset} onDirtyChange={this.setDirty}>
                     <FormRow label={__("mqtt.content.enable_mqtt")}>
                         <Switch desc={__("mqtt.content.enable_mqtt_desc")}
                                 checked={state.enable_mqtt}
@@ -199,12 +199,12 @@ export class MqttStatus extends Component<{}, MqttStatusState>
     }
 }
 
-render(<MqttStatus/>, $('#status-mqtt')[0]);
+render(<MqttStatus />, $("#status-mqtt")[0]);
 
 export function add_event_listeners(source: API.APIEventTarget) {}
 
 export function init() {}
 
 export function update_sidebar_state(module_init: any) {
-    $('#sidebar-mqtt').prop('hidden', !module_init.mqtt);
+    $("#sidebar-mqtt").prop("hidden", !module_init.mqtt);
 }

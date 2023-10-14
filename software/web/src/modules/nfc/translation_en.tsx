@@ -1,4 +1,6 @@
-{
+/** @jsxImportSource preact */
+import { h } from "preact";
+let x = {
     "nfc": {
         "status": {
         },
@@ -41,12 +43,25 @@
             "trigger_charge_any": "Charge start/stop",
             "trigger_charge_start": "Charge start",
             "trigger_charge_stop": "Charge stop",
-            "tag_action": "Tag action"
+            "tag_action": "Tag action",
+
+            "last_seen_and_known_tags": "Last seen tags and known tags",
+
+            "cron_action_text": /*FFN*/(tag_id: string, tag_type: string, tag_action: number) => {
+                return <>
+                    fake the presence of the NFC tag <b>{tag_id}</b> ({tag_type}) to {tag_action == 1 ? "start a charge." : tag_action == 2 ? "stop a charge." : "."}
+                </>
+            }/*NF*/,
+            "cron_trigger_text": /*FFN*/(tag_id: string, tag_type: string) => {
+                return <>
+                    If NFC tag '<b>{tag_id}</b>' ({tag_type}) is detected,{" "}
+                </>
+            }/*NF*/
         },
         "script": {
             "not_seen": "Unknown",
-            "save_failed": "Failed to update the NFC configuration",
-            "reboot_content_changed": "NFC configuration",
+            "save_failed": "Failed to save the NFC settings.",
+            "reboot_content_changed": "NFC settings",
             "not_assigned": "Not assigned",
             "not_assigned_desc": "This tag will not be able to start charges."
         }

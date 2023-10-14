@@ -19,18 +19,29 @@
 
 #include "event_log.h"
 
-#include "web_server.h"
+#include <time.h>
 
-#include "time.h"
-
+#include "config.h"
+#include "event_log_dependencies.h"
 #include "tools.h"
+#include "web_server.h"
+#include "TFJson.h"
 
 // Global definition here to match the declaration in event_log.h.
 EventLog logger;
 
+// event_log.h can't include config.h because config.h includes event_log.h
+static ConfigRoot boot_id;
+
 void EventLog::pre_init()
 {
     event_buf.setup();
+}
+
+void EventLog::pre_setup() {
+    boot_id = Config::Object({
+        {"boot_id", Config::Uint32(esp_random())}
+    });
 }
 
 void EventLog::get_timestamp(char buf[TIMESTAMP_LEN + 1])
@@ -89,6 +100,32 @@ void EventLog::write(const char *buf, size_t len)
     if (buf[len - 1] != '\n') {
         event_buf.push('\n');
     }
+
+#if MODULE_WS_AVAILABLE()
+    size_t req_len = 0;
+    {
+        TFJsonSerializer json{nullptr, 0};
+        json.add(buf, len, false);
+        req_len = json.end();
+    }
+
+    CoolString payload;
+    if (!payload.reserve(2 + TIMESTAMP_LEN + req_len + 1)) // 2 - \"\"; 1 - \0
+        return;
+
+    payload += '"';
+
+    payload.concat(timestamp_buf);
+
+    {
+        TFJsonSerializer json{payload.begin() + payload.length(), req_len + 1};
+        json.add(buf, len, false);
+        payload.setLength(payload.length() + json.end());
+    }
+
+    payload += '"';
+    ws.pushRawStateUpdate(payload, "event_log/message");
+#endif
 }
 
 void EventLog::printfln(const char *fmt, va_list args) {
@@ -146,4 +183,6 @@ void EventLog::register_urls()
 
         return request.endChunkedResponse();
     });
+
+    api.addState("event_log/boot_id", &boot_id);
 }

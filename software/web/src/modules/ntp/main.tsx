@@ -29,7 +29,6 @@ import { Switch } from "../../ts/components/switch";
 import { ConfigComponent } from "../../ts/components/config_component";
 import { ConfigForm } from "../../ts/components/config_form";
 import { FormRow } from "../../ts/components/form_row";
-
 import timezones from "./timezones";
 import { InputSelect } from "../../ts/components/input_select";
 import { Button } from "react-bootstrap";
@@ -37,7 +36,7 @@ import { InputText } from "../../ts/components/input_text";
 import { IndicatorGroup } from "../../ts/components/indicator_group";
 import { SubPage } from "../../ts/components/sub_page";
 
-type NTPConfig = API.getType['ntp/config'];
+type NTPConfig = API.getType["ntp/config"];
 
 export class NTP extends ConfigComponent<'ntp/config'> {
     constructor() {
@@ -71,10 +70,11 @@ export class NTP extends ConfigComponent<'ntp/config'> {
             <SubPage>
                 <ConfigForm id="ntp_config_form"
                             title={__("ntp.content.ntp")}
+                            isModified={this.isModified()}
+                            isDirty={this.isDirty()}
                             onSave={this.save}
                             onReset={this.reset}
-                            onDirtyChange={(d) => this.ignore_updates = d}
-                            isModified={this.isModified()}>
+                            onDirtyChange={this.setDirty}>
                     <FormRow label={__("ntp.content.enable")}>
                         <Switch desc={__("ntp.content.enable_desc")}
                                 checked={state.enable}
@@ -169,7 +169,7 @@ export class NTPStatus extends Component<{}, NTPStatusState>
             return <></>;
 
         return <>
-                <FormRow label={__("ntp.status.ntp")} label_muted={util.timestamp_min_to_date(state.state.time, "")} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4">
+                <FormRow label={__("ntp.status.ntp")} label_muted={util.timestamp_min_to_date(state.state.time)} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4">
                     <IndicatorGroup
                         style="width: 100%"
                         class="flex-wrap"
@@ -184,7 +184,7 @@ export class NTPStatus extends Component<{}, NTPStatusState>
     }
 }
 
-render(<NTPStatus/>, $('#status-ntp')[0]);
+render(<NTPStatus />, $("#status-ntp")[0]);
 
 export function init() {
 
@@ -193,5 +193,5 @@ export function init() {
 export function add_event_listeners(source: API.APIEventTarget) {}
 
 export function update_sidebar_state(module_init: any) {
-    $('#sidebar-ntp').prop('hidden', !module_init.ntp);
+    $("#sidebar-ntp").prop("hidden", !module_init.ntp);
 }

@@ -16,6 +16,8 @@
  * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
  * Boston, MA 02111-1307, USA.
  */
+
+#include "module_dependencies.h"
 #include "watchdog.h"
 
 #include <esp_task.h>
@@ -25,7 +27,8 @@
 #include "tools.h"
 
 #define WATCHDOG_MAX_REGS 10
-#define WATCHDOG_STACK_SIZE 1000
+// Highest observed stack usage was 616.
+#define WATCHDOG_STACK_SIZE 768
 
 static StaticTask_t xTaskBuffer;
 static StackType_t xStack[ WATCHDOG_STACK_SIZE ];
@@ -98,6 +101,10 @@ void Watchdog::pre_setup()
 void Watchdog::setup()
 {
     initialized = true;
+
+#if MODULE_DEBUG_AVAILABLE()
+    debug.register_task(xTask, WATCHDOG_STACK_SIZE);
+#endif
 }
 
 int Watchdog::add(const char *name, const char *message, uint32_t timeout_ms, uint32_t initial_deadline_ms)

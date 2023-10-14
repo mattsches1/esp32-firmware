@@ -22,12 +22,12 @@ import $ from "../../ts/jq";
 import * as API from "../../ts/api";
 import * as util from "../../ts/util";
 
-import { h, render, Fragment} from "preact";
+import { h, render, Fragment } from "preact";
 import { __ } from "../../ts/translation";
 
 import { FormRow } from "../../ts/components/form_row";
 import { FormSeparator } from "../../ts/components/form_separator";
-import { Table} from "react-bootstrap";
+import { Table } from "react-bootstrap";
 import { ConfigComponent } from "../../ts/components/config_component";
 import { ConfigForm } from "../../ts/components/config_form";
 import { InputPassword } from "../../ts/components/input_password";
@@ -40,7 +40,6 @@ interface ProxyState {
     devices: Readonly<API.getType['proxy/devices']>;
     error_counters: Readonly<API.getType['proxy/error_counters']>;
 }
-
 
 export class Proxy extends ConfigComponent<'proxy/config', {}, ProxyState> {
     constructor() {
@@ -64,7 +63,7 @@ export class Proxy extends ConfigComponent<'proxy/config', {}, ProxyState> {
 
         return (
             <SubPage>
-                <ConfigForm id="proxy_config_form" title={__("proxy.content.proxy")} isModified={this.isModified()} onSave={() => this.save()} onReset={this.reset} onDirtyChange={(d) => this.ignore_updates = d}>
+                <ConfigForm id="proxy_config_form" title={__("proxy.content.proxy")} isModified={this.isModified()} isDirty={this.isDirty()} onSave={this.save} onReset={this.reset} onDirtyChange={this.setDirty}>
                     <FormRow label={__("proxy.content.auth_secret")} label_muted={__("proxy.content.auth_secret_muted")}>
                         <InputPassword maxLength={64}
                                        value={state.authentication_secret}
@@ -136,16 +135,16 @@ export class Proxy extends ConfigComponent<'proxy/config', {}, ProxyState> {
                     </FormRow>
                 </ConfigForm>
             </SubPage>
-        )
+        );
     }
 }
 
-render(<Proxy />, $('#proxy')[0]);
+render(<Proxy />, $("#proxy")[0]);
 
 export function init() {}
 
 export function add_event_listeners(source: API.APIEventTarget) {}
 
 export function update_sidebar_state(module_init: any) {
-    $('#sidebar-proxy').prop('hidden', !module_init.proxy);
+    $("#sidebar-proxy").prop("hidden", !module_init.proxy);
 }

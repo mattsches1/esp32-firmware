@@ -19,9 +19,9 @@
 
 import { __ } from "../translation";
 import { h, Component, Fragment, VNode, ComponentChild } from "preact";
-import { Card, Button } from "react-bootstrap";
+import { Card, Button, Collapse } from "react-bootstrap";
 import { Plus, Edit3, Trash2 } from "react-feather";
-import { FormGroup } from "./form_group";
+import { FormRow } from "./form_row";
 import { ItemModal } from "./item_modal";
 import * as util from "../../ts/util";
 
@@ -29,19 +29,24 @@ export interface TableModalRow {
     name: string
     // FormRow only accepts VNodes, not other ComponentChild variants.
     value: VNode
-    valueClassList?: string
 }
 
 export interface TableRow {
+    key?: string
     columnValues: ComponentChild[]
+    extraShow?: boolean
+    extraFieldName?: string
+    extraValue?: ComponentChild
+    extraKey?: string
     fieldNames?: string[]
     fieldValues?: ComponentChild[]
+    fieldWithBox?: boolean[]
     editTitle?: string
     onEditStart?: () => Promise<void>
     onEditGetRows?: () => TableModalRow[]
     onEditCheck?: () => Promise<boolean>
     onEditCommit?: () => Promise<void>
-    onEditAbort?: () => Promise<void>
+    onEditHide?: () => Promise<void>
     onRemoveClick?: () => Promise<void>
 }
 
@@ -55,8 +60,8 @@ export interface TableProps {
     onAddGetRows?: () => TableModalRow[]
     onAddCheck?: () => Promise<boolean>
     onAddCommit?: () => Promise<void>
-    onAddAbort?: () => Promise<void>
-    tableTill?: string
+    onAddHide?: () => Promise<void>
+    tableTill?: 'xs' | 'sm' | 'md' | 'lg' | 'xl'
 }
 
 interface TableState {
@@ -83,11 +88,29 @@ export class Table extends Component<TableProps, TableState> {
         } as any;
     }
 
+    get_card_fields(row: TableRow) {
+        let names = (util.hasValue(row.fieldNames) ? row.fieldNames : this.props.columnNames).slice(1);
+        let values = (util.hasValue(row.fieldValues) ? row.fieldValues : row.columnValues).slice(1);
+
+        while (values.length > 0 && !util.hasValue(values[values.length - 1])) {
+            names.pop();
+            values.pop();
+        }
+
+        return names.map((name, i) => name ?
+            <FormRow label={name}>
+                {!util.hasValue(row.fieldWithBox) || row.fieldWithBox[i + 1] ?
+                    <span class="form-control" style="height: unset;" readonly>{value_or_else(values[i], <>&nbsp;</>)}</span>
+                    : <>{values[i]}</>}
+            </FormRow>
+            : (value_or_else(values[i], undefined)));
+    }
+
     render(props: TableProps, state: TableState) {
         return (
             <>
                 <Card className={`d-none d-${props.tableTill ? props.tableTill : 'sm'}-block`}><Card.Body style="padding: 0;">
-                <table class="table table-responsive" style="font-size: 1rem; margin-bottom: 0;">
+                <table class="table" style="font-size: 1rem; margin-bottom: 0;">
                     <thead>
                         <tr>
                             {props.columnNames.map((columnName) => (
@@ -101,12 +124,12 @@ export class Table extends Component<TableProps, TableState> {
                         </tr>
                     </thead>
                     <tbody>
-                        {props.rows.map((row, i) =>
-                            <tr>
+                        {props.rows.map((row, i) => <>
+                            <tr key={row.key}>
                                 {row.columnValues.map((value) => (
-                                    <td class="text-break" style="vertical-align: middle;">{value}</td>
+                                    <td class={"text-break" + (row.extraValue ? " pb-0" : "")} style="vertical-align: middle;">{value}</td>
                                 ))}
-                                <td style="width: 1%; white-space: nowrap; vertical-align: middle;">
+                                <td class={row.extraValue ? "pb-0" : undefined} style="width: 1%; white-space: nowrap; vertical-align: middle;">
                                     <Button variant="primary"
                                             size="sm"
                                             className="mr-2"
@@ -124,9 +147,21 @@ export class Table extends Component<TableProps, TableState> {
                                         <Trash2/>
                                     </Button>
                                 </td>
-                            </tr>)}
+                            </tr>
+                            {row.extraValue ?
+                                <tr key={row.extraKey}>
+                                    <td colSpan={props.columnNames.length + 1} class="pt-0" style="border-top: none;">
+                                        <Collapse in={row.extraShow}>
+                                            <div>
+                                                <Card className="mt-3"><Card.Body className="pb-0" style="padding: 1rem;">{row.extraValue}</Card.Body></Card>
+                                            </div>
+                                        </Collapse>
+                                    </td>
+                                </tr>
+                                : undefined}
+                        </>)}
                         {props.onAddStart ?
-                        <tr scope="col">
+                        <tr>
                             <td colSpan={props.columnNames.length} style="vertical-align: middle; width: 100%;">
                                 {props.addMessage}
                             </td>
@@ -171,13 +206,21 @@ export class Table extends Component<TableProps, TableState> {
                                 </Button>
                             </div>
                         </div>
-                        <Card.Body style="padding: 1rem;">
-                        {(util.hasValue(row.fieldNames) ? row.fieldNames : props.columnNames).slice(1).map((fieldOrColumnName, i, array) =>
-                            fieldOrColumnName ?
-                        <FormGroup label={fieldOrColumnName} classList={i == array.length - 1 ? " mb-0" : ""}>
-                            <span class="form-control" style="height: unset;" readonly>{util.hasValue(row.fieldValues) ? value_or_else(row.fieldValues[1 + i], <>&nbsp;</>) : value_or_else(row.columnValues[1 + i], <>&nbsp;</>)}</span>
-                        </FormGroup> : (util.hasValue(row.fieldValues) ? value_or_else(row.fieldValues[1 + i], <>&nbsp;</>) : value_or_else(row.columnValues[1 + i], <>&nbsp;</>)))}
-                    </Card.Body></Card>)}
+                        <Card.Body className="pb-0" style="padding: 1rem;">
+                            {this.get_card_fields(row)}
+                            {row.extraValue ?
+                                <Collapse in={row.extraShow}>
+                                    <div>
+                                        {row.extraFieldName ?
+                                            <FormRow label={row.extraFieldName}>
+                                                <Card><Card.Body className="pb-0" style="padding: 1rem;">{row.extraValue}</Card.Body></Card>
+                                            </FormRow>
+                                            : <Card><Card.Body className="pb-0" style="padding: 1rem;">{row.extraValue}</Card.Body></Card>}
+                                    </div>
+                                </Collapse>
+                                : undefined}
+                        </Card.Body>
+                    </Card>)}
                     {props.onAddStart ?
                     <Card className="mb-0">
                         <div class="card-body d-flex justify-content-between align-items-center" style="padding: 1rem;">
@@ -211,15 +254,13 @@ export class Table extends Component<TableProps, TableState> {
                         if (props.onAddCommit) {
                             await props.onAddCommit();
                         }
-
-                        this.setState({showAddModal: false});
                     }}
                     onHide={async () => {
-                        if (props.onAddAbort) {
-                            await props.onAddAbort();
-                        }
-
-                        this.setState({showAddModal: false});
+                        this.setState({showAddModal: false}, async () => {
+                            if (props.onAddHide) {
+                                await props.onAddHide();
+                            }
+                        });
                     }}
                     show={state.showAddModal}
                     no_variant="secondary"
@@ -228,11 +269,11 @@ export class Table extends Component<TableProps, TableState> {
                     no_text={__("component.table.abort")}
                     yes_text={__("component.table.add")}>
                     {state.showAddModal && props.onAddGetRows ?
-                        props.onAddGetRows().map((addRow, i, array) =>
+                        props.onAddGetRows().map((addRow) =>
                             addRow.name ?
-                        <FormGroup label={addRow.name} classList={i == array.length - 1 ? " mb-0" : ""} valueClassList={addRow.valueClassList}>
+                        <FormRow label={addRow.name}>
                             {addRow.value}
-                        </FormGroup> : addRow.value) : undefined}
+                        </FormRow> : addRow.value) : undefined}
                 </ItemModal>
 
                 <ItemModal
@@ -247,15 +288,13 @@ export class Table extends Component<TableProps, TableState> {
                         if (props.rows[state.showEditModal].onEditCommit) {
                             await props.rows[state.showEditModal].onEditCommit();
                         }
-
-                        this.setState({showEditModal: null});
                     }}
                     onHide={async () => {
-                        if (props.rows[state.showEditModal].onEditAbort) {
-                            await props.rows[state.showEditModal].onEditAbort();
-                        }
-
-                        this.setState({showEditModal: null});
+                        this.setState({showEditModal: null}, async () => {
+                            if (props.rows[state.showEditModal].onEditHide) {
+                                await props.rows[state.showEditModal].onEditHide();
+                            }
+                        });
                     }}
                     show={state.showEditModal !== null}
                     no_variant="secondary"
@@ -264,11 +303,11 @@ export class Table extends Component<TableProps, TableState> {
                     no_text={__("component.table.abort")}
                     yes_text={__("component.table.apply")}>
                     {state.showEditModal !== null && props.rows[state.showEditModal].onEditGetRows ?
-                        props.rows[state.showEditModal].onEditGetRows().map((editRow, i, array) =>
+                        props.rows[state.showEditModal].onEditGetRows().map((editRow) =>
                             editRow.name ?
-                        <FormGroup label={editRow.name} classList={i == array.length - 1 ? " mb-0" : ""} valueClassList={editRow.valueClassList}>
+                        <FormRow label={editRow.name}>
                             {editRow.value}
-                        </FormGroup> : editRow.value) : undefined}
+                        </FormRow> : editRow.value) : undefined}
                 </ItemModal>
             </>
         );

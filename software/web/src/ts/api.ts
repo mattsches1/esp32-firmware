@@ -19,7 +19,7 @@
 
 import {ConfigMap, api_cache, Modules, ConfigModified, ConfigModifiedKey} from './api_defs';
 
-import * as util from './util';
+import * as util from "./util";
 
 export {type ConfigMap as getType, type Modules};
 
@@ -28,9 +28,12 @@ export type EventMap = {
 }
 
 function update_cache_item(left: any, right: any) {
-    for (var key in left) {
-        if (!right.hasOwnProperty(key)) {
-            delete left[key];
+    for (let key in left) {
+        if (!(key in right)) {
+            if (Array.isArray(left))
+                left.splice(parseInt(key), 1)
+            else
+                delete left[key];
             continue;
         }
 
@@ -47,14 +50,19 @@ function update_cache_item(left: any, right: any) {
         left[key] = right[key];
     }
 
-    for (var key in right)
-        if (!left.hasOwnProperty(key)) {
+    for (let key in right) {
+        if (!(key in left)) {
             left[key] = right[key];
         }
+    }
+}
+
+function is_primitive(x: any) {
+    return x === null || x === undefined || typeof(x) !== "object";
 }
 
 export function update<T extends keyof ConfigMap>(topic: T, payload: ConfigMap[T]) {
-    if (api_cache[topic] === null || api_cache[topic] === undefined || typeof(api_cache[topic]) !== "object")
+    if (is_primitive(api_cache[topic]) || is_primitive(payload))
         (api_cache[topic] as any) = payload;
     else
         update_cache_item(api_cache[topic], payload);
@@ -80,7 +88,7 @@ export function is_dirty<T extends keyof ConfigMap>(topic: T): boolean {
     return (modified.modified & 1) == 1;
 }
 
-export function get_maybe<T extends string>(topic: T): (T extends keyof ConfigMap ? Readonly<ConfigMap[T]> : any) {
+export function get_unchecked<T extends string>(topic: T): (T extends keyof ConfigMap ? Readonly<ConfigMap[T]> : any) {
     if (topic in api_cache)
         return api_cache[topic as keyof ConfigMap] as any;
     return null as any;
@@ -121,17 +129,17 @@ export function trigger_unchecked<T extends keyof ConfigMap>(topic: string, even
 }
 
 export function save<T extends keyof ConfigMap>(topic: T, payload: ConfigMap[T], error_string: string, reboot_string?: string) {
-    return call(<any>(topic + "_update"), payload, error_string, reboot_string);
+    return call((topic + "_update") as any, payload, error_string, reboot_string);
 }
 
-export function save_maybe<T extends string>(topic: T, payload: (T extends keyof ConfigMap ? ConfigMap[T] : any), error_string: string, reboot_string?: string) {
+export function save_unchecked<T extends string>(topic: T, payload: (T extends keyof ConfigMap ? ConfigMap[T] : any), error_string: string, reboot_string?: string) {
     if (topic in api_cache)
-        return call(<any>(topic + "_update"), payload, error_string, reboot_string);
+        return call((topic + "_update") as any, payload, error_string, reboot_string);
     return Promise.resolve();
 }
 
 export function reset<T extends keyof ConfigMap>(topic: T, error_string: string, reboot_string?: string) {
-    return call(<any>(topic + "_reset"), null, error_string, reboot_string);
+    return call((topic + "_reset") as any, null, error_string, reboot_string);
 }
 
 export async function call<T extends keyof ConfigMap>(topic: T, payload: ConfigMap[T], error_string: string, reboot_string?: string, timeout_ms: number = 5000) {
@@ -158,5 +166,5 @@ export function hasModule(module: string) {
     let modules = get('info/modules');
     if (modules === null)
         return false;
-    return modules?.hasOwnProperty(module) && (modules as any)[module];
+    return module in modules && modules[module as keyof typeof modules];
 }

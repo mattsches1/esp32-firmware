@@ -111,7 +111,7 @@ struct default_validator {
 struct to_json {
     void operator()(const Config::ConfString &x)
     {
-        insertHere.set(*x.getVal());
+        insertHere.set(x.getVal()->c_str());
     }
     void operator()(const Config::ConfFloat &x)
     {
@@ -161,7 +161,7 @@ struct to_json {
         JsonObject obj = insertHere.as<JsonObject>();
         for (size_t i = 0; i < size; ++i) {
             const auto &val_pair = (*val)[i];
-            const String &key = val_pair.first;
+            const char *key = val_pair.first.c_str();
             const Config &child = val_pair.second;
 
             if (child.is<Config::ConfObject>()) {
@@ -175,9 +175,11 @@ struct to_json {
             Config::apply_visitor(to_json{obj[key], keys_to_censor}, child.value);
         }
 
-        for (const String &key : keys_to_censor)
+        for (const String &key_string : keys_to_censor) {
+            const char *key = key_string.c_str();
             if (obj.containsKey(key) && !(obj[key].is<String>() && obj[key].as<String>().length() == 0))
                 obj[key] = nullptr;
+        }
     }
 
     void operator()(const Config::ConfUnion &x) {
@@ -200,7 +202,7 @@ struct to_json {
     const std::vector<String> &keys_to_censor;
 };
 
-struct string_length_visitor {
+struct max_string_length_visitor {
     size_t operator()(const Config::ConfString &x)
     {
         return (x.getSlot()->maxChars) + 2; // ""
@@ -230,7 +232,7 @@ struct string_length_visitor {
     {
         const auto *slot = x.getSlot();
 
-        return Config::apply_visitor(string_length_visitor{}, slot->prototype->value) * slot->maxElements +
+        return Config::apply_visitor(max_string_length_visitor{}, slot->prototype->value) * slot->maxElements +
                (slot->maxElements + 1); // [,] and n-1 ,
     }
     size_t operator()(const Config::ConfObject &x)
@@ -241,8 +243,8 @@ struct string_length_visitor {
         size_t sum = 2; // { and }
         for (size_t i = 0; i < size; ++i) {
             const auto &val_pair = (*val)[i];
-            sum += val_pair.first.length() + 2; // ""
-            sum += Config::apply_visitor(string_length_visitor{}, val_pair.second.value);
+            sum += val_pair.first.length() + 3; // "":
+            sum += Config::apply_visitor(max_string_length_visitor{}, val_pair.second.value);
         }
         return sum;
     }
@@ -250,11 +252,69 @@ struct string_length_visitor {
     size_t operator()(const Config::ConfUnion &x) {
         const auto *slot = x.getSlot();
 
-        size_t max_len = Config::apply_visitor(string_length_visitor{}, x.getVal()->value);
+        size_t max_len = Config::apply_visitor(max_string_length_visitor{}, x.getVal()->value);
         for (size_t i = 0; i < slot->prototypes_len; ++i) {
-            max_len = std::max(max_len, Config::apply_visitor(string_length_visitor{}, slot->prototypes[i].config.value));
+            max_len = std::max(max_len, Config::apply_visitor(max_string_length_visitor{}, slot->prototypes[i].config.value));
         }
         return max_len + 6; // [255,]
+    }
+};
+
+
+struct string_length_visitor {
+    size_t operator()(const Config::ConfString &x)
+    {
+        return (x.getVal()->length()) + 2; // ""
+    }
+    size_t operator()(const Config::ConfFloat &x)
+    {
+        // Educated guess, FLT_MAX is ~3*10^38 however it is unlikely that a user will send enough float values longer than 20.
+        return 20;
+    }
+    size_t operator()(const Config::ConfInt &x)
+    {
+        return 11; // -2^31
+    }
+    size_t operator()(const Config::ConfUint &x)
+    {
+        return 10; //2^32-1
+    }
+    size_t operator()(const Config::ConfBool &x)
+    {
+        return 5; //false
+    }
+    size_t operator()(const Config::ConfVariant::Empty &x)
+    {
+        return 4; //null
+    }
+    size_t operator()(const Config::ConfArray &x)
+    {
+        const auto *val = x.getVal();
+        const auto size = val->size();
+
+        size_t sum = 2; // []
+        for (size_t i = 0; i < size; ++i) {
+            sum += Config::apply_visitor(string_length_visitor{}, (*val)[i].value) + 1; // ,
+        }
+
+        return sum;
+    }
+    size_t operator()(const Config::ConfObject &x)
+    {
+        const auto *val = x.getVal();
+        const auto size = val->size();
+
+        size_t sum = 2; // { and }
+        for (size_t i = 0; i < size; ++i) {
+            const auto &val_pair = (*val)[i];
+            sum += val_pair.first.length() + 3; // "":
+            sum += Config::apply_visitor(string_length_visitor{}, val_pair.second.value);
+        }
+        return sum;
+    }
+
+    size_t operator()(const Config::ConfUnion &x) {
+        return Config::apply_visitor(string_length_visitor{}, x.getVal()->value) + 6; // [255,]
     }
 };
 
@@ -428,14 +488,13 @@ struct from_json {
         if (json_node.isNull())
             return permit_null_updates ? "" : "Null updates not permitted.";
 
-        auto *val = x.getVal();
-        const auto size = val->size();
+        const auto size = x.getVal()->size();
 
         // If a user passes a non-object to an API that expects an object with exactly one member
         // Try to use the non-object as value for the single member.
         // This allows calling for example evse/external_current_update with the payload 8000 instead of {"current": 8000}
         if (!json_node.is<JsonObject>() && is_root && size == 1) {
-            auto &val_pair = (*val)[0];
+            auto &val_pair = (*x.getVal())[0];
             String inner_error = Config::apply_visitor(from_json{json_node, force_same_keys, permit_null_updates, false}, val_pair.second.value);
             if (inner_error != "")
                 return String("(inferred) [\"") + val_pair.first + "\"] " + inner_error + "\n";
@@ -452,7 +511,8 @@ struct from_json {
         bool more_errors = false;
 
         for (size_t i = 0; i < size; ++i) {
-            auto &val_pair = (*val)[i];
+            // Don't cache x.getVal(): The recursive visitor can reallocate slot buffers which invalidates the returned pointer!
+            auto &val_pair = (*x.getVal())[i];
             if (!obj.containsKey(val_pair.first))
             {
                 if (!force_same_keys)
@@ -661,8 +721,7 @@ struct from_update {
             return "ConfUpdate node was not an object.";
         }
 
-        auto *val = x.getVal();
-        const auto size = val->size();
+        const auto size = x.getVal()->size();
 
         const auto &obj_elements = obj->elements;
         const auto obj_size = obj_elements.size();
@@ -671,7 +730,8 @@ struct from_update {
 
         for (size_t i = 0; i < size; ++i) {
             size_t obj_idx = 0xFFFFFFFF;
-            auto &val_pair = (*val)[i];
+            // Don't cache x.getVal(): The recursive visitor can reallocate slot buffers which invalidates the returned pointer!
+            auto &val_pair = (*x.getVal())[i];
             for (size_t j = 0; j < size; ++j) {
                 if (obj_elements[j].first != val_pair.first)
                     continue;

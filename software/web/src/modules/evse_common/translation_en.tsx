@@ -68,9 +68,12 @@ let x = {
             "led_state": "LED state",
             "led_state_off": "Off",
             "led_state_on": "On",
-            "led_state_blinking": "Blinking",
-            "led_state_flickering": "Flickering",
-            "led_state_breathing": "Breathing",
+            "led_state_blinking": "Acknowledge blinking",
+            "led_state_flickering": "Rejecting blinking",
+            "led_state_breathing": "Demanding blinking",
+            "led_state_error": /*SFN*/(count: number) => {
+                return "Blinking (" + count + " x)";
+            }/*NF*/,
             "led_state_api": "API",
             "led_duration": "Duration",
             "cp_pwm_dc": "CP PWM duty cycle",
@@ -121,6 +124,33 @@ let x = {
 
             "enable_led_api": "Status-LED control",
             "enable_led_api_desc": "Allows an external source to control the Status-LED.",
+            "api_must_be_enabled": "API must be enabled to use this feature.",
+            "cron_state_change_trigger": /*FFN*/(state: string) => {
+                return (
+                  <>
+                    If the charge status changes to "<b>{state}</b>",{" "}
+                  </>
+                );
+              }/*NF*/,
+              "cron_action_text": /*FFN*/(current: number) => {
+                return (
+                  <>
+                    set the allowed charging current to <b>{current} A</b>.
+                  </>
+                );
+              }/*NF*/,
+              "cron_led_action_text": /*FFN*/(state: string, duration: number) => {
+                if (state == "An" || state == "Aus") {
+                  return <>
+                    turn the status-LED <b>{state}</b> for <b>{duration} seconds</b>.
+                  </>
+                }
+                return (
+                  <>
+                    show <b>{state}</b> for <b>{duration / 1000} seconds</b> on the status-LED.
+                  </>
+                );
+              }/*NF*/,
 
             "slot_0": "Supply cable",
             "slot_1": "Type 2 charging cable",
@@ -128,7 +158,7 @@ let x = {
             "slot_3": "Configurable input",
             "slot_4": "Manual charge release",
             "slot_5": "Configuration",
-            "slot_6": "User",
+            "slot_6": "User/NFC",
             "slot_7": "Charge manager",
             "slot_8": "External control",
             "slot_9": "Modbus TCP current",
@@ -158,7 +188,7 @@ let x = {
             "acc_blocked": "Blocked",
             "by": "by",
 
-            "save_failed": "Failed to save charge settings",
+            "save_failed": "Failed to save charge settings.",
 
             "reset_slot_failed": "Releasing the current limit failed",
 
@@ -171,7 +201,7 @@ let x = {
             "slot_2": "shutdown input",
             "slot_3": "general purpose input",
             "slot_5": "configuration",
-            "slot_6": "user",
+            "slot_6": "user/NFC",
             "slot_7": "charge management",
             "slot_8": "external control",
             "slot_9": "Modbus TCP",
@@ -180,7 +210,7 @@ let x = {
             "slot_12": "energy/time limit",
             "slot_13": "meter monitoring",
 
-            "reboot_content_changed": "Charge Settings"
+            "reboot_content_changed": "charge settings"
         }
     }
 }

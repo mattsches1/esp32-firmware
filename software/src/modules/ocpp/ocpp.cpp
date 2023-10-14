@@ -24,6 +24,8 @@
 #include "task_scheduler.h"
 #include "module_dependencies.h"
 
+#include "modules/certs/certs.h"
+
 #include <ctype.h>
 #include <string.h>
 
@@ -36,7 +38,8 @@ void Ocpp::pre_setup()
         {"url", Config::Str("", 0, 128)},
         {"identity", Config::Str("", 0, 64)},
         {"enable_auth",Config::Bool(false)},
-        {"pass", Config::Str("", 0, 64)}
+        {"pass", Config::Str("", 0, 64)},
+        {"cert_id", Config::Int(-1, -1, MAX_CERTS - 1)}
     });
 
     change_configuration = Config::Object({
@@ -76,44 +79,48 @@ void Ocpp::pre_setup()
         {"connected", Config::Bool(false)},
         {"connected_change_time", Config::Uint32(0)},
         {"last_ping_sent", Config::Uint32(0)},
-        {"pong_deadline", Config::Uint32(0)},
+        {"pong_timeout", Config::Uint32(0)},
     });
 
+    const uint16_t BOOL_LEN = 5;
+    const uint16_t INT_LEN = 11;
+    const uint16_t STR_LEN = 500;
+
     configuration = Config::Object({
-        {"AuthorizeRemoteTxRequests", Config::Str("", 0, 500)},
-        {"ClockAlignedDataInterval", Config::Str("", 0, 500)},
-        {"ConnectionTimeOut", Config::Str("", 0, 500)},
-        {"ConnectorPhaseRotation", Config::Str("", 0, 500)},
-        {"ConnectorPhaseRotationMaxLength", Config::Str("", 0, 500)},
-        {"GetConfigurationMaxKeys", Config::Str("", 0, 500)},
-        {"HeartbeatInterval", Config::Str("", 0, 500)},
-        {"LocalAuthorizeOffline", Config::Str("", 0, 500)},
-        {"LocalPreAuthorize", Config::Str("", 0, 500)},
-        {"MessageTimeout", Config::Str("", 0, 500)},
-        {"MeterValuesAlignedData", Config::Str("", 0, 500)},
-        {"MeterValuesAlignedDataMaxLength", Config::Str("", 0, 500)},
-        {"MeterValuesSampledData", Config::Str("", 0, 500)},
-        {"MeterValuesSampledDataMaxLength", Config::Str("", 0, 500)},
-        {"MeterValueSampleInterval", Config::Str("", 0, 500)},
-        {"NumberOfConnectors", Config::Str("", 0, 500)},
-        {"ResetRetries", Config::Str("", 0, 500)},
-        {"StopTransactionOnEVSideDisconnect", Config::Str("", 0, 500)},
-        {"StopTransactionOnInvalidId", Config::Str("", 0, 500)},
-        {"StopTransactionMaxMeterValues", Config::Str("", 0, 500)},
-        {"StopTxnAlignedData", Config::Str("", 0, 500)},
-        {"StopTxnAlignedDataMaxLength", Config::Str("", 0, 500)},
-        {"StopTxnSampledData", Config::Str("", 0, 500)},
-        {"StopTxnSampledDataMaxLength", Config::Str("", 0, 500)},
-        {"SupportedFeatureProfiles", Config::Str("", 0, 500)},
-        {"TransactionMessageAttempts", Config::Str("", 0, 500)},
-        {"TransactionMessageRetryInterval", Config::Str("", 0, 500)},
-        {"UnlockConnectorOnEVSideDisconnect", Config::Str("", 0, 500)},
-        {"WebSocketPingInterval", Config::Str("", 0, 500)},
-        {"ChargeProfileMaxStackLevel", Config::Str("", 0, 500)},
-        {"ChargingScheduleAllowedChargingRateUnit", Config::Str("", 0, 500)},
-        {"ChargingScheduleMaxPeriods", Config::Str("", 0, 500)},
-        {"ConnectorSwitch3to1PhaseSupported", Config::Str("", 0, 500)},
-        {"MaxChargingProfilesInstalled", Config::Str("", 0, 500)}
+        {"AuthorizeRemoteTxRequests", Config::Str("", 0, BOOL_LEN)},
+        {"ClockAlignedDataInterval", Config::Str("", 0, INT_LEN)},
+        {"ConnectionTimeOut", Config::Str("", 0, INT_LEN)},
+        {"ConnectorPhaseRotation", Config::Str("", 0, STR_LEN)},
+        {"ConnectorPhaseRotationMaxLength", Config::Str("", 0, INT_LEN)},
+        {"GetConfigurationMaxKeys", Config::Str("", 0, INT_LEN)},
+        {"HeartbeatInterval", Config::Str("", 0, INT_LEN)},
+        {"LocalAuthorizeOffline", Config::Str("", 0, BOOL_LEN)},
+        {"LocalPreAuthorize", Config::Str("", 0, BOOL_LEN)},
+        {"MessageTimeout", Config::Str("", 0, INT_LEN)},
+        {"MeterValuesAlignedData", Config::Str("", 0, STR_LEN)},
+        {"MeterValuesAlignedDataMaxLength", Config::Str("", 0, INT_LEN)},
+        {"MeterValuesSampledData", Config::Str("", 0, STR_LEN)},
+        {"MeterValuesSampledDataMaxLength", Config::Str("", 0, INT_LEN)},
+        {"MeterValueSampleInterval", Config::Str("", 0, INT_LEN)},
+        {"NumberOfConnectors", Config::Str("", 0, INT_LEN)},
+        {"ResetRetries", Config::Str("", 0, INT_LEN)},
+        {"StopTransactionOnEVSideDisconnect", Config::Str("", 0, BOOL_LEN)},
+        {"StopTransactionOnInvalidId", Config::Str("", 0, BOOL_LEN)},
+        {"StopTransactionMaxMeterValues", Config::Str("", 0, INT_LEN)},
+        {"StopTxnAlignedData", Config::Str("", 0, STR_LEN)},
+        {"StopTxnAlignedDataMaxLength", Config::Str("", 0, INT_LEN)},
+        {"StopTxnSampledData", Config::Str("", 0, STR_LEN)},
+        {"StopTxnSampledDataMaxLength", Config::Str("", 0, INT_LEN)},
+        {"SupportedFeatureProfiles", Config::Str("", 0, STR_LEN)},
+        {"TransactionMessageAttempts", Config::Str("", 0, INT_LEN)},
+        {"TransactionMessageRetryInterval", Config::Str("", 0, INT_LEN)},
+        {"UnlockConnectorOnEVSideDisconnect", Config::Str("", 0, BOOL_LEN)},
+        {"WebSocketPingInterval", Config::Str("", 0, INT_LEN)},
+        {"ChargeProfileMaxStackLevel", Config::Str("", 0, INT_LEN)},
+        {"ChargingScheduleAllowedChargingRateUnit", Config::Str("", 0, STR_LEN)},
+        {"ChargingScheduleMaxPeriods", Config::Str("", 0, INT_LEN)},
+        {"ConnectorSwitch3to1PhaseSupported", Config::Str("", 0, BOOL_LEN)},
+        {"MaxChargingProfilesInstalled", Config::Str("", 0, INT_LEN)}
     });
 #endif
 }
@@ -126,6 +133,33 @@ static uint8_t hex_digit_to_byte(char digit) {
             return i > 15 ? (i - 6) : i;
     }
     return 0xFF;
+}
+
+bool Ocpp::start_client() {
+    if (!config_in_use.get("enable_auth")->asBool()) {
+        return cp->start(config_in_use.get("url")->asEphemeralCStr(), config_in_use.get("identity")->asEphemeralCStr(), nullptr, 0);
+    }
+
+    String pass = config_in_use.get("pass")->asString();
+    bool pass_is_hex = pass.length() == 40;
+    if (pass_is_hex) {
+        for(size_t i = 0; i < 40; ++i) {
+            if (!isxdigit(pass[i])) {
+                pass_is_hex = false;
+                break;
+            }
+        }
+    }
+
+    if (!pass_is_hex) {
+        return cp->start(config.get("url")->asEphemeralCStr(), config_in_use.get("identity")->asEphemeralCStr(), (const uint8_t *)pass.c_str(), pass.length());
+    }
+
+    uint8_t pass_bytes[20] = {};
+    for(size_t i = 0; i < 20; ++i) {
+        pass_bytes[i] = hex_digit_to_byte(pass[2*i]) << 4 | hex_digit_to_byte(pass[2*i + 1]);
+    }
+    return cp->start(config.get("url")->asEphemeralCStr(), config_in_use.get("identity")->asEphemeralCStr(), pass_bytes, 20);
 }
 
 void Ocpp::setup()
@@ -143,38 +177,15 @@ void Ocpp::setup()
     cp = std::unique_ptr<OcppChargePoint>(new OcppChargePoint());
 
     task_scheduler.scheduleOnce([this](){
-        // Make sure every code path calls cp->start!
+        if (!start_client()) {
+            state.get("charge_point_state")->updateUint((uint32_t)OcppState::Faulted);
+            logger.printfln("Failed to start OCPP client. Check configuration!");
+            return;
+        }
 
         task_scheduler.scheduleWithFixedDelay([this](){
             cp->tick();
         }, 100, 100);
-
-        if (!config_in_use.get("enable_auth")->asBool()) {
-            cp->start(config_in_use.get("url")->asEphemeralCStr(), config_in_use.get("identity")->asEphemeralCStr(), nullptr, 0);
-            return;
-        }
-
-        String pass = config_in_use.get("pass")->asString();
-        bool pass_is_hex = pass.length() == 40;
-        if (pass_is_hex) {
-            for(size_t i = 0; i < 40; ++i) {
-                if (!isxdigit(pass[i])) {
-                    pass_is_hex = false;
-                    break;
-                }
-            }
-        }
-
-        if (!pass_is_hex) {
-            cp->start(config.get("url")->asEphemeralCStr(), config_in_use.get("identity")->asEphemeralCStr(), (const uint8_t *)pass.c_str(), pass.length());
-            return;
-        }
-
-        uint8_t pass_bytes[20] = {};
-        for(size_t i = 0; i < 20; ++i) {
-            pass_bytes[i] = hex_digit_to_byte(pass[2*i]) << 4 | hex_digit_to_byte(pass[2*i + 1]);
-        }
-        cp->start(config.get("url")->asEphemeralCStr(), config_in_use.get("identity")->asEphemeralCStr(), pass_bytes, 20);
     }, 5000);
 }
 

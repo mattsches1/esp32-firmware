@@ -33,7 +33,7 @@ import { InputPassword } from "../../ts/components/input_password";
 import { InputSelect } from "../../ts/components/input_select";
 import { SubPage } from "../../ts/components/sub_page";
 
-type APConfig = API.getType['wifi/ap_config'];
+type APConfig = API.getType["wifi/ap_config"];
 
 type WifiAPState = {show_modal: boolean};
 
@@ -42,7 +42,7 @@ export class WifiAP extends ConfigComponent<'wifi/ap_config', {}, WifiAPState> {
 
     constructor() {
         super('wifi/ap_config',
-              __("wifi.script.ap_config_failed"),
+              __("wifi.script.ap_save_failed"),
               __("wifi.script.ap_reboot_content_changed"));
     }
 
@@ -62,10 +62,11 @@ export class WifiAP extends ConfigComponent<'wifi/ap_config', {}, WifiAPState> {
             <SubPage>
                 <ConfigForm id="wifi_ap_config_form"
                             title={__("wifi.content.ap_settings")}
+                            isModified={this.isModified()}
+                            isDirty={this.isDirty()}
                             onSave={this.save}
                             onReset={this.reset}
-                            onDirtyChange={(d) => this.ignore_updates = d}
-                            isModified={this.isModified()}>
+                            onDirtyChange={this.setDirty}>
                     <FormRow label={__("wifi.content.ap_enable")} label_muted={__("wifi.content.ap_enable_muted")}>
                         <InputSelect
                             value={
@@ -141,9 +142,9 @@ export class WifiAP extends ConfigComponent<'wifi/ap_config', {}, WifiAPState> {
                         forbidNetwork={[
                                 {ip: util.parseIP("127.0.0.1"), subnet: util.parseIP("255.0.0.0"), name: "localhost"}
                             ].concat(
-                                !API.hasModule("ethernet") || API.get_maybe("ethernet/config").ip == "0.0.0.0" ? [] :
-                                [{ip: util.parseIP(API.get_maybe("ethernet/config").ip),
-                                subnet: util.parseIP(API.get_maybe("ethernet/config").subnet),
+                                !API.hasModule("ethernet") || API.get_unchecked("ethernet/config").ip == "0.0.0.0" ? [] :
+                                [{ip: util.parseIP(API.get_unchecked("ethernet/config").ip),
+                                subnet: util.parseIP(API.get_unchecked("ethernet/config").subnet),
                                 name: __("component.ip_configuration.ethernet")}]
                             ).concat(
                                 API.get("wifi/sta_config").ip == "0.0.0.0" ? [] :
@@ -151,9 +152,9 @@ export class WifiAP extends ConfigComponent<'wifi/ap_config', {}, WifiAPState> {
                                 subnet: util.parseIP(API.get("wifi/sta_config").subnet),
                                 name: __("component.ip_configuration.wifi_sta")}]
                             ).concat(
-                                !API.hasModule("wireguard") || API.get_maybe("wireguard/config").internal_ip == "0.0.0.0" ? [] :
-                                [{ip: util.parseIP(API.get_maybe("wireguard/config").internal_ip),
-                                subnet: util.parseIP(API.get_maybe("wireguard/config").internal_subnet),
+                                !API.hasModule("wireguard") || API.get_unchecked("wireguard/config").internal_ip == "0.0.0.0" ? [] :
+                                [{ip: util.parseIP(API.get_unchecked("wireguard/config").internal_ip),
+                                subnet: util.parseIP(API.get_unchecked("wireguard/config").internal_subnet),
                                 name: __("component.ip_configuration.wireguard")}]
                             )
                         }
@@ -162,7 +163,8 @@ export class WifiAP extends ConfigComponent<'wifi/ap_config', {}, WifiAPState> {
                 </ConfigForm>
 
                 <Modal show={state.show_modal} onHide={() => {this.dismissModal()}} centered>
-                    <Modal.Header closeButton>
+                    {/* There seems to be an incompatibility between preact's and react-bootstrap's typings*/ }
+                    <Modal.Header {...{closeButton: true} as any}>
                         <label class="modal-title form-label">{__("wifi.content.confirm_title")}</label>
                     </Modal.Header>
                     <Modal.Body>{__("wifi.content.confirm_content")}</Modal.Body>

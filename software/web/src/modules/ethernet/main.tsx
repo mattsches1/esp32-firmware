@@ -19,9 +19,9 @@
 
 import $ from "../../ts/jq";
 
-import * as API  from "../../ts/api";
+import * as API from "../../ts/api";
 import * as util from "../../ts/util";
-import { __ }    from "../../ts/translation";
+import { __ } from "../../ts/translation";
 
 import { h, render, Fragment, Component } from "preact";
 import { ConfigComponent } from "../../ts/components/config_component";
@@ -39,7 +39,7 @@ export class Ethernet extends ConfigComponent<'ethernet/config'> {
 
     constructor() {
         super('ethernet/config',
-              __("ethernet.script.config_failed"),
+              __("ethernet.script.save_failed"),
               __("ethernet.script.reboot_content_changed"));
     }
 
@@ -59,10 +59,11 @@ export class Ethernet extends ConfigComponent<'ethernet/config'> {
             <SubPage>
                 <ConfigForm id="ethernet_config_form"
                             title={__("ethernet.content.ethernet")}
+                            isModified={this.isModified()}
+                            isDirty={this.isDirty()}
                             onSave={this.save}
                             onReset={this.reset}
-                            onDirtyChange={(d) => this.ignore_updates = d}
-                            isModified={this.isModified()}>
+                            onDirtyChange={this.setDirty}>
                     <FormRow label={__("ethernet.content.enable")}>
                         <Switch desc={__("ethernet.content.enable_desc")}
                                 checked={state.enable_ethernet}
@@ -80,13 +81,13 @@ export class Ethernet extends ConfigComponent<'ethernet/config'> {
                                 {ip: util.parseIP("127.0.0.1"), subnet: util.parseIP("255.0.0.0"), name: "localhost"}
                             ].concat(
                                 !API.hasModule("wifi") ? [] :
-                                [{ip: util.parseIP(API.get_maybe("wifi/ap_config").ip),
-                                subnet: util.parseIP(API.get_maybe("wifi/ap_config").subnet),
+                                [{ip: util.parseIP(API.get_unchecked("wifi/ap_config").ip),
+                                subnet: util.parseIP(API.get_unchecked("wifi/ap_config").subnet),
                                 name: __("component.ip_configuration.wifi_ap")}]
                             ).concat(
-                                !API.hasModule("wireguard") || API.get_maybe("wireguard/config").internal_ip == "0.0.0.0" ? [] :
-                                [{ip: util.parseIP(API.get_maybe("wireguard/config").internal_ip),
-                                subnet: util.parseIP(API.get_maybe("wireguard/config").internal_subnet),
+                                !API.hasModule("wireguard") || API.get_unchecked("wireguard/config").internal_ip == "0.0.0.0" ? [] :
+                                [{ip: util.parseIP(API.get_unchecked("wireguard/config").internal_ip),
+                                subnet: util.parseIP(API.get_unchecked("wireguard/config").internal_subnet),
                                 name: __("component.ip_configuration.wireguard")}]
                             )
                         }
@@ -125,11 +126,11 @@ export class EthernetStatus extends Component
     }
 }
 
-render(<EthernetStatus/>, $('#status-ethernet')[0]);
+render(<EthernetStatus />, $("#status-ethernet")[0]);
 
 export function init() {}
 export function add_event_listeners(source: API.APIEventTarget) {}
 
 export function update_sidebar_state(module_init: any) {
-    $('#sidebar-ethernet').prop('hidden', !module_init.ethernet);
+    $("#sidebar-ethernet").prop("hidden", !module_init.ethernet);
 }

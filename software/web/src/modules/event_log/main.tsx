@@ -22,7 +22,7 @@ import $ from "../../ts/jq";
 import * as util from "../../ts/util";
 import * as API from "../../ts/api";
 
-import { h, render, Fragment, Component } from "preact";
+import { h, render, Fragment, Component, createRef } from "preact";
 import { __ } from "../../ts/translation";
 import { PageHeader } from "../../ts/components/page_header";
 import { FormRow } from "../../ts/components/form_row";
@@ -35,35 +35,143 @@ interface EventLogState {
     show_spinner: boolean
 }
 
+const TIMESTAMP_LEN = 25;
+const TIMESTAMP_REGEX = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2}),(\d{3})  $/;
+const RELATIVE_TIME_REGEX = /^\s+(\d+),(\d{3})  $/;
+const LOG_MAX_LEN = 10 * 1024 * 1024;
+const LOG_CHUNK_LEN_DROPPED_WHEN_FULL = 1024 * 1024;
+
 export class EventLog extends Component<{}, EventLogState> {
-    update_event_log_interval: number = null;
+    page_visible: boolean = false;
+    last_boot_id = -1;
+    textarea_ref = createRef<HTMLTextAreaElement>();
+    auto_scroll: boolean = true;
 
     constructor() {
         super();
 
+        util.addApiEventListener("event_log/boot_id", (ev) => {
+            this.load_event_log(this.last_boot_id != ev.data.boot_id)
+            this.last_boot_id = ev.data.boot_id;
+        });
+
+        util.addApiEventListener("event_log/message", (ev) => {
+            // If we have not seen the complete log yet, don't add updates.
+            if (!this.state.log)
+                return;
+
+            this.set_log(this.state.log + ev.data + "\n");
+        });
+
         // We have to use jquery here or else the events don't fire?
         // This can be removed once the sidebar is ported to preact.
         $('#sidebar-event_log').on('shown.bs.tab', () => {
-            this.load_event_log();
-            if (this.update_event_log_interval == null) {
-                this.update_event_log_interval = window.setInterval(() => this.load_event_log(), 10000);
-            }
+            this.page_visible = true;
         });
 
         $('#sidebar-event_log').on('hidden.bs.tab', () => {
-            if (this.update_event_log_interval != null) {
-                clearInterval(this.update_event_log_interval);
-                this.update_event_log_interval = null;
-            }
+            this.page_visible = false;
         });
     }
 
-    load_event_log() {
+    set_log(log: string) {
+        if (log.length > LOG_MAX_LEN)
+            log = log.slice(log.indexOf("\n", LOG_CHUNK_LEN_DROPPED_WHEN_FULL) + 1)
+
+        this.setState({log: log});
+    }
+
+    get_line_date(line: string) {
+        let match = line.substring(0, TIMESTAMP_LEN).match(TIMESTAMP_REGEX);
+        if (match == null) {
+            match = line.substring(0, TIMESTAMP_LEN).match(RELATIVE_TIME_REGEX);
+            if (match == null)
+                return null;
+            let nums = match.slice(1).map(x => parseInt(x)) as [number, number];
+            return new Date(nums[0] * 1000 + nums[1]);
+        }
+        let nums = match.slice(1).map(x => parseInt(x)) as [number,number,number,number,number,number,number];
+        // Month is index from 0 to 11.
+        nums[1]--;
+        return new Date(...nums);
+    }
+
+    load_event_log(reboot: boolean) {
         util.download("/event_log")
             .then(blob => blob.text())
             .then(text => {
-                this.setState({log: text});
                 util.remove_alert("event_log_load_failed");
+
+                if (!text || text.length == 0)
+                    return;
+
+                if (!this.state.log) {
+                    this.set_log(text);
+                    return;
+                }
+
+                const new_lines = text.split("\n");
+                let first_new_line = null;
+                let first_new_date = null;
+
+                if (new_lines.length == 0) {
+                    this.set_log(text);
+                    return;
+                } else {
+                    first_new_line = new_lines[0]
+                    first_new_date = this.get_line_date(first_new_line);
+                }
+
+                if (first_new_date == null) {
+                    this.set_log(text);
+                    return;
+                }
+
+                // string.trimEnd is in es2019
+                // log starts with (relevant!) whitespace
+                const log = this.state.log.endsWith("\n") ? this.state.log.slice(0, -1) : this.state.log;
+                const old_lines = log.split("\n");
+
+                let i = old_lines.length - 1;
+                for (; i >= 0; --i) {
+                    const line = old_lines[i];
+                    if (line == ("-".repeat(TIMESTAMP_LEN - 2) + "  [Reboot]"))
+                        break;
+
+                    let date = this.get_line_date(line);
+                    if (date == null)
+                        continue;
+
+                    if (date < first_new_date) {
+                        ++i;
+                        break;
+                    }
+
+                    // == compares references on objects and Date has no equals method.
+                    // Isn't javascript fun?
+                    if (date.getTime() == first_new_date.getTime() && line == first_new_line)
+                        break;
+                }
+
+                if (i <= 0 && reboot) {
+                    i = old_lines.length;
+                }
+
+                if (i < 0) {
+                    this.set_log(text);
+                    return;
+                }
+
+                let new_log = old_lines.slice(0, i).join("\n");
+                if (new_log.length > 0 && !new_log.endsWith("\n"))
+                    new_log += "\n"
+                if (reboot)
+                    new_log += "-".repeat(TIMESTAMP_LEN - 2) + "  [Reboot]\n";
+                if (!reboot && i == old_lines.length)
+                    new_log += "-".repeat(TIMESTAMP_LEN - 2) + "  [WebSocket reconnect]\n";
+                new_log += text;
+
+                this.set_log(new_log);
             })
             .catch(e => util.add_alert("event_log_load_failed", "alert-danger", __("event_log.script.load_event_log_error"), e.message))
     }
@@ -85,7 +193,7 @@ export class EventLog extends Component<{}, EventLogState> {
 
             debug_log += await util.download("/debug_report").then(blob => blob.text());
             debug_log += "\n\n";
-            debug_log += await util.download("/event_log").then(blob => blob.text());
+            debug_log += this.state.log;
             try {
                 let blob = await util.download("/coredump/coredump.elf");
                 let base64 = await this.blobToBase64(blob);
@@ -107,6 +215,19 @@ export class EventLog extends Component<{}, EventLogState> {
         }
     }
 
+    override componentDidUpdate() {
+        let ta = this.textarea_ref.current;
+
+        if (!ta)
+            return;
+
+        if (!this.auto_scroll)
+            return;
+
+        this.textarea_ref.current.scrollTop = this.textarea_ref.current.scrollHeight;
+    }
+
+
     render(props: {}, state: Readonly<EventLogState>) {
         if (!util.render_allowed())
             return (<></>);
@@ -121,7 +242,12 @@ export class EventLog extends Component<{}, EventLogState> {
                               id="event_log_content"
                               rows={20}
                               style="resize: both; width: 100%; white-space: pre; line-height: 1.2; text-shadow: none; font-size: 0.875rem;"
-                              placeholder={__("event_log.content.event_log_placeholder")}>
+                              placeholder={__("event_log.content.event_log_placeholder")}
+                              ref={this.textarea_ref}
+                              onScroll={(ev) => {
+                                let ta = ev.target as HTMLTextAreaElement;
+                                this.auto_scroll = ta.scrollHeight - Math.round(ta.scrollTop) === ta.clientHeight}
+                              }>
                         {state.log}
                     </textarea>
                 </FormRow>
@@ -138,7 +264,7 @@ export class EventLog extends Component<{}, EventLogState> {
     }
 }
 
-render(<EventLog/>, $('#event_log')[0])
+render(<EventLog />, $("#event_log")[0]);
 
 export function init() {
 }
@@ -148,5 +274,5 @@ export function add_event_listeners(source: API.APIEventTarget) {
 }
 
 export function update_sidebar_state(module_init: any) {
-    $('#sidebar-event_log').prop('hidden', !module_init.event_log);
+    $("#sidebar-event_log").prop("hidden", !module_init.event_log);
 }

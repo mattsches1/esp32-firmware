@@ -22,7 +22,7 @@ import $ from "../../ts/jq";
 import * as API from "../../ts/api";
 import * as util from "../../ts/util";
 
-import { h, render, Fragment} from "preact";
+import { h, render, Fragment } from "preact";
 
 import { ConfigComponent } from "../../ts/components/config_component";
 import { OutputDatetime } from "../../ts/components/output_datetime";
@@ -31,7 +31,6 @@ import { Switch } from "../../ts/components/switch";
 import { __ } from "../../ts/translation";
 import { ConfigForm } from "../../ts/components/config_form";
 import { SubPage } from "../../ts/components/sub_page";
-
 
 type RTCTime = API.getType['rtc/time'];
 type RTCConfig = API.getType['rtc/config'];
@@ -98,10 +97,11 @@ export class Rtc extends ConfigComponent<'rtc/config', {}, RtcPageState> {
         return <SubPage>
                     <ConfigForm id="rtc_config_form"
                                 title={__("rtc.content.rtc")}
+                                isModified={this.isModified()}
+                                isDirty={this.isDirty()}
                                 onSave={this.save}
                                 onReset={this.reset}
-                                onDirtyChange={(d) => this.ignore_updates = d}
-                                isModified={this.isModified()}>
+                                onDirtyChange={this.setDirty}>
                         <FormRow label={__("rtc.content.enable_auto_sync")}>
                             <Switch desc={__("rtc.content.auto_sync_desc")} checked={state.auto_sync} onClick={() => {
                                     this.setState({"auto_sync": !state.auto_sync})
@@ -123,7 +123,7 @@ export class Rtc extends ConfigComponent<'rtc/config', {}, RtcPageState> {
         }
 }
 
-render(<Rtc/>, $('#rtc')[0])
+render(<Rtc />, $("#rtc")[0]);
 
 export function add_event_listeners(source: API.APIEventTarget) {
     source.addEventListener('info/features', () => $('#sidebar-rtc').prop('hidden', !API.hasFeature('rtc')));

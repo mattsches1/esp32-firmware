@@ -18,11 +18,13 @@
  */
 
 import { h, Component, Context, Fragment } from "preact";
-import {useContext} from "preact/hooks";
+import { useContext, useState } from "preact/hooks";
 import { JSXInternal } from "preact/src/jsx";
 import { Button } from "react-bootstrap";
 import { Eye, EyeOff, Trash2 } from "react-feather";
 import { __ } from "../translation";
+
+import * as util from "../../ts/util";
 
 interface InputPasswordProps extends Omit<JSXInternal.HTMLAttributes<HTMLInputElement>,  "class" | "id" | "type" | "onInput" | "value" | "disabled"> {
     idContext?: Context<string>
@@ -60,7 +62,7 @@ export class InputPassword extends Component<InputPasswordProps, InputPasswordSt
     }
 
     render(props: InputPasswordProps, state: Readonly<InputPasswordState>) {
-        let id = useContext(props.idContext);
+        const id = !props.idContext ? util.useId() : useContext(props.idContext);
 
         let invalidFeedback = undefined;
         if ("invalidFeedback" in props)
@@ -87,7 +89,7 @@ export class InputPassword extends Component<InputPasswordProps, InputPasswordSt
                                                         : (props.placeholder ?? __("component.input_password.unchanged"))}
                         onInput={(e) => {
                             let value: string = (e.target as HTMLInputElement).value;
-                            if ((props.maxLength != undefined && new Blob([(e.target as HTMLInputElement).value]).size <= props.maxLength) ||
+                            if ((props.maxLength != undefined && new Blob([(e.target as HTMLInputElement).value]).size <= (props.maxLength as any)) ||
                                     props.maxLength == undefined)
                                 props.onValue(value.length > 0 ? value : null);
                             else

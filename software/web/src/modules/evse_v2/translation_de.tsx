@@ -52,7 +52,47 @@ let x = {
             "abort": "Abbrechen",
             "reset": "Zurücksetzen",
             "trigger_dc_fault_test": "DC-Fehlerschutz testen",
-            "time_since_dc_fault_check": "Zeit seit dem letzten DC-Fehlerschutztest"
+            "time_since_dc_fault_check": "Zeit seit dem letzten DC-Fehlerschutztest",
+            "cron_sd_trigger_text": /*FFN*/(state: boolean) => {
+                let ret = "";
+                if (state) {
+                    ret += "geöffnet";
+                } else {
+                    ret += "geschlossen";
+                }
+                return <>
+                    Wenn der Abschalteingang <b>{ret}</b> wird,{" "}
+                </>
+            }/*NF*/,
+            "cron_gpin_trigger_text": /*FFN*/(state: boolean) => {
+                let ret = "";
+                if (state) {
+                    ret = "geöffnet";
+                } else {
+                    ret = "geschlossen";
+                }
+                return <>
+                    Wenn der Konfigurierbare Eingang <b>{ret}</b> wird,{" "}
+                </>
+            } /*NF*/,
+            "cron_button_trigger_text": /*FFN*/(state: boolean) => {
+                let ret = "";
+                if (state) {
+                    ret = "gedrückt";
+                } else {
+                    ret = "losgelassen";
+                }
+                return <>
+                    Wenn der Fronttaster <b>{ret}</b> wird,{" "}
+                </>
+            }/*NF*/,
+            "cron_gpout_action_text": /*FFN*/(state: number) => {
+                if (state) {
+                    return <><b>schalte</b> den Konfigurierbaren Ausgang <b>hochohmig</b>.</>;
+                } else {
+                    return <><b>verbinde</b> den Konfigurierbaren Ausgang <b>mit Masse</b>.</>;
+                }
+            }/*NF*/
         },
         "script": {
             "reset_dc_fault_current_failed": "Zurücksetzen des DC-Fehlerstromschutzmoduls fehlgeschlagen",
