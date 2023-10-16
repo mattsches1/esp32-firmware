@@ -29,7 +29,7 @@ export interface low_level_state {
 export interface live {
     offset: number,
     samples_per_second: number,
-    samples: number[],
+    samples: number[]
 }
 
 export interface live_samples {

@@ -9,10 +9,10 @@
             "three_phases": "Drei"
         },
         "navbar": {
-            "phase_switcher": "Phasen&shy;umschaltung"
+            "phase_switcher": "Phasenumschaltung"
         },
         "content": {
-            "phase_switcher": "Phasen&shy;umschaltung",
+            "phase_switcher": "Phasenumschaltung",
             "state": "Status",
             "sequencer_state": "Status",
             "charging_power" : {

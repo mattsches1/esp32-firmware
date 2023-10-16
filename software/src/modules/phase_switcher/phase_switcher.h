@@ -26,7 +26,8 @@
 #include "device_module.h"
 
 #include "delay_timer.h"
-#include "../meter/value_history.h"
+#include "multi_value_history.h"
+// #include "../meter/value_history.h"
 
 #define EVSE_START_TIMEOUT 60000
 #define EVSE_START_RETRIES 3
@@ -146,7 +147,7 @@ private:
     //         "industrial digital in bricklet",
     //         "phase switcher");
 
-    bool debug = true;
+    bool debug = false;
 
     ConfigRoot api_state;
     ConfigRoot api_available_charging_power;
@@ -168,9 +169,10 @@ private:
     uint8_t auto_start_charging;
     bool contactor_error;
 
-    ValueHistory available_charging_power_history;
-    ValueHistory actual_charging_power_history;
-    ValueHistory requested_phases_history;
+    MultiValueHistory power_history;
+    // ValueHistory available_charging_power_history;
+    // ValueHistory actual_charging_power_history;
+    // ValueHistory requested_phases_history;
 
 };
                                     

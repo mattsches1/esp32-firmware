@@ -103,9 +103,7 @@ void PhaseSwitcher::setup()
         return;
     }
 
-    available_charging_power_history.setup();
-    actual_charging_power_history.setup();
-    requested_phases_history.setup();
+    power_history.setup();
 
     api.restorePersistentConfig("phase_switcher/config", &api_config);
     api_config_in_use = api_config;
@@ -203,9 +201,7 @@ void PhaseSwitcher::register_urls()
         start_quick_charging();
     }, true);
 
-    available_charging_power_history.register_urls("phase_switcher_available_charging_power");
-    actual_charging_power_history.register_urls("phase_switcher_actual_charging_power");
-    requested_phases_history.register_urls("phase_switcher_requested_phases");
+    power_history.register_urls("phase_switcher");
 
     server.on("/phase_switcher/start_debug", HTTP_GET, [this](WebServerRequest request) {
         task_scheduler.scheduleOnce([this](){
@@ -827,9 +823,8 @@ void PhaseSwitcher::update_all_data()
         if (meter_values != nullptr)
             actual_charging_power = meter_values->get("power")->asFloat();
     }
-    available_charging_power_history.add_sample(available_charging_power);
-    actual_charging_power_history.add_sample(actual_charging_power);
-    requested_phases_history.add_sample(requested_phases * 230 * 6);
+    float samples[3] = {(float)available_charging_power, (float)actual_charging_power, (float)requested_phases * 230 * 6};
+    power_history.add_sample(samples);
 
 }
 

@@ -56,6 +56,11 @@ interface MeterValues {
 interface UplotData {
     timestamps: number[];
     samples: number[];
+    // samples: {
+    //     available_charing_power: number[];
+    //     actua_charing_power: number[];
+    //     requested_phases: number[]
+    // }
 }
 
 interface UplotWrapperProps {
@@ -500,26 +505,6 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
             }
         });
 
-        util.addApiEventListener("phase_switcher/live_samples", () => {
-            let live = API.get("phase_switcher/live_samples");
-            let live_extra = calculate_live_data(0, live.samples_per_second, live.samples);
-
-            this.pending_live_data.timestamps.push(...live_extra.timestamps);
-            this.pending_live_data.samples.push(...live_extra.samples);
-
-            if (this.pending_live_data.samples.length >= 5) {
-                this.live_data.timestamps = array_append(this.live_data.timestamps, this.pending_live_data.timestamps, 720);
-                this.live_data.samples = array_append(this.live_data.samples, this.pending_live_data.samples, 720);
-
-                this.pending_live_data.timestamps = [];
-                this.pending_live_data.samples = [];
-
-                if (this.state.chart_selected == "live") {
-                    this.update_uplot();
-                }
-            }
-        });
-
         util.addApiEventListener("meter/history", () => {
             let history = API.get("meter/history");
 
@@ -566,11 +551,11 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
             <SubPage>
                 <ConfigForm id="phase_switcher_config_form" 
                             title={__("phase_switcher.content.phase_switcher")} 
-                            onSave={this.save} 
-                            onReset={this.reset} 
-                            onDirtyChange={(d) => this.ignore_updates = d}
-                            isModified={this.isModified()}>
-
+                            isModified={this.isModified()}
+                            isDirty={this.isDirty()}
+                            onSave={this.save}
+                            onReset={this.reset}
+                            onDirtyChange={this.setDirty}>
 
                     <FormSeparator heading={__("phase_switcher.content.state")}/>
 
