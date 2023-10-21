@@ -27,7 +27,6 @@
 
 #include "delay_timer.h"
 #include "multi_value_history.h"
-// #include "../meter/value_history.h"
 
 #define EVSE_START_TIMEOUT 60000
 #define EVSE_START_RETRIES 3
@@ -170,9 +169,5 @@ private:
     bool contactor_error;
 
     MultiValueHistory power_history;
-    // ValueHistory available_charging_power_history;
-    // ValueHistory actual_charging_power_history;
-    // ValueHistory requested_phases_history;
-
 };
                                     

@@ -51,22 +51,19 @@ void MultiValueHistory::setup()
 
     for(int j = 0; j < MULTI_VALUE_HISTORY_NUMBER_OF_VALUES; ++j){
         for (size_t i = 0; i < history[i].size(); ++i) {
-// !!! FIXME
-            float f = 5000.0f * sinf(static_cast<float>(PI)/120.0f * static_cast<float>(i)) + 5000.0f;
-            switch(j){
-                case 0:
-                    val_min = static_cast<int16_t>(f);
-                    break;
+            // float f = 5000.0f * sinf(static_cast<float>(PI)/120.0f * static_cast<float>(i)) + 5000.0f;
+            // switch(j){
+            //     case 0:
+            //         val_min = static_cast<int16_t>(f);
+            //         break;
 
-                case 1:
-                    val_min = static_cast<int16_t>(f * -1.0f + 10000.0f);
-                    break;
+            //     case 1:
+            //         val_min = static_cast<int16_t>(f * -1.0f + 10000.0f);
+            //         break;
 
-                default:
-                    val_min = static_cast<int16_t>((i) / 240 * 3000);
-            }
-
-// !!! FIXME
+            //     default:
+            //         val_min = static_cast<int16_t>((i) / 240 * 3000);
+            // }
             // Use negative state to mark that these are pre-filled.
             history[j].push(val_min);
         }
@@ -173,7 +170,7 @@ void MultiValueHistory::add_sample(float sample[MULTI_VALUE_HISTORY_NUMBER_OF_VA
 
     for(int j = 0; j < MULTI_VALUE_HISTORY_NUMBER_OF_VALUES; ++j){
         val[j] = clamp(static_cast<MULTI_VALUE_HISTORY_VALUE_TYPE>(MULTI_VALUE_HISTORY_VALUE_MIN),
-                                               static_cast<MULTI_VALUE_HISTORY_VALUE_TYPE>(roundf(sample[MULTI_VALUE_HISTORY_NUMBER_OF_VALUES])),
+                                               static_cast<MULTI_VALUE_HISTORY_VALUE_TYPE>(roundf(sample[j])),
                                                static_cast<MULTI_VALUE_HISTORY_VALUE_TYPE>(MULTI_VALUE_HISTORY_VALUE_MAX));
         live[j].push(val[j]);
     }

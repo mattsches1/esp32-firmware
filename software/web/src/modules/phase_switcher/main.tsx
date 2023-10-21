@@ -479,7 +479,7 @@ function calculate_live_data(offset: number, samples_per_second: number, samples
 }
 
 function calculate_history_data(offset: number, samples: number[][]): UplotData {
-    const HISTORY_MINUTE_INTERVAL = 4;
+    const HISTORY_MINUTE_INTERVAL = 3;
 
     let data: UplotData = {timestamps: new Array(samples[0].length), samples: samples};
     let now = Date.now();
@@ -490,14 +490,6 @@ function calculate_history_data(offset: number, samples: number[][]): UplotData 
     // interval. to get nice aligned ticks nudge the ticks by at most half of a
     // sampling interval
     let start = Math.round((now - (samples[0].length - 1) * step - offset) / step) * step;
-
-// FIXME
-    for(let i = 1; i < samples.length; ++i){
-        if (samples[i].length != samples[0].length) {
-            console.log("ERROR: phase_switcher calculate_live_data: samples arrays do not have the same length!")
-        }
-    }
-// FIXME
 
     for(let i = 0; i < samples[0].length; ++i) {
         data.timestamps[i] = (start + i * step) / 1000;
@@ -580,39 +572,20 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
             if (this.state.chart_selected == "history") {
                 this.update_uplot();
             }
-// !!! FIXME
-            console.log("phase_switcher/history:");
-            for (let i = 0; i<3; ++i){
-                console.log("phase_switcher/history:" + this.history_data.samples[i]);
-                console.log("--");
-            }
-// !!! FIXME
         });
 
         util.addApiEventListener("phase_switcher/history_samples", () => {
             let history = API.get("phase_switcher/history_samples");
-            let samples: number[][];
+            let samples: number[][] = [[], [], []];
 
-            console.log("phase_switcher/history_samples 1");
             for(let value_index = 0; value_index < history.samples.length; ++value_index){
-                console.log("phase_switcher/history_samples 1 loop " + value_index);
                 samples[value_index] = array_append(this.history_data.samples[value_index], history.samples[value_index], 720);
             }
-            console.log("phase_switcher/history_samples 2");
             this.history_data = calculate_history_data(0, samples);
 
-            console.log("phase_switcher/history_samples 3");
             if (this.state.chart_selected == "history") {
-                console.log("phase_switcher/history_samples 4");
                 this.update_uplot();
             }
-// !!! FIXME
-            console.log("phase_switcher/history_samples:");
-            for (let i = 0; i<3; ++i){
-                console.log("phase_switcher/history_samples:" + this.history_data.samples[i]);
-                console.log("--");
-            }
-// !!! FIXME
         });
 
         this.state = {
