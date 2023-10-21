@@ -38,6 +38,7 @@
 // takes about 380 ms).
 // When we have 4 minutes worth of samples, we take the average
 // and add it to the coarse history.
+// #define MULTI_VALUE_HISTORY_MINUTE_INTERVAL 4
 #define MULTI_VALUE_HISTORY_MINUTE_INTERVAL 4
 
 #define MULTI_VALUE_RING_BUF_SIZE (MULTI_VALUE_HISTORY_HOURS * 60 / MULTI_VALUE_HISTORY_MINUTE_INTERVAL)

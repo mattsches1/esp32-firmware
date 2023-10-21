@@ -51,7 +51,22 @@ void MultiValueHistory::setup()
 
     for(int j = 0; j < MULTI_VALUE_HISTORY_NUMBER_OF_VALUES; ++j){
         for (size_t i = 0; i < history[i].size(); ++i) {
-            //float f = 5000.0 * sin(PI/120.0 * i) + 5000.0;
+// !!! FIXME
+            float f = 5000.0f * sinf(static_cast<float>(PI)/120.0f * static_cast<float>(i)) + 5000.0f;
+            switch(j){
+                case 0:
+                    val_min = static_cast<int16_t>(f);
+                    break;
+
+                case 1:
+                    val_min = static_cast<int16_t>(f * -1.0f + 10000.0f);
+                    break;
+
+                default:
+                    val_min = static_cast<int16_t>((i) / 240 * 3000);
+            }
+
+// !!! FIXME
             // Use negative state to mark that these are pre-filled.
             history[j].push(val_min);
         }
@@ -153,10 +168,6 @@ void MultiValueHistory::register_urls(String base_url_)
 
 void MultiValueHistory::add_sample(float sample[MULTI_VALUE_HISTORY_NUMBER_OF_VALUES])
 {
-// !!! FIXME
-    return;
-
-
     MULTI_VALUE_HISTORY_VALUE_TYPE val_min = std::numeric_limits<MULTI_VALUE_HISTORY_VALUE_TYPE>::lowest();
     MULTI_VALUE_HISTORY_VALUE_TYPE val[MULTI_VALUE_HISTORY_NUMBER_OF_VALUES];
 
@@ -183,10 +194,10 @@ void MultiValueHistory::add_sample(float sample[MULTI_VALUE_HISTORY_NUMBER_OF_VA
         const size_t buf_size = sizeof("{\"topic\":\"/live_samples\",\"payload\":{\"samples_per_second\":,\"samples\":[]}}\n") + sizeof(base_url) + (MULTI_VALUE_HISTORY_NUMBER_OF_VALUES * chars_per_value + 3) + 100; 
         size_t buf_written = 0;
         char *buf = static_cast<char *>(malloc(buf_size));
-        buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, "{\"topic\":\"%s/live_samples\",\"payload\":{\"samples_per_second\":%f,\"samples\":[%d", base_url.c_str(), static_cast<double>(samples_per_second()), static_cast<int>(val[0]));
+        buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, "{\"topic\":\"%s/live_samples\",\"payload\":{\"samples_per_second\":%f,\"samples\":[[%d]", base_url.c_str(), static_cast<double>(samples_per_second()), static_cast<int>(val[0]));
 
         for(int j = 1; j < MULTI_VALUE_HISTORY_NUMBER_OF_VALUES; ++j){
-            buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, ",%d,", static_cast<int>(val[j]));
+            buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, ",[%d]", static_cast<int>(val[j]));
         }
         buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, "%s", "]}}\n");
 
@@ -232,16 +243,16 @@ void MultiValueHistory::add_sample(float sample[MULTI_VALUE_HISTORY_NUMBER_OF_VA
             buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, "{\"topic\":\"%s/history_samples\",\"payload\":{\"samples\":[", base_url.c_str());
 
             if (history_val[0] == val_min) {
-                buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, "%s", "null");
+                buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, "[%s]", "null");
             } else {
-                buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, "%d", static_cast<int>(history_val[0]));
+                buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, "[%d]", static_cast<int>(history_val[0]));
             }
 
             for(int j = 1; j < MULTI_VALUE_HISTORY_NUMBER_OF_VALUES; ++j){
                 if (history_val[j] == val_min) {
-                    buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, ",%s", "null");
+                    buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, ",[%s]", "null");
                 } else {
-                    buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, ",%d,", static_cast<int>(history_val[j]));
+                    buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, ",[%d]", static_cast<int>(history_val[j]));
                 }
             }
             buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, "%s", "]}}\n");

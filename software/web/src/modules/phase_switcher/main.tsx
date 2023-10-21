@@ -55,12 +55,7 @@ interface MeterValues {
 
 interface UplotData {
     timestamps: number[];
-    samples: number[];
-    // samples: {
-    //     available_charing_power: number[];
-    //     actua_charing_power: number[];
-    //     requested_phases: number[]
-    // }
+    samples: number[][];
 }
 
 interface UplotWrapperProps {
@@ -157,8 +152,34 @@ class UplotWrapper extends Component<UplotWrapperProps, {}> {
                     spanGaps: false,
                     label: __("phase_switcher.status.available_charging_power"),
                     value: (self: uPlot, rawValue: number) => util.hasValue(rawValue) ? util.toLocaleFixed(rawValue) + " W" : null,
+                    stroke: "rgb(0, 123, 0)",
+                    fill: "rgb(0, 123, 0, 0.1)",
+                    width: 2,
+                    points: {
+                        show: false,
+                    },
+                },
+                {
+                    show: true,
+                    pxAlign: 0,
+                    spanGaps: false,
+                    label: __("phase_switcher.content.actual_charging_power"),
+                    value: (self: uPlot, rawValue: number) => util.hasValue(rawValue) ? util.toLocaleFixed(rawValue) + " W" : null,
                     stroke: "rgb(0, 123, 255)",
                     fill: "rgb(0, 123, 255, 0.1)",
+                    width: 2,
+                    points: {
+                        show: false,
+                    },
+                },
+                {
+                    show: true,
+                    pxAlign: 0,
+                    spanGaps: false,
+                    label: __("phase_switcher.content.requested_phases"),
+                    value: (self: uPlot, rawValue: number) => util.hasValue(rawValue) ? util.toLocaleFixed(rawValue) : null,
+                    stroke: "rgb(0, 0, 0)",
+                    fill: "rgb(0, 0, 0, 0.1)",
                     width: 2,
                     points: {
                         show: false,
@@ -342,7 +363,7 @@ class UplotWrapper extends Component<UplotWrapperProps, {}> {
     }
 
     render(props?: UplotWrapperProps, state?: Readonly<{}>, context?: any): ComponentChild {
-        // the plain div is neccessary to make the size calculation stable in safari. without this div the height continues to grow
+        // the pl ain div is neccessary to make the size calculation stable in safari. without this div the height continues to grow
         return <div><div ref={this.div_ref} id={props.id} class={props.class} style={`display: ${props.show ? 'block' : 'none'};`} /></div>;
     }
 
@@ -354,16 +375,20 @@ class UplotWrapper extends Component<UplotWrapperProps, {}> {
         let y_min: number = this.props.y_min;
         let y_max: number = this.props.y_max;
 
-        for (let i = 0; i < this.data.samples.length; ++i) {
-            let value = this.data.samples[i];
+        for (let j = 0; j < this.data.samples.length; ++j){
 
-            if (value !== null) {
-                if (y_min === undefined || value < y_min) {
-                    y_min = value;
-                }
+            for (let i = 0; i < this.data.samples[j].length; ++i) {
 
-                if (y_max === undefined || value > y_max) {
-                    y_max = value;
+                let value = this.data.samples[j][i];
+
+                if (value !== null) {
+                    if (y_min === undefined || value < y_min) {
+                        y_min = value;
+                    }
+
+                    if (y_max === undefined || value > y_max) {
+                        y_max = value;
+                    }
                 }
             }
         }
@@ -401,10 +426,11 @@ class UplotWrapper extends Component<UplotWrapperProps, {}> {
             }
         }
 
+        y_min = 0;
         this.y_min = y_min;
         this.y_max = y_max;
-
-        this.uplot.setData([this.data.timestamps, this.data.samples]);
+       
+        this.uplot.setData([this.data.timestamps, ...this.data.samples]);
     }
 
     set_data(data: UplotData) {
@@ -420,12 +446,20 @@ class UplotWrapper extends Component<UplotWrapperProps, {}> {
     }
 }
 
-function calculate_live_data(offset: number, samples_per_second: number, samples: number[]): UplotData {
-    let data: UplotData = {timestamps: new Array(samples.length), samples: samples};
+function calculate_live_data(offset: number, samples_per_second: number, samples: number[][]): UplotData {
+    let data: UplotData = {timestamps: new Array(samples[0].length), samples: samples};
     let now = Date.now();
     let start;
     let step;
 
+// FIXME
+    for(let i = 1; i < samples.length; ++i){
+        if (samples[i].length != samples[0].length) {
+            console.log("ERROR: phase_switcher calculate_live_data: samples arrays do not have the same length!")
+        }
+    }
+// FIXME
+    
     if (samples_per_second == 0) { // implies samples.length == 1
         start = now - offset;
         step = 0;
@@ -433,31 +467,39 @@ function calculate_live_data(offset: number, samples_per_second: number, samples
         // (samples.length - 1) because samples_per_second defines the gaps between
         // two samples. with N samples there are (N - 1) gaps, while the lastest/newest
         // sample is offset milliseconds old
-        start = now - (samples.length - 1) / samples_per_second * 1000 - offset;
+        start = now - (samples[0].length - 1) / samples_per_second * 1000 - offset;
         step = 1 / samples_per_second * 1000;
     }
 
-    for(let i = 0; i < samples.length; ++i) {
+    for(let i = 0; i < samples[0].length; ++i) {
         data.timestamps[i] = (start + i * step) / 1000;
     }
 
     return data;
 }
 
-function calculate_history_data(offset: number, samples: number[]): UplotData {
+function calculate_history_data(offset: number, samples: number[][]): UplotData {
     const HISTORY_MINUTE_INTERVAL = 4;
 
-    let data: UplotData = {timestamps: new Array(samples.length), samples: samples};
+    let data: UplotData = {timestamps: new Array(samples[0].length), samples: samples};
     let now = Date.now();
     let step = HISTORY_MINUTE_INTERVAL * 60 * 1000;
-    // (samples.length - 1) because step defines the gaps between two samples.
+    // (samples[0].length - 1) because step defines the gaps between two samples.
     // with N samples there are (N - 1) gaps, while the lastest/newest sample is
     // offset milliseconds old. there might be no data point on a full hour
     // interval. to get nice aligned ticks nudge the ticks by at most half of a
     // sampling interval
-    let start = Math.round((now - (samples.length - 1) * step - offset) / step) * step;
+    let start = Math.round((now - (samples[0].length - 1) * step - offset) / step) * step;
 
-    for(let i = 0; i < samples.length; ++i) {
+// FIXME
+    for(let i = 1; i < samples.length; ++i){
+        if (samples[i].length != samples[0].length) {
+            console.log("ERROR: phase_switcher calculate_live_data: samples arrays do not have the same length!")
+        }
+    }
+// FIXME
+
+    for(let i = 0; i < samples[0].length; ++i) {
         data.timestamps[i] = (start + i * step) / 1000;
     }
 
@@ -472,7 +514,7 @@ function array_append<T>(a: Array<T>, b: Array<T>, tail: number): Array<T> {
 
 export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, PhaseSwitcherConfig & PhaseSwitcherState & MeterValues> {
     live_data: UplotData;
-    pending_live_data: UplotData = {timestamps: [], samples: []};
+    pending_live_data: UplotData = {timestamps: [], samples: [[], [], []]};
     history_data: UplotData;
     uplot_wrapper_live_ref = createRef();
     uplot_wrapper_history_ref = createRef();
@@ -498,31 +540,79 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
             let live = API.get("phase_switcher/live");
 
             this.live_data = calculate_live_data(live.offset, live.samples_per_second, live.samples);
-            this.pending_live_data = {timestamps: [], samples: []};
+            this.pending_live_data = {timestamps: [], samples: [[],[],[]]};
 
             if (this.state.chart_selected == "live") {
                 this.update_uplot();
             }
         });
 
-        util.addApiEventListener("meter/history", () => {
-            let history = API.get("meter/history");
+        util.addApiEventListener("phase_switcher/live_samples", () => {
+            let live = API.get("phase_switcher/live_samples");
+            let live_extra = calculate_live_data(0, live.samples_per_second, live.samples);
+
+            this.pending_live_data.timestamps.push(...live_extra.timestamps);
+
+            for(let i = 0; i < this.pending_live_data.samples.length; ++i){
+                this.pending_live_data.samples[i].push(...live_extra.samples[i]);
+            }
+
+            if (this.pending_live_data.samples[0].length >= 5) {
+                this.live_data.timestamps = array_append(this.live_data.timestamps, this.pending_live_data.timestamps, 720);
+                for(let i = 0; i < this.live_data.samples.length; ++i){
+                    this.live_data.samples[i] = array_append(this.live_data.samples[i], this.pending_live_data.samples[i], 720);
+                }
+
+                this.pending_live_data.timestamps = [];
+                this.pending_live_data.samples = [[], [], []];
+
+                if (this.state.chart_selected == "live") {
+                    this.update_uplot();
+                }
+            }
+        });
+
+        util.addApiEventListener("phase_switcher/history", () => {
+            let history = API.get("phase_switcher/history");
 
             this.history_data = calculate_history_data(history.offset, history.samples);
 
             if (this.state.chart_selected == "history") {
-                // this.update_uplot();
+                this.update_uplot();
             }
+// !!! FIXME
+            console.log("phase_switcher/history:");
+            for (let i = 0; i<3; ++i){
+                console.log("phase_switcher/history:" + this.history_data.samples[i]);
+                console.log("--");
+            }
+// !!! FIXME
         });
 
-        util.addApiEventListener("meter/history_samples", () => {
-            let history = API.get("meter/history_samples");
+        util.addApiEventListener("phase_switcher/history_samples", () => {
+            let history = API.get("phase_switcher/history_samples");
+            let samples: number[][];
 
-            this.history_data = calculate_history_data(0, array_append(this.history_data.samples, history.samples, 720));
-
-            if (this.state.chart_selected == "history") {
-                // this.update_uplot();
+            console.log("phase_switcher/history_samples 1");
+            for(let value_index = 0; value_index < history.samples.length; ++value_index){
+                console.log("phase_switcher/history_samples 1 loop " + value_index);
+                samples[value_index] = array_append(this.history_data.samples[value_index], history.samples[value_index], 720);
             }
+            console.log("phase_switcher/history_samples 2");
+            this.history_data = calculate_history_data(0, samples);
+
+            console.log("phase_switcher/history_samples 3");
+            if (this.state.chart_selected == "history") {
+                console.log("phase_switcher/history_samples 4");
+                this.update_uplot();
+            }
+// !!! FIXME
+            console.log("phase_switcher/history_samples:");
+            for (let i = 0; i<3; ++i){
+                console.log("phase_switcher/history_samples:" + this.history_data.samples[i]);
+                console.log("--");
+            }
+// !!! FIXME
         });
 
         this.state = {
