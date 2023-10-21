@@ -29,8 +29,9 @@
 #include "task_scheduler.h"
 #include "web_server.h"
 
+// !!! FIXME
 // How many hours to keep the coarse history for
-#define MULTI_VALUE_HISTORY_HOURS 48
+#define MULTI_VALUE_HISTORY_HOURS 36
 // How many minutes to keep the fine history for.
 // This also controls the coarseness of the coarse history.
 // For example 4 means that we accumulate 4 minutes of samples
@@ -39,7 +40,8 @@
 // When we have 4 minutes worth of samples, we take the average
 // and add it to the coarse history.
 // #define MULTI_VALUE_HISTORY_MINUTE_INTERVAL 4
-#define MULTI_VALUE_HISTORY_MINUTE_INTERVAL 4
+// !!! FIXME
+#define MULTI_VALUE_HISTORY_MINUTE_INTERVAL 3
 
 #define MULTI_VALUE_RING_BUF_SIZE (MULTI_VALUE_HISTORY_HOURS * 60 / MULTI_VALUE_HISTORY_MINUTE_INTERVAL)
 
