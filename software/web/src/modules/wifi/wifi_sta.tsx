@@ -77,7 +77,7 @@ export class WifiSTA extends ConfigComponent<'wifi/sta_config', {}, WifiSTAState
 
             if (e.data == "scan failed") {
                 console.log("scan failed");
-                this.setState({scan_results: JSON.parse("[]")});
+                this.setState({scan_results: []});
                 return;
             }
 
@@ -181,7 +181,7 @@ export class WifiSTA extends ConfigComponent<'wifi/sta_config', {}, WifiSTAState
                         }}
                         key={ap.bssid}>
                     {wifi_symbol(ap.rssi)}
-                    {ap.encryption == 0 ? <Unlock/> : <Lock/>}
+                    {ap.encryption == 0 ? <Unlock {...{class: "ml-2"} as any}/> : <Lock {...{class: "ml-2"} as any}/>}
                     <span class="pl-2">{display_name}</span>
                 </Dropdown.Item>
         });

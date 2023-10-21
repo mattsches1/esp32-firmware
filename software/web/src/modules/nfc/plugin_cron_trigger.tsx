@@ -17,10 +17,10 @@
  * Boston, MA 02111-1307, USA.
  */
 
-import { h } from "preact";
+import { VNode, h } from "preact";
 import { __, translate_unchecked } from "../../ts/translation";
 import { CronTriggerID } from "../cron/cron_defs";
-import { CronComponent, CronTrigger } from "../cron/types";
+import { CronTrigger } from "../cron/types";
 import { Cron } from "../cron/main";
 import { InputText } from "../../ts/components/input_text";
 import { InputSelect } from "../../ts/components/input_select";
@@ -135,7 +135,7 @@ export function init() {
                 config_builder: NfcCronTriggerFactory,
                 config_component: NFCCronTriggerConfig,
                 table_row: NFCCronTriggerComponent,
-                name: __("nfc.content.nfc"),
+                name: __("nfc.content.cron_trigger_nfc"),
             },
         },
     };

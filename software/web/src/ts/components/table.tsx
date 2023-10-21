@@ -42,10 +42,10 @@ export interface TableRow {
     fieldValues?: ComponentChild[]
     fieldWithBox?: boolean[]
     editTitle?: string
-    onEditStart?: () => Promise<void>
+    onEditShow?: () => Promise<void>
     onEditGetRows?: () => TableModalRow[]
     onEditCheck?: () => Promise<boolean>
-    onEditCommit?: () => Promise<void>
+    onEditSubmit?: () => Promise<void>
     onEditHide?: () => Promise<void>
     onRemoveClick?: () => Promise<void>
 }
@@ -56,12 +56,13 @@ export interface TableProps {
     addEnabled?: boolean
     addMessage?: string
     addTitle?: string
-    onAddStart?: () => Promise<void>
+    onAddShow?: () => Promise<void>
     onAddGetRows?: () => TableModalRow[]
     onAddCheck?: () => Promise<boolean>
-    onAddCommit?: () => Promise<void>
+    onAddSubmit?: () => Promise<void>
     onAddHide?: () => Promise<void>
     tableTill?: 'xs' | 'sm' | 'md' | 'lg' | 'xl'
+    nestingDepth?: number
 }
 
 interface TableState {
@@ -134,10 +135,10 @@ export class Table extends Component<TableProps, TableState> {
                                             size="sm"
                                             className="mr-2"
                                             onClick={async () => {
-                                                await row.onEditStart();
+                                                await row.onEditShow();
                                                 this.setState({showEditModal: i});
                                             }}
-                                            disabled={!row.onEditStart}>
+                                            disabled={!row.onEditShow}>
                                         <Edit3/>
                                     </Button>
                                     <Button variant="danger"
@@ -153,14 +154,14 @@ export class Table extends Component<TableProps, TableState> {
                                     <td colSpan={props.columnNames.length + 1} class="pt-0" style="border-top: none;">
                                         <Collapse in={row.extraShow}>
                                             <div>
-                                                <Card className="mt-3"><Card.Body className="pb-0" style="padding: 1rem;">{row.extraValue}</Card.Body></Card>
+                                                <Card style="margin-top: 0.75rem;"><Card.Body className="p-2d5 pb-0">{row.extraValue}</Card.Body></Card>
                                             </div>
                                         </Collapse>
                                     </td>
                                 </tr>
                                 : undefined}
                         </>)}
-                        {props.onAddStart ?
+                        {props.onAddSubmit ?
                         <tr>
                             <td colSpan={props.columnNames.length} style="vertical-align: middle; width: 100%;">
                                 {props.addMessage}
@@ -169,7 +170,7 @@ export class Table extends Component<TableProps, TableState> {
                                 <Button variant="primary"
                                         size="sm"
                                         onClick={async () => {
-                                            await props.onAddStart();
+                                            await props.onAddShow();
                                             this.setState({showAddModal: true});
                                         }}
                                         disabled={!props.addEnabled}>
@@ -182,19 +183,19 @@ export class Table extends Component<TableProps, TableState> {
                 </table>
                 </Card.Body></Card>
 
-                <div class={`d-block d-${props.tableTill ? props.tableTill : 'sm'}-none`}>
+                <div class={`d-block d-${props.tableTill ? props.tableTill : 'sm'}-none` + " table-card-mode"}>
                     {props.rows.map((row, i) => <Card className="mb-3">
-                        <div class="card-header d-flex justify-content-between align-items-center" style="padding: 1rem;">
+                        <div class="card-header d-flex justify-content-between align-items-center p-2d5">
                             <h5 class="text-break" style="margin-bottom: 0;">{util.hasValue(row.fieldValues) ? row.fieldValues[0] : row.columnValues[0]}</h5>
                             <div style="white-space: nowrap; vertical-align: middle;">
                                 <Button variant="primary"
                                         size="sm"
                                         className="ml-2"
                                         onClick={async () => {
-                                            await row.onEditStart();
+                                            await row.onEditShow();
                                             this.setState({showEditModal: i});
                                         }}
-                                        disabled={!row.onEditStart}>
+                                        disabled={!row.onEditShow}>
                                     <Edit3/>
                                 </Button>
                                 <Button variant="danger"
@@ -206,31 +207,31 @@ export class Table extends Component<TableProps, TableState> {
                                 </Button>
                             </div>
                         </div>
-                        <Card.Body className="pb-0" style="padding: 1rem;">
+                        <Card.Body className="p-2d5 pb-0">
                             {this.get_card_fields(row)}
                             {row.extraValue ?
                                 <Collapse in={row.extraShow}>
                                     <div>
                                         {row.extraFieldName ?
                                             <FormRow label={row.extraFieldName}>
-                                                <Card><Card.Body className="pb-0" style="padding: 1rem;">{row.extraValue}</Card.Body></Card>
+                                                <Card><Card.Body className="p-2d5 pb-0">{row.extraValue}</Card.Body></Card>
                                             </FormRow>
-                                            : <Card><Card.Body className="pb-0" style="padding: 1rem;">{row.extraValue}</Card.Body></Card>}
+                                            : <Card><Card.Body className="p-2d5 pb-0">{row.extraValue}</Card.Body></Card>}
                                     </div>
                                 </Collapse>
                                 : undefined}
                         </Card.Body>
                     </Card>)}
-                    {props.onAddStart ?
+                    {props.onAddShow ?
                     <Card className="mb-0">
-                        <div class="card-body d-flex justify-content-between align-items-center" style="padding: 1rem;">
+                        <div class="card-body d-flex justify-content-between align-items-center p-2d5">
                             <span class="text-break" style="font-size: 1rem;">{props.addMessage}</span>
                             <div style="white-space: nowrap; vertical-align: middle;">
                             <Button variant="primary"
                                     size="sm"
                                     className="ml-2"
                                     onClick={async () => {
-                                        await props.onAddStart();
+                                        await props.onAddShow();
                                         this.setState({showAddModal: true});
                                     }}
                                     disabled={!props.addEnabled}>
@@ -251,8 +252,8 @@ export class Table extends Component<TableProps, TableState> {
                         return true;
                     }}
                     onSubmit={async () => {
-                        if (props.onAddCommit) {
-                            await props.onAddCommit();
+                        if (props.onAddSubmit) {
+                            await props.onAddSubmit();
                         }
                     }}
                     onHide={async () => {
@@ -267,7 +268,11 @@ export class Table extends Component<TableProps, TableState> {
                     yes_variant="primary"
                     title={props.addTitle}
                     no_text={__("component.table.abort")}
-                    yes_text={__("component.table.add")}>
+                    yes_text={__("component.table.add")}
+                    backdropClassName={props.nestingDepth === undefined ? undefined : ("modal-backdrop-" + props.nestingDepth)}
+                    className={props.nestingDepth === undefined ? undefined : ("modal-" + props.nestingDepth)}
+                    size={props.nestingDepth === undefined ? "xl" : {0: "xl", 1: "lg", 2: "md", 3: "sm"}[props.nestingDepth] as 'xl' | 'lg' | 'sm'}
+                    >
                     {state.showAddModal && props.onAddGetRows ?
                         props.onAddGetRows().map((addRow) =>
                             addRow.name ?
@@ -285,8 +290,8 @@ export class Table extends Component<TableProps, TableState> {
                         return true;
                     }}
                     onSubmit={async () => {
-                        if (props.rows[state.showEditModal].onEditCommit) {
-                            await props.rows[state.showEditModal].onEditCommit();
+                        if (props.rows[state.showEditModal].onEditSubmit) {
+                            await props.rows[state.showEditModal].onEditSubmit();
                         }
                     }}
                     onHide={async () => {
@@ -301,7 +306,10 @@ export class Table extends Component<TableProps, TableState> {
                     yes_variant="primary"
                     title={state.showEditModal !== null ? props.rows[state.showEditModal].editTitle : ''}
                     no_text={__("component.table.abort")}
-                    yes_text={__("component.table.apply")}>
+                    yes_text={__("component.table.apply")}
+                    backdropClassName={props.nestingDepth === undefined ? undefined : ("modal-backdrop-" + props.nestingDepth)}
+                    className={props.nestingDepth === undefined ? undefined : ("modal-" + props.nestingDepth)}
+                    size={props.nestingDepth === undefined ? "xl" : {0: "xl", 1: "lg", 2: "md", 3: "sm"}[props.nestingDepth] as 'xl' | 'lg' | 'sm'}>
                     {state.showEditModal !== null && props.rows[state.showEditModal].onEditGetRows ?
                         props.rows[state.showEditModal].onEditGetRows().map((editRow) =>
                             editRow.name ?

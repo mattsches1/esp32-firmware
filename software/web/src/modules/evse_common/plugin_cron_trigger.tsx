@@ -17,11 +17,11 @@
  * Boston, MA 02111-1307, USA.
  */
 
-import { h } from "preact";
+import { VNode, h } from "preact";
 import { __ } from "../../ts/translation";
 import { CronTriggerID } from "../cron/cron_defs";
 import { Cron } from "../cron/main";
-import { CronComponent, CronTrigger } from "../cron/types";
+import { CronTrigger } from "../cron/types";
 import { InputSelect } from "../../ts/components/input_select";
 
 export type EvseStateCronTrigger = [
@@ -56,14 +56,14 @@ function EvseStateCronFactory(): CronTrigger {
 export function EvseStateCronConfig(cron: Cron, trigger: CronTrigger) {
     let value = (trigger as EvseStateCronTrigger)[1];
     return [{
-        name: __("evse.content.status"),
+        name: "",
         value: <InputSelect
                     items={[
                         ["0", __("evse.status.not_connected")],
                         ["1", __("evse.status.waiting_for_charge_release")],
-                        ["2",    __("evse.status.ready_to_charge")],
+                        ["2", __("evse.status.ready_to_charge")],
                         ["3", __("evse.status.charging")],
-                        ["4",  __("evse.status.error")]
+                        ["4", __("evse.status.error")]
                     ]}
                     value={value.charger_state.toString()}
                     onValue={(v) => {

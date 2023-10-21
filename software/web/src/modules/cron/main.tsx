@@ -31,8 +31,9 @@ import { __ } from "../../ts/translation";
 import { CronTriggerID, CronActionID } from "./cron_defs";
 import { CronAction, CronTrigger, Task, CronTriggerComponents, CronActionComponents } from "./types";
 import { plugins_init } from "./plugins";
+import { SubPage } from "src/ts/components/sub_page";
 
-const MAXRULES = 10;
+const MAX_RULES = 20;
 
 type CronState = {
     displayed_trigger: number,
@@ -161,7 +162,7 @@ export class Cron extends ConfigComponent<"cron/config", {}, CronState> {
                 ],
                 fieldNames: ["", ""],
                 fieldValues: [__("cron.content.rule") + " #" + (idx + 1) as ComponentChild, <div class="pb-3">{trigger_row}{action_row}</div>],
-                onEditStart: async () => {
+                onEditShow: async () => {
                     this.setState({
                         displayed_trigger: task.trigger[0] as number,
                         displayed_action: task.action[0] as number,
@@ -174,7 +175,7 @@ export class Cron extends ConfigComponent<"cron/config", {}, CronState> {
                 onEditGetRows: () => {
                     return this.createSelectors();
                 },
-                onEditCommit: async () => {
+                onEditSubmit: async () => {
                     this.setState({tasks: this.state.tasks.map((task, k) => k === idx ? this.state.edit_task : task)});
                     this.setDirty(true);
                 },
@@ -182,7 +183,7 @@ export class Cron extends ConfigComponent<"cron/config", {}, CronState> {
                     this.setState({tasks: this.state.tasks.filter((_, k) => idx != k)})
                     this.setDirty(true);
                 },
-                editTitle: __("cron.content.edit_rule")
+                editTitle: __("cron.content.edit_rule_title")
             };
             rows.push(row);
         })
@@ -193,7 +194,8 @@ export class Cron extends ConfigComponent<"cron/config", {}, CronState> {
         if (!util.render_allowed())
             return <></>;
 
-        return <ConfigForm
+        return <SubPage>
+             <ConfigForm
                 id="cron-config-form"
                 title={__("cron.content.cron")}
                 isModified={this.isModified()}
@@ -202,36 +204,35 @@ export class Cron extends ConfigComponent<"cron/config", {}, CronState> {
                 onReset={this.reset}
                 onDirtyChange={this.setDirty}
                 >
-                    <div class="col-xl-12">
-                    <Table tableTill="md"
-                        columnNames={[
-                            "#",
-                            __("cron.content.condition"),
-                            __("cron.content.action")]}
-                        rows={this.assembleTable()}
-                        addEnabled={this.state.tasks.length < MAXRULES}
-                        addTitle={__("cron.content.add_rule")}
-                        addMessage={__("cron.content.add_rule_text")(this.state.tasks.length, MAXRULES)}
-                        onAddStart={async () => {
-                            this.setState({
-                                displayed_trigger: CronTriggerID.None,
-                                displayed_action: CronActionID.None,
-                                edit_task: {
-                                    trigger: [CronTriggerID.None, null],
-                                    action: [CronActionID.None, null]
-                                }
-                            });
-                        }}
-                        onAddGetRows={() => {
-                            return this.createSelectors()
-                        }}
-                        onAddCommit={async () => {
-                            this.setState({tasks: this.state.tasks.concat([this.state.edit_task])});
-                            this.setDirty(true);
-                        }}
-                        />
-                    </div>
+                <Table tableTill="md"
+                    columnNames={[
+                        "#",
+                        __("cron.content.condition"),
+                        __("cron.content.action")]}
+                    rows={this.assembleTable()}
+                    addEnabled={this.state.tasks.length < MAX_RULES}
+                    addTitle={__("cron.content.add_rule_title")}
+                    addMessage={__("cron.content.add_rule_count")(this.state.tasks.length, MAX_RULES)}
+                    onAddShow={async () => {
+                        this.setState({
+                            displayed_trigger: CronTriggerID.None,
+                            displayed_action: CronActionID.None,
+                            edit_task: {
+                                trigger: [CronTriggerID.None, null],
+                                action: [CronActionID.None, null]
+                            }
+                        });
+                    }}
+                    onAddGetRows={() => {
+                        return this.createSelectors()
+                    }}
+                    onAddSubmit={async () => {
+                        this.setState({tasks: this.state.tasks.concat([this.state.edit_task])});
+                        this.setDirty(true);
+                    }}
+                    />
             </ConfigForm>
+        </SubPage>
     }
 }
 
