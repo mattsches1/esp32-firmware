@@ -50,7 +50,7 @@ void SOC::pre_setup()
         {"user_name", Config::Str("", 0, 64)},
         {"password", Config::Str("", 0, 64)},
         {"pin", Config::Str("", 4, 4)},
-        {"vin", Config::Str("", 0, 64)},
+        {"vin", Config::Str("", 17, 17)},
         {"setpoint", Config::Uint(80, 10, 100)},
         {"update_rate_when_charging", Config::Uint(300, 300, 3600)},
         {"update_rate_when_idle", Config::Uint(3600, 60, 36000)}
@@ -64,8 +64,10 @@ void SOC::pre_setup()
     });
 
     ignore_once = Config::Object({
-        {"ignore_once", Config::Bool(false)}
+        {"enabled", Config::Bool(false)}
     });
+
+    ignore_once_update = ignore_once;
 
 }
 
@@ -77,12 +79,6 @@ void SOC::setup()
     }
 
     soc_history.setup();
-    soc_history.clear();
-
-    for (int i = 0; i < soc_history.size(); ++i) {
-        // Use negative values to mark that these are pre-filled.
-        soc_history.push(-1);
-    }
 
     // Reserve memory for strings to minimize heap fragmentation:
     api_data.amz_date.reserve(16);
@@ -111,10 +107,6 @@ void SOC::setup()
     task_scheduler.scheduleWithFixedDelay([this](){
         update_all_data();
     }, 30, 250);
-
-    task_scheduler.scheduleWithFixedDelay([this](){
-        update_history();
-    }, 40, SOC_HISTORY_MINUTE_INTERVAL * 60 * 1000);
 
     initialized = true;
 }
@@ -151,49 +143,16 @@ void SOC::register_urls()
         logger.printfln("SOC: VIN list requested -> complete");
     });
 
-    api.addCommand("soc/request", Config::Null(), {}, [this](){
+    api.addCommand("soc/manual_request", Config::Null(), {}, [this](){
         soc_requested = true;
+        if (debug) logger.printfln("SOC: Manual request received");
     }, false);
 
     api.addState("soc/ignore_once", &ignore_once, {}, 1000);
-    api.addCommand("soc/ignore_once_update", &ignore_once, {}, [this](){
-        ignore_soc_limit_once = ignore_once.get("ignore_once")->asBool();
+    api.addCommand("soc/ignore_once_update", &ignore_once_update, {}, [this](){
+        ignore_soc_limit_once = ignore_once_update.get("enabled")->asBool();
         if (debug) logger.printfln("SOC: Set ignore once to %d", ignore_soc_limit_once);
     }, false);
-
-    server.on("/soc/history", HTTP_GET, [this](WebServerRequest request) {
-        if (!initialized) {
-            return request.send(400, "text/html", "not initialized");
-        }
-
-        std::lock_guard<std::mutex> lock(mutex);
-
-        const size_t buf_size = SOC_RING_BUF_SIZE * 6 + 100;
-        char buf[buf_size] = {0};
-        size_t buf_written = 0;
-
-        int16_t val;
-        soc_history.peek(&val);
-        // Negative values are prefilled, because the ESP was booted less than 48 hours ago.
-        if (val < 0)
-            buf_written += snprintf(buf + buf_written, buf_size - buf_written, "%s", "[null");
-        else
-            buf_written += snprintf(buf + buf_written, buf_size - buf_written, "[%d", (int)val);
-
-        for (int i = 1; i < soc_history.used() && soc_history.peek_offset(&val, i) && buf_written < buf_size; ++i) {
-            // Negative values are prefilled, because the ESP was booted less than 48 hours ago.
-            if (val < 0)
-                buf_written += snprintf(buf + buf_written, buf_size - buf_written, "%s", ",null");
-            else
-                buf_written += snprintf(buf + buf_written, buf_size - buf_written, ",%d", (int)val);
-        }
-
-        if (buf_written < buf_size)
-            buf_written += snprintf(buf + buf_written, buf_size - buf_written, "%c", ']');
-
-        return request.send(200, "application/json; charset=utf-8", buf, buf_written);
-    });
-
 
     server.on("/soc/start_debug", HTTP_GET, [this](WebServerRequest request) {
         logger.printfln("SOC: Enabling debug mode");
@@ -210,8 +169,6 @@ void SOC::register_urls()
     });
 
 }
-
-void SOC::loop(){}
 
 void SOC::check_for_vin_list_completion()
 {
@@ -1213,12 +1170,10 @@ void SOC::update_all_data()
     state.get("sequencer_state")->updateUint(uint8_t(sequencer_state));
     state.get("time_since_state_change")->updateUint((millis() - last_request) / 1000);
     state.get("last_request_status")->updateBool(soc_status_ok);
-    ignore_once.get("ignore_once")->updateBool(ignore_soc_limit_once);
-}
+    ignore_once.get("enabled")->updateBool(ignore_soc_limit_once);
 
-void SOC::update_history()
-{
-    soc_history.push((int16_t)soc);
+    soc_history.add_sample(soc);
+
 }
 
 int SOC::http_request(const String &url, const char* cert, http_method method, std::vector<Header> *headers, String *payload, CookieJar *cookie_jar, const char *headers_to_collect[], size_t num_headers_to_collect) 

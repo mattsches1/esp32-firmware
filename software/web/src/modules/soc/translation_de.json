@@ -35,6 +35,7 @@
             "vin_list": "VINs",
             "vin_list_search": "Suche",
             "vin_list_searching": "Suche...",
+            "vin_invalid": "Die VIN muss exakt 17 Zeichen lang sein und darf nur Großbuchstaben und Ziffern enthalten.",
             "soc_setpoint" : {
                 "title": "Sollwert Ladestand",
                 "description": "Ladestand, bei dem der Ladevorgang beendet wird"
@@ -48,6 +49,8 @@
                 "description": "Abfrageintervall für den Ladestand, wenn kein Ladevorgang aktiv ist"
             },
             "chart" : "Ladestandsverlauf",
+            "history": "History (48 h)",
+            "live": "Live",
 
             "reboot_title": "Neu starten um Konfiguration anzuwenden",
             "reboot_content": "Die geänderten Einstellungen werden nur nach einem Neustart angewendet. Jetzt neu starten?",
@@ -78,8 +81,8 @@
             "no_vin_found": "Keine VINs gefunden",
             "time": "Uhrzeit",
             "soc": "Ladestand",
-            "ignore_once_update_failed": "Setzen der Option zum Ignorieren des Ladelimits fehlgeschlagen."
-
+            "ignore_once_update_failed": "Setzen der Option zum Ignorieren des Ladelimits fehlgeschlagen.",
+            "manual_request_failed": "Absetzen des Aktualisierungskommandos fehlgeschlagen."
         }
     }
 }

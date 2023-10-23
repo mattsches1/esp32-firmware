@@ -35,6 +35,7 @@
             "vin_list": "VINs",
             "vin_list_search": "Search",
             "vin_list_searching": "Searching...",
+            "vin_invalid": "The VIN must be exactly 17 letters long and contain only upper case letters and digits.",
             "soc_setpoint" : {
                 "title": "SOC Setpoint",
                 "description": "Charging is stopped as soon as this state of charge is reached"
@@ -48,6 +49,8 @@
                 "description": "Update rate of the SOC if no vehicle is being charged"
             },
             "chart" : "SOC History",
+            "history": "Verlauf (48 h)",
+            "live": "Live",
 
             "reboot_title": "Restart to apply configuration",
             "reboot_content": "The modified configuration will only be applied after a restart. Reboot now?",
@@ -78,7 +81,8 @@
             "no_vin_found": "No VINs found",
             "time": "Time",
             "soc": "State of Charge",
-            "ignore_once_update_failed": "Failed to set ignore once option."
+            "ignore_once_update_failed": "Failed to set ignore once option.",
+            "manual_request_failed": "Failed to dispatch SOC request command"
         }
     }
 }

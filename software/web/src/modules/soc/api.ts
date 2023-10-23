@@ -16,8 +16,12 @@ export interface config {
     update_rate_when_idle: number
 }
 
+export interface manual_request {
+
+}
+
 export interface ignore_once {
-    ignore_once: boolean
+    enabled: boolean
 }
 
 interface VinInfo {
@@ -29,3 +33,23 @@ interface VinInfo {
 }
 
 export type vin_info = VinInfo[] | string;
+
+export interface live {
+    offset: number,
+    samples_per_second: number,
+    samples: number[]
+}
+
+export interface live_samples {
+    samples_per_second: number,
+    samples: number[]
+}
+
+export interface history {
+    offset: number,
+    samples: number[]
+}
+
+export interface history_samples {
+    samples: number[]
+}

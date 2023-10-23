@@ -451,14 +451,6 @@ function calculate_live_data(offset: number, samples_per_second: number, samples
     let now = Date.now();
     let start;
     let step;
-
-// FIXME
-    for(let i = 1; i < samples.length; ++i){
-        if (samples[i].length != samples[0].length) {
-            console.log("ERROR: phase_switcher calculate_live_data: samples arrays do not have the same length!")
-        }
-    }
-// FIXME
     
     if (samples_per_second == 0) { // implies samples.length == 1
         start = now - offset;
@@ -765,48 +757,48 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
                     </FormRow>
 
                     <FormSeparator heading={__("phase_switcher.content.meter")} first={true} colClasses={"justify-content-between align-items-center col"} extraClasses={"pr-0 pr-lg-3"} >
-                                <div class="mb-2">
-                                    <InputSelect value={this.state.chart_selected} onValue={(v) => {
-                                        let chart_selected: "live"|"history" = v as any;
+                        <div class="mb-2">
+                            <InputSelect value={this.state.chart_selected} onValue={(v) => {
+                                    let chart_selected: "live"|"history" = v as any;
 
-                                        this.setState({chart_selected: chart_selected}, () => {
-                                            if (chart_selected == 'live') {
-                                                this.uplot_wrapper_live_ref.current.set_show(true);
-                                                this.uplot_wrapper_history_ref.current.set_show(false);
-                                            }
-                                            else {
-                                                this.uplot_wrapper_history_ref.current.set_show(true);
-                                                this.uplot_wrapper_live_ref.current.set_show(false);
-                                            }
+                                    this.setState({chart_selected: chart_selected}, () => {
+                                        if (chart_selected == 'live') {
+                                            this.uplot_wrapper_live_ref.current.set_show(true);
+                                            this.uplot_wrapper_history_ref.current.set_show(false);
+                                        }
+                                        else {
+                                            this.uplot_wrapper_history_ref.current.set_show(true);
+                                            this.uplot_wrapper_live_ref.current.set_show(false);
+                                        }
 
-                                            this.update_uplot();
-                                        });
-                                    }}
-                                        items={[
-                                            ["history", __("phase_switcher.content.history")],
-                                            ["live", __("phase_switcher.content.live")],
-                                        ]}/>
-                                </div>
-                            </FormSeparator>
-                            <UplotWrapper ref={this.uplot_wrapper_live_ref}
-                                          id="phase_switcher_chart_live"
-                                          class="phase_switcher-chart"
-                                          sidebar_id="phase_switcher"
-                                          show={false}
-                                          legend_time_with_seconds={true}
-                                          x_height={30}
-                                          x_include_date={false}
-                                          y_diff_min={100} />
-                            <UplotWrapper ref={this.uplot_wrapper_history_ref}
-                                          id="phase_switcher_chart_history"
-                                          class="phase_switcher-chart"
-                                          sidebar_id="phase_switcher"
-                                          show={true}
-                                          legend_time_with_seconds={false}
-                                          x_height={50}
-                                          x_include_date={true}
-                                          y_min={0}
-                                          y_max={1500} />
+                                        this.update_uplot();
+                                    });
+                                }}
+                                items={[
+                                    ["history", __("phase_switcher.content.history")],
+                                    ["live", __("phase_switcher.content.live")],
+                            ]}/>
+                        </div>
+                    </FormSeparator>
+                    <UplotWrapper ref={this.uplot_wrapper_live_ref}
+                                    id="phase_switcher_chart_live"
+                                    class="phase_switcher-chart"
+                                    sidebar_id="phase_switcher"
+                                    show={false}
+                                    legend_time_with_seconds={true}
+                                    x_height={30}
+                                    x_include_date={false}
+                                    y_diff_min={100} />
+                    <UplotWrapper ref={this.uplot_wrapper_history_ref}
+                                    id="phase_switcher_chart_history"
+                                    class="phase_switcher-chart"
+                                    sidebar_id="phase_switcher"
+                                    show={true}
+                                    legend_time_with_seconds={false}
+                                    x_height={50}
+                                    x_include_date={true}
+                                    y_min={0}
+                                    y_max={1500} />
 
                     {/* Low Level State */}
                     <CollapsedSection label={__("phase_switcher.content.low_level_state")}>

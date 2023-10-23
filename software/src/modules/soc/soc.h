@@ -24,11 +24,9 @@
 #include "module.h"
 #include <HTTPClient.h>
 
-#define EVSE_STOP_TIMEOUT 10000
+#include "../meter/value_history.h"
 
-#define SOC_HISTORY_HOURS 12
-#define SOC_HISTORY_MINUTE_INTERVAL 1
-#define SOC_RING_BUF_SIZE (SOC_HISTORY_HOURS * (60 / SOC_HISTORY_MINUTE_INTERVAL) + 1)
+#define EVSE_STOP_TIMEOUT 10000
 
 
 class SOC final : public IModule
@@ -38,7 +36,6 @@ public:
     void pre_setup() override;
     void setup() override;
     void register_urls() override;
-    void loop() override;
     bool initialized = false;
 
 private:
@@ -98,7 +95,6 @@ private:
     void sequencer_state_waiting_for_evse_stop();
 
     void update_all_data();
-    void update_history();
 
     int http_request(const String &url, const char* cert, http_method method, std::vector<Header> *headers, String *payload, CookieJar *cookie_jar, const char *headers_to_collect[]=nullptr, size_t num_headers_to_collect=0);
     int http_request(const String &url, const char* cert, http_method method, std::vector<Header> *headers, String *payload, CookieJar *cookie_jar, DynamicJsonDocument *response, const char *headers_to_collect[]=nullptr, size_t num_headers_to_collect=0);
@@ -134,6 +130,7 @@ private:
     ConfigRoot config_in_use;
     ConfigRoot state;
     ConfigRoot ignore_once;
+    ConfigRoot ignore_once_update;
     ConfigRoot api_debug_data;
 
     bool enabled;
@@ -163,7 +160,7 @@ private:
         String amz_date;
     } api_data;
 
-    TF_Ringbuffer<int16_t, SOC_RING_BUF_SIZE, uint32_t, malloc_32bit_addressed, heap_caps_free> soc_history;
+    ValueHistory soc_history;
 
 };
                                     
