@@ -220,8 +220,6 @@ void PhaseSwitcher::register_urls()
     });
 }
 
-void PhaseSwitcher::loop(){}
-
 uint8_t PhaseSwitcher::get_active_phases()
 {
     static Config *evse_state = api.getState("evse/state", false);
