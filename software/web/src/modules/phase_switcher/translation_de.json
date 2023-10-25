@@ -6,7 +6,9 @@
             "no_phase": "Keine",
             "one_phase": "Eine",
             "two_phases": "Zwei",
-            "three_phases": "Drei"
+            "three_phases": "Drei",
+            "quick_charging": "Schnellladen",
+            "start_quick_charging": "Schnellladen starten"
         },
         "navbar": {
             "phase_switcher": "Phasenumschaltung"
@@ -92,7 +94,8 @@
                 "50" : "Ladevorgang durch EVSE gestoppt"
             },
             "time": "Uhrzeit",
-            "power": "Leistung"
+            "power": "Leistung",
+            "start_quick_charging_failed": "Start Schnellladen fehlgeschlagen"
         }
     }
 }

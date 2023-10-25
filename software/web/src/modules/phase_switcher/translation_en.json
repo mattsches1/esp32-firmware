@@ -6,7 +6,9 @@
             "no_phase": "None",
             "one_phase": "One",
             "two_phases": "Two",
-            "three_phases": "Three"
+            "three_phases": "Three",
+            "quick_charging": "Quick Charging",
+            "start_quick_charging": "Start Quick Charging"
         },
         "navbar": {
             "phase_switcher": "Phase Switcher"
@@ -92,7 +94,8 @@
                 "50" : "Charging stopped by EVSE"
             },
             "time": "Time of day",
-            "power": "Power"
+            "power": "Power",
+            "start_quick_charging_failed": "Failed to start quick charging"
         }
     }
 }

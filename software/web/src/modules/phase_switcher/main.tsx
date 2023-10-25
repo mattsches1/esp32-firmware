@@ -35,6 +35,7 @@ import { SubPage } from "../../ts/components/sub_page";
 import { CollapsedSection } from "../../ts/components/collapsed_section";
 import { OutputFloat } from "../../ts/components/output_float";
 import { IndicatorGroup } from "../../ts/components/indicator_group";
+import { Button } from "react-bootstrap";
 import uPlot from 'uplot';
 import { FormSeparator } from "../../ts/components/form_separator";
 
@@ -887,6 +888,13 @@ export class PhaseSwitcherStatus extends Component<{}, PhaseSwitcherStatusState>
         return <>
                 <FormRow label={__("phase_switcher.status.available_charging_power")} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4">
                     <OutputFloat value={state.state.available_charging_power} digits={0} scale={0} unit="W" maxFractionalDigitsOnPage={0} maxUnitLengthOnPage={1}/>
+                </FormRow>
+                <FormRow label={__("phase_switcher.status.quick_charging")} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4">
+                    <Button variant="primary" className="form-control"
+                        disabled={!(state.state.sequencer_state == 1 || state.state.sequencer_state == 50)}
+                        onClick={() =>  API.call('phase_switcher/start_quick_charging', {}, __("phase_switcher.script.start_quick_charging_failed"))}>
+                        {__("phase_switcher.status.start_quick_charging")}
+                    </Button>                            
                 </FormRow>
 
                 <FormRow label={__("phase_switcher.status.active_phases")} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4">

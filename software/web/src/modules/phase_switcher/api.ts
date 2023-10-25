@@ -19,6 +19,10 @@ export interface config {
     pause_time: number
 }
 
+export interface start_quick_charging {
+    
+}
+
 export interface low_level_state {
     input_channels: boolean[],
     output_channels: boolean[],
