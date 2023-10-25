@@ -154,6 +154,8 @@ void SOC::register_urls()
         if (debug) logger.printfln("SOC: Set ignore once to %d", ignore_soc_limit_once);
     }, false);
 
+    soc_history.register_urls("soc");
+
     server.on("/soc/start_debug", HTTP_GET, [this](WebServerRequest request) {
         logger.printfln("SOC: Enabling debug mode");
         debug = true;
