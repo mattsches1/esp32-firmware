@@ -51,7 +51,7 @@ export function OutputFloat(props: OutputFloatProps) {
 
     return (
         <div class={"input-group" + (props.small ? " input-group-sm" : "")}>
-            <input class={"form-control" + (props.small ? " form-control-sm" : "") + " no-spin text-right text-monospace"}
+            <input class={"form-control" + (props.small ? " form-control-sm" : "") + " no-spin text-right"}
                     style={pad_right}
                        id={id}
                        type="text"
