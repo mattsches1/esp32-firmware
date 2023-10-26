@@ -630,11 +630,9 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
                         <div class="row mx-n1">
                             <div class="mb-1 col-6 px-1">
                                 <OutputFloat value={api_data.state.available_charging_power} digits={0} scale={0} unit="W" maxFractionalDigitsOnPage={0} maxUnitLengthOnPage={1}/>
-                                {/* <InputText value={api_data.state.available_charging_power.toString() + " W"}/> */}
                             </div>
                             <div class="mb-1 col-6 px-1">
                                 <OutputFloat value={api_data.meter.power} digits={0} scale={0} unit="W" maxFractionalDigitsOnPage={0} maxUnitLengthOnPage={1}/>
-                                {/* <InputText value={api_data.meter.power.toString() + " W"}/> */}
                             </div>
                         </div>
                     </FormRow>
