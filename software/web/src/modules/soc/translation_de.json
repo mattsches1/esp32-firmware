@@ -82,7 +82,8 @@
             "time": "Uhrzeit",
             "soc": "Ladestand",
             "ignore_once_update_failed": "Setzen der Option zum Ignorieren des Ladelimits fehlgeschlagen.",
-            "manual_request_failed": "Absetzen des Aktualisierungskommandos fehlgeschlagen."
+            "manual_request_failed": "Absetzen des Aktualisierungskommandos fehlgeschlagen.",
+            "toggle_ignore_once_failed": "Umschalten des Kommandos \"Einmal ignorieren\" fehlgeschlagen"
         }
     }
 }

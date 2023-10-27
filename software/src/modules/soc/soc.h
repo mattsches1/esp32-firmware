@@ -129,8 +129,6 @@ private:
     ConfigRoot config;
     ConfigRoot config_in_use;
     ConfigRoot state;
-    ConfigRoot ignore_once;
-    ConfigRoot ignore_once_update;
     ConfigRoot api_debug_data;
 
     bool enabled;

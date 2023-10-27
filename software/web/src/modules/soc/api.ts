@@ -2,7 +2,8 @@ export interface state {
     soc: number,
     sequencer_state: number,
     time_since_state_change: number,
-    last_request_status: boolean
+    last_request_status: boolean,
+    ignore_soc_limit_once: boolean
 }
 
 export interface config {
@@ -20,8 +21,8 @@ export interface manual_request {
 
 }
 
-export interface ignore_once {
-    enabled: boolean
+export interface toggle_ignore_once {
+
 }
 
 interface VinInfo {

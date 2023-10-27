@@ -60,14 +60,9 @@ void SOC::pre_setup()
         {"soc", Config::Uint8(0)},
         {"sequencer_state", Config::Uint8(0)},
         {"time_since_state_change", Config::Uint32(0)},
-        {"last_request_status", Config::Bool(false)}
+        {"last_request_status", Config::Bool(false)},
+        {"ignore_soc_limit_once", Config::Bool(false)}
     });
-
-    ignore_once = Config::Object({
-        {"enabled", Config::Bool(false)}
-    });
-
-    ignore_once_update = ignore_once;
 
 }
 
@@ -148,10 +143,9 @@ void SOC::register_urls()
         if (debug) logger.printfln("SOC: Manual request received");
     }, false);
 
-    api.addState("soc/ignore_once", &ignore_once, {}, 1000);
-    api.addCommand("soc/ignore_once_update", &ignore_once_update, {}, [this](){
-        ignore_soc_limit_once = ignore_once_update.get("enabled")->asBool();
-        if (debug) logger.printfln("SOC: Set ignore once to %d", ignore_soc_limit_once);
+    api.addCommand("soc/toggle_ignore_once", Config::Null(), {}, [this](){
+        this->ignore_soc_limit_once ^= 1;
+        if (debug) logger.printfln("SOC: Ignore once set to %d", this->ignore_soc_limit_once);
     }, false);
 
     soc_history.register_urls("soc");
@@ -163,13 +157,10 @@ void SOC::register_urls()
     });
 
     server.on("/soc/stop_debug", HTTP_GET, [this](WebServerRequest request){
-        task_scheduler.scheduleOnce([this](){
-            logger.printfln("SOC: Disabling debug mode");
-            debug = false;
-        }, 0);
+        logger.printfln("SOC: Disabling debug mode");
+        debug = false;
         return request.send(200);
     });
-
 }
 
 void SOC::check_for_vin_list_completion()
@@ -1172,7 +1163,7 @@ void SOC::update_all_data()
     state.get("sequencer_state")->updateUint(uint8_t(sequencer_state));
     state.get("time_since_state_change")->updateUint((millis() - last_request) / 1000);
     state.get("last_request_status")->updateBool(soc_status_ok);
-    ignore_once.get("enabled")->updateBool(ignore_soc_limit_once);
+    state.get("ignore_soc_limit_once")->updateBool(ignore_soc_limit_once);
 
     soc_history.add_sample(soc);
 

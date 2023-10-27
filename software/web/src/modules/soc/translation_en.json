@@ -82,7 +82,8 @@
             "time": "Time",
             "soc": "State of Charge",
             "ignore_once_update_failed": "Failed to set ignore once option.",
-            "manual_request_failed": "Failed to dispatch SOC request command"
+            "manual_request_failed": "Failed to dispatch SOC request command",
+            "toggle_ignore_once_failed": "Failed to toggle ignore once command"
         }
     }
 }

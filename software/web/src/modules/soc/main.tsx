@@ -48,10 +48,6 @@ interface SocState {
     chart_selected: "history"|"live";
 }
 
-interface IgnoreOnce {
-    ignore_once: API.getType['soc/ignore_once'];   
-}
-
 interface UplotData {
     timestamps: number[];
     samples: number[];
@@ -464,7 +460,7 @@ function array_append<T>(a: Array<T>, b: Array<T>, tail: number): Array<T> {
     return a.slice(-tail);
 }
 
-export class Soc extends ConfigComponent<'soc/config', {}, SocConfig & SocState & IgnoreOnce> {
+export class Soc extends ConfigComponent<'soc/config', {}, SocConfig & SocState> {
     live_data: UplotData;
     pending_live_data: UplotData = {timestamps: [], samples: []};
     history_data: UplotData;
@@ -478,10 +474,6 @@ export class Soc extends ConfigComponent<'soc/config', {}, SocConfig & SocState 
 
         util.addApiEventListener('soc/state', () => {
             this.setState({state: API.get('soc/state')});
-        });
-
-        util.addApiEventListener('soc/ignore_once', () => {
-            this.setState({ignore_once: API.get('soc/ignore_once')});
         });
 
         util.addApiEventListener("soc/live", () => {
@@ -553,7 +545,7 @@ export class Soc extends ConfigComponent<'soc/config', {}, SocConfig & SocState 
         }
     }
 
-    render(props: {}, api_data: Readonly<SocConfig & SocState & IgnoreOnce>) {
+    render(props: {}, api_data: Readonly<SocConfig & SocState>) {
         if (!util.render_allowed() || !API.hasFeature("soc"))
             return <></>
 
@@ -606,8 +598,8 @@ export class Soc extends ConfigComponent<'soc/config', {}, SocConfig & SocState 
 
                     <FormRow label={__("soc.content.ignore_once")}>
                         <Switch desc={__("soc.content.ignore_once_desc")}
-                                checked={api_data.ignore_once.enabled}
-                                onClick={async () => this.setState({ignore_once: {enabled: !api_data.ignore_once.enabled}})}/>
+                                checked={api_data.state.ignore_soc_limit_once}
+                                onClick={() =>  API.call('soc/toggle_ignore_once', {}, __("soc.script.toggle_ignore_once_failed"))}/>
                     </FormRow>
 
                     <FormSeparator heading={__("soc.content.configuration")}/>
@@ -627,7 +619,6 @@ export class Soc extends ConfigComponent<'soc/config', {}, SocConfig & SocState 
 
                     <FormRow label={__("soc.content.password")}>
                         <InputPassword minLength={1} maxLength={64}
-                                       required
                                        value={api_data.password}
                                        onValue={this.set("password")}
                                        />
@@ -635,7 +626,6 @@ export class Soc extends ConfigComponent<'soc/config', {}, SocConfig & SocState 
 
                     <FormRow label={__("soc.content.pin")}>
                         <InputPassword minLength={4} maxLength={4}
-                                       required
                                        value={api_data.pin}
                                        onValue={this.set("pin")}
                                        />
