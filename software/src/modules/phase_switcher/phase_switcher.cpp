@@ -109,6 +109,12 @@ void PhaseSwitcher::setup()
     api_config_in_use = api_config;
 
     enabled = api_config.get("enabled")->asBool();
+    if (!enabled){
+        api.callCommand("evse/external_current_update", Config::ConfUpdateObject{{
+            {"current", 32000}
+        }});
+    }
+
     operating_mode = PhaseSwitcherMode(api_config_in_use.get("operating_mode")->asUint());
 
     if (debug){
