@@ -1,13 +1,13 @@
 {
     "soc": {
         "status": {
-            "soc": "State of Charge (SOC)"
+            "soc": "State of charge"
         },
         "navbar": {
             "soc": "State of Charge"
         },
         "content": {
-            "soc": "State of Charge",
+            "soc": "State of charge",
             "refresh": "Refresh",
             "state": "State",
             "sequencer_state": {
@@ -37,7 +37,7 @@
             "vin_list_searching": "Searching...",
             "vin_invalid": "The VIN must be exactly 17 letters long and contain only upper case letters and digits.",
             "soc_setpoint" : {
-                "title": "SOC Setpoint",
+                "title": "SOC setpoint",
                 "description": "Charging is stopped as soon as this state of charge is reached"
             },
             "update_rate_when_charging" : {
