@@ -76,7 +76,7 @@
 
             "meter": "Stromzähler",
             "actual_charging_power": "Aktuelle Ladeleistung",
-            "history": "Verlauf (48 h)",
+            "history": "Verlauf (12 h)",
             "live": "Live"    
         },
         "script": {

@@ -472,7 +472,7 @@ function calculate_live_data(offset: number, samples_per_second: number, samples
 }
 
 function calculate_history_data(offset: number, samples: number[][]): UplotData {
-    const HISTORY_MINUTE_INTERVAL = 3;
+    const HISTORY_MINUTE_INTERVAL = 1;
 
     let data: UplotData = {timestamps: new Array(samples[0].length), samples: samples};
     let now = Date.now();
