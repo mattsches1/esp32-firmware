@@ -152,6 +152,7 @@ class UplotWrapper extends Component<UplotWrapperProps, {}> {
                     pxAlign: 0,
                     spanGaps: false,
                     label: __("phase_switcher.status.available_charging_power"),
+                    scale: "power",
                     value: (self: uPlot, rawValue: number) => util.hasValue(rawValue) ? util.toLocaleFixed(rawValue) + " W" : null,
                     stroke: "rgb(0, 123, 0)",
                     fill: "rgb(0, 123, 0, 0.1)",
@@ -165,6 +166,7 @@ class UplotWrapper extends Component<UplotWrapperProps, {}> {
                     pxAlign: 0,
                     spanGaps: false,
                     label: __("phase_switcher.content.actual_charging_power"),
+                    scale: "power",
                     value: (self: uPlot, rawValue: number) => util.hasValue(rawValue) ? util.toLocaleFixed(rawValue) + " W" : null,
                     stroke: "rgb(0, 123, 255)",
                     fill: "rgb(0, 123, 255, 0.1)",
@@ -178,6 +180,7 @@ class UplotWrapper extends Component<UplotWrapperProps, {}> {
                     pxAlign: 0,
                     spanGaps: false,
                     label: __("phase_switcher.content.requested_phases"),
+                    scale: "phases",
                     value: (self: uPlot, rawValue: number) => util.hasValue(rawValue) ? util.toLocaleFixed(rawValue) : null,
                     stroke: "rgb(0, 0, 0)",
                     fill: "rgb(0, 0, 0, 0.1)",
@@ -237,6 +240,7 @@ class UplotWrapper extends Component<UplotWrapperProps, {}> {
                     labelSize: 20,
                     labelGap: 2,
                     labelFont: 'bold 14px system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"',
+                    scale: "power",
                     size: (self: uPlot, values: string[], axisIdx: number, cycleNum: number): number => {
                         let size = 0;
 
@@ -253,36 +257,73 @@ class UplotWrapper extends Component<UplotWrapperProps, {}> {
 
                         return Math.ceil(size / devicePixelRatio) + 20;
                     },
-                    values: (self: uPlot, splits: number[]) => {
-                        let values: string[] = new Array(splits.length);
+// !!! FIXME                
+                    // values: (self: uPlot, splits: number[]) => {
+                    //     let values: string[] = new Array(splits.length);
 
-                        for (let digits = 0; digits <= 3; ++digits) {
-                            let last_value: string = null;
-                            let unique = true;
+                    //     for (let digits = 0; digits <= 3; ++digits) {
+                    //         let last_value: string = null;
+                    //         let unique = true;
 
-                            for (let i = 0; i < splits.length; ++i) {
-                                values[i] = util.toLocaleFixed(splits[i], digits);
+                    //         for (let i = 0; i < splits.length; ++i) {
+                    //             values[i] = util.toLocaleFixed(splits[i], digits);
 
-                                if (last_value == values[i]) {
-                                    unique = false;
-                                }
+                    //             if (last_value == values[i]) {
+                    //                 unique = false;
+                    //             }
 
-                                last_value = values[i];
+                    //             last_value = values[i];
+                    //         }
+
+                    //         if (unique) {
+                    //             break;
+                    //         }
+                    //     }
+
+                    //     return values;
+                    // },
+                },
+                {
+                    label: __("phase_switcher.script.phases"),
+                    labelSize: 20,
+                    labelGap: 2,
+                    labelFont: 'bold 14px system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"',
+                    side: 1,
+                    scale: "phases",
+                    size: (self: uPlot, values: string[], axisIdx: number, cycleNum: number): number => {
+                        let size = 0;
+
+                        if (values) {
+                            self.ctx.save();
+                            self.ctx.font = self.axes[axisIdx].font;
+
+                            for (let i = 0; i < values.length; ++i) {
+                                size = Math.max(size, self.ctx.measureText(values[i]).width);
                             }
 
-                            if (unique) {
-                                break;
-                            }
+                            self.ctx.restore();
                         }
 
-                        return values;
+                        return Math.ceil(size / devicePixelRatio) + 20;
                     },
-                }
+                    incrs: [0, 1, 2, 3],
+                    grid: {
+                        show: false,
+                    },      
+                },
             ],
             scales: {
-                y: {
+                power: {
                     range: (self: uPlot, initMin: number, initMax: number, scaleKey: string): uPlot.Range.MinMax => {
+                        console.log("y min: " + uPlot.rangeNum(this.y_min, this.y_max, {min: {}, max: {}})[0] + "; max: " + uPlot.rangeNum(this.y_min, this.y_max, {min: {}, max: {}})[1]);
                         return uPlot.rangeNum(this.y_min, this.y_max, {min: {}, max: {}});
+                }   
+                },
+                phases: {
+                    range: (self: uPlot, initMin: number, initMax: number, scaleKey: string): uPlot.Range.MinMax => {
+                        let phases_min: number = uPlot.rangeNum(this.y_min, this.y_max, {min: {}, max: {}})[0] / 230 / 6;
+                        let phases_max: number = uPlot.rangeNum(this.y_min, this.y_max, {min: {}, max: {}})[1] / 230 / 6;
+                        return [phases_min, phases_max];
                     }
                 },
             },
@@ -376,7 +417,7 @@ class UplotWrapper extends Component<UplotWrapperProps, {}> {
         let y_min: number = this.props.y_min;
         let y_max: number = this.props.y_max;
 
-        for (let j = 0; j < this.data.samples.length; ++j){
+        for (let j = 0; j < this.data.samples.length - 1; ++j){
 
             for (let i = 0; i < this.data.samples[j].length; ++i) {
 
@@ -430,7 +471,7 @@ class UplotWrapper extends Component<UplotWrapperProps, {}> {
         y_min = 0;
         this.y_min = y_min;
         this.y_max = y_max;
-       
+        
         this.uplot.setData([this.data.timestamps, ...this.data.samples]);
     }
 

@@ -820,14 +820,14 @@ void PhaseSwitcher::update_all_data()
 
     
     // chart
-    int16_t actual_charging_power = -1;
+    int16_t actual_charging_power = 0;
     if (modbus_meter.initialized){
         static Config *meter_values = api.getState("meter/values", false);
 
         if (meter_values != nullptr)
             actual_charging_power = meter_values->get("power")->asFloat();
     }
-    float samples[3] = {(float)available_charging_power, (float)actual_charging_power, (float)requested_phases * 230 * 6};
+    float samples[3] = {(float)available_charging_power, (float)actual_charging_power, (float)requested_phases_pending};
     power_history.add_sample(samples);
 
 }

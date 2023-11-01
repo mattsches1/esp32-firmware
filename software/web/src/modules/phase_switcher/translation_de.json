@@ -95,6 +95,7 @@
             },
             "time": "Uhrzeit",
             "power": "Leistung",
+            "phases": "Phasen",
             "start_quick_charging_failed": "Start Schnellladen fehlgeschlagen"
         }
     }

@@ -95,6 +95,7 @@
             },
             "time": "Time of day",
             "power": "Power",
+            "phases": "Phases",
             "start_quick_charging_failed": "Failed to start quick charging"
         }
     }
