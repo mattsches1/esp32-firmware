@@ -1,3 +1,4 @@
+
 /* esp32-firmware
  * Copyright (C) 2020-2021 Erik Fleckstein <erik@tinkerforge.com>
  *
@@ -197,7 +198,7 @@ let ws: WebSocket = null;
 const RECONNECT_TIME = 12000;
 
 export function addApiEventListener<T extends keyof API.EventMap>(type: T, listener: (this: API.APIEventTarget, ev: API.EventMap[T]) => any, options?: boolean | AddEventListenerOptions) {
-    eventTarget.addEventListener(type, listener);
+    eventTarget.addEventListener(type, listener, options);
     if (api_cache[type])
     {
         API.trigger(type, eventTarget);
@@ -656,4 +657,10 @@ export let nextId = (function() {
 // we can switch back to Preact's useId.
 export function useId() {
     return useState(nextId())[0];
+}
+
+export function joinNonEmpty(sep: string, lst: string[]) {
+    return lst.filter(x => x) // remove empty slots
+              .filter(x => x.length > 0)
+              .join(sep);
 }

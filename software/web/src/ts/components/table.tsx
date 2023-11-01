@@ -112,25 +112,27 @@ export class Table extends Component<TableProps, TableState> {
             <>
                 <Card className={`d-none d-${props.tableTill ? props.tableTill : 'sm'}-block`}><Card.Body style="padding: 0;">
                 <table class="table" style="font-size: 1rem; margin-bottom: 0;">
-                    <thead>
-                        <tr>
-                            {props.columnNames.map((columnName) => (
-                                <th scope="col" style="vertical-align: middle;">{columnName}</th>
-                            ))}
-                            <th scope="col">
-                                <Button size="sm" disabled={true} style="visibility: hidden;">
-                                    <Trash2/>
-                                </Button>
-                            </th>
-                        </tr>
-                    </thead>
+                    {props.columnNames.filter((name) => name.length > 0).length > 0 ?
+                        <thead>
+                            <tr>
+                                {props.columnNames.map((columnName) => (
+                                    <th scope="col" style="vertical-align: middle;">{columnName}</th>
+                                ))}
+                                <th scope="col">
+                                    <Button size="sm" disabled={true} style="visibility: hidden;">
+                                        <Trash2/>
+                                    </Button>
+                                </th>
+                            </tr>
+                        </thead>
+                        : undefined}
                     <tbody>
                         {props.rows.map((row, i) => <>
                             <tr key={row.key}>
                                 {row.columnValues.map((value) => (
-                                    <td class={"text-break" + (row.extraValue ? " pb-0" : "")} style="vertical-align: middle;">{value}</td>
+                                    <td class={"text-break" + (row.extraValue ? " pb-0" : "")} style={"vertical-align: middle;" + (i == 0 ? " border-top: none;" : "")}>{value}</td>
                                 ))}
-                                <td class={row.extraValue ? "pb-0" : undefined} style="width: 1%; white-space: nowrap; vertical-align: middle;">
+                                <td class={row.extraValue ? "pb-0" : undefined} style={"width: 1%; white-space: nowrap; vertical-align: middle;" + (i == 0 ? " border-top: none;" : "")}>
                                     <Button variant="primary"
                                             size="sm"
                                             className="mr-2"
@@ -150,7 +152,7 @@ export class Table extends Component<TableProps, TableState> {
                                 </td>
                             </tr>
                             {row.extraValue ?
-                                <tr key={row.extraKey}>
+                                <tr key={row.extraKey} class="table-extra-value">
                                     <td colSpan={props.columnNames.length + 1} class="pt-0" style="border-top: none;">
                                         <Collapse in={row.extraShow}>
                                             <div>
@@ -163,10 +165,10 @@ export class Table extends Component<TableProps, TableState> {
                         </>)}
                         {props.onAddSubmit ?
                         <tr>
-                            <td colSpan={props.columnNames.length} style="vertical-align: middle; width: 100%;">
+                            <td colSpan={props.columnNames.length} style={"vertical-align: middle; width: 100%;" + (props.rows.length == 0 ? " border-top: none;" : "")}>
                                 {props.addMessage}
                             </td>
-                            <td style="text-align: right; vertical-align: middle;">
+                            <td style={"text-align: right; vertical-align: middle;" + (props.rows.length == 0 ? " border-top: none;" : "")}>
                                 <Button variant="primary"
                                         size="sm"
                                         onClick={async () => {
@@ -184,8 +186,12 @@ export class Table extends Component<TableProps, TableState> {
                 </Card.Body></Card>
 
                 <div class={`d-block d-${props.tableTill ? props.tableTill : 'sm'}-none` + " table-card-mode"}>
-                    {props.rows.map((row, i) => <Card className="mb-3">
-                        <div class="card-header d-flex justify-content-between align-items-center p-2d5">
+                    {props.rows.map((row, i) => {
+                        let card_fields = this.get_card_fields(row);
+                        let needs_body = card_fields.length > 0 || row.extraValue;
+
+                        return <><Card className="mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center p-2d5" style={needs_body ? "" : "border-bottom: 0;"}>
                             <h5 class="text-break" style="margin-bottom: 0;">{util.hasValue(row.fieldValues) ? row.fieldValues[0] : row.columnValues[0]}</h5>
                             <div style="white-space: nowrap; vertical-align: middle;">
                                 <Button variant="primary"
@@ -207,21 +213,24 @@ export class Table extends Component<TableProps, TableState> {
                                 </Button>
                             </div>
                         </div>
-                        <Card.Body className="p-2d5 pb-0">
-                            {this.get_card_fields(row)}
-                            {row.extraValue ?
-                                <Collapse in={row.extraShow}>
-                                    <div>
-                                        {row.extraFieldName ?
-                                            <FormRow label={row.extraFieldName}>
-                                                <Card><Card.Body className="p-2d5 pb-0">{row.extraValue}</Card.Body></Card>
-                                            </FormRow>
-                                            : <Card><Card.Body className="p-2d5 pb-0">{row.extraValue}</Card.Body></Card>}
-                                    </div>
-                                </Collapse>
-                                : undefined}
-                        </Card.Body>
-                    </Card>)}
+                        {needs_body ?
+                            <Card.Body className="p-2d5 pb-0">
+                                {card_fields}
+                                {row.extraValue ?
+                                    <Collapse in={row.extraShow}>
+                                        <div>
+                                            {row.extraFieldName ?
+                                                <FormRow label={row.extraFieldName}>
+                                                    <Card><Card.Body className="p-2d5 pb-0">{row.extraValue}</Card.Body></Card>
+                                                </FormRow>
+                                                : <Card><Card.Body className="p-2d5 pb-0">{row.extraValue}</Card.Body></Card>}
+                                        </div>
+                                    </Collapse>
+                                    : undefined}
+                            </Card.Body>
+                            : undefined}
+                        </Card></>
+                    })}
                     {props.onAddShow ?
                     <Card className="mb-0">
                         <div class="card-body d-flex justify-content-between align-items-center p-2d5">

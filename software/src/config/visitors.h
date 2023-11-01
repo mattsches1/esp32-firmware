@@ -246,6 +246,7 @@ struct max_string_length_visitor {
             sum += val_pair.first.length() + 3; // "":
             sum += Config::apply_visitor(max_string_length_visitor{}, val_pair.second.value);
         }
+        sum += size - 1; // ,
         return sum;
     }
 
@@ -490,16 +491,20 @@ struct from_json {
 
         const auto size = x.getVal()->size();
 
-        // If a user passes a non-object to an API that expects an object with exactly one member
-        // Try to use the non-object as value for the single member.
-        // This allows calling for example evse/external_current_update with the payload 8000 instead of {"current": 8000}
-        if (!json_node.is<JsonObject>() && is_root && size == 1) {
+        {
             auto &val_pair = (*x.getVal())[0];
-            String inner_error = Config::apply_visitor(from_json{json_node, force_same_keys, permit_null_updates, false}, val_pair.second.value);
-            if (inner_error != "")
-                return String("(inferred) [\"") + val_pair.first + "\"] " + inner_error + "\n";
-            else
-                return inner_error;
+
+            // If a user passes a non-object to an API that expects an object with exactly one member
+            // Try to use the non-object as value for the single member.
+            // This allows calling for example evse/external_current_update with the payload 8000 instead of {"current": 8000}
+            // Only allow this if the omitted key is not the confirm key.
+            if (!json_node.is<JsonObject>() && is_root && size == 1 && val_pair.first != Config::ConfirmKey()) {
+                String inner_error = Config::apply_visitor(from_json{json_node, force_same_keys, permit_null_updates, false}, val_pair.second.value);
+                if (inner_error != "")
+                    return String("(inferred) [\"") + val_pair.first + "\"] " + inner_error + "\n";
+                else
+                    return inner_error;
+            }
         }
 
         if (!json_node.is<JsonObject>())
@@ -550,7 +555,7 @@ struct from_json {
         if (return_str.length() > 0)
         {
             if (more_errors)
-                return_str += "More errors occured that got filtered out.\n";
+                return_str += "More errors occurred that got filtered out.\n";
             return return_str;
         }
 

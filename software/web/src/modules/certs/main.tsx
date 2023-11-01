@@ -38,7 +38,7 @@ interface State {
 }
 
 const MAX_CERTS = 8;
-const MAX_CERT_SIZE = 4030;
+const MAX_CERT_SIZE = 4027;
 
 
 export class Certs extends Component<{}, State> {
@@ -52,7 +52,7 @@ export class Certs extends Component<{}, State> {
                     <div class="mb-3">
                         <Table
                             tableTill="md"
-                            columnNames={[__("certs.content.cert_name")]}
+                            columnNames={[]}
                             rows={API.get('certs/state').certs.map((cert, i) =>
                                 { return {
                                     key: cert.id.toString(),
@@ -90,9 +90,9 @@ export class Certs extends Component<{}, State> {
                                             id: state.editCert.id,
                                             name: state.editCert.name,
                                             cert: state.editCert.file == null ? null : await state.editCert.file.text()
-                                        }, "error_string");
+                                        }, __("certs.script.mod_cert_failed"));
                                     },
-                                    onRemoveClick: async () => { await API.call('certs/remove', {id: cert.id}, "error_string"); }
+                                    onRemoveClick: async () => { await API.call('certs/remove', {id: cert.id}, __("certs.script.del_cert_failed")); }
                                 }})
                             }
                             addEnabled={API.get('certs/state').certs.length < MAX_CERTS}

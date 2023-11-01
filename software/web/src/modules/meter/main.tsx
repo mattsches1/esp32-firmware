@@ -318,31 +318,29 @@ class UplotWrapper extends Component<UplotWrapperProps, {}> {
                         drawAxes: [
                             (self: uPlot) => {
                                 let ctx = self.ctx;
-
-                                ctx.save();
-
                                 let s  = self.series[0];
                                 let xd = self.data[0];
                                 let [i0, i1] = s.idxs;
-                                let x0 = self.valToPos(xd[i0], 'x', true) - self.axes[0].ticks.size;
-                                let y0 = self.valToPos(0, 'y', true);
+                                let x0 = self.valToPos(xd[i0], 'x', true) - self.axes[0].ticks.size * devicePixelRatio;
                                 let x1 = self.valToPos(xd[i1], 'x', true);
-                                let y1 = self.valToPos(0, 'y', true);
+                                let y = self.valToPos(0, 'y', true);
 
-                                const lineWidth = 2;
+                                if (y > ctx.canvas.height - this.props.x_height) {
+                                    return;
+                                }
+
+                                const lineWidth = 2 * devicePixelRatio;
                                 const offset = (lineWidth % 2) / 2;
 
+                                ctx.save();
                                 ctx.translate(offset, offset);
-
                                 ctx.beginPath();
                                 ctx.lineWidth = lineWidth;
                                 ctx.strokeStyle = 'rgb(0,0,0,0.2)';
-                                ctx.moveTo(x0, y0);
-                                ctx.lineTo(x1, y1);
+                                ctx.moveTo(x0, y);
+                                ctx.lineTo(x1, y);
                                 ctx.stroke();
-
                                 ctx.translate(-offset, -offset);
-
                                 ctx.restore();
                             }
                         ],
@@ -804,7 +802,7 @@ export class MeterStatus extends Component<{}, {}> {
         // want to push them into the uplot graph immediately.
         // This only works if the wrapper component is already created.
         // Hide the form rows to fix any visual bugs instead.
-        let show = API.hasFeature('meter') && !API.hasFeature("energy_manager");
+        let show = util.render_allowed() && API.hasFeature('meter') && !API.hasFeature("energy_manager");
 
         // As we don't check util.render_allowed(),
         // we have to handle rendering before the web socket connection is established.

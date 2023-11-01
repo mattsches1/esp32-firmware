@@ -32,7 +32,6 @@ import { FormRow } from "../../ts/components/form_row";
 import { OutputFloat } from "../../ts/components/output_float";
 import { SubPage } from "../../ts/components/sub_page";
 import uPlot from "uplot";
-import { InputText } from "../../ts/components/input_text";
 import { uPlotTimelinePlugin } from "../../ts/uplot-plugins";
 
 interface CachedData {
@@ -813,32 +812,30 @@ class UplotWrapper extends Component<UplotWrapperProps, {}> {
                         drawAxes: [
                             (self: uPlot) => {
                                 let ctx = self.ctx;
-
-                                ctx.save();
-
                                 let s  = self.series[0];
                                 let xd = self.data[0];
                                 let [i0, i1] = s.idxs;
                                 let xpad = (xd[i1] - xd[i0]) * this.props.x_padding_factor;
                                 let x0 = self.valToPos(xd[i0] - xpad, 'x', true) - self.axes[0].ticks.size * devicePixelRatio;
-                                let y0 = self.valToPos(0, 'y', true);
                                 let x1 = self.valToPos(xd[i1] + xpad, 'x', true);
-                                let y1 = self.valToPos(0, 'y', true);
+                                let y = self.valToPos(0, 'y', true);
+
+                                if (y > ctx.canvas.height - (self.axes[0].size as number)) {
+                                    return;
+                                }
 
                                 const lineWidth = 2 * devicePixelRatio;
                                 const offset = (lineWidth % 2) / 2;
 
+                                ctx.save();
                                 ctx.translate(offset, offset);
-
                                 ctx.beginPath();
                                 ctx.lineWidth = lineWidth;
                                 ctx.strokeStyle = 'rgb(0,0,0,0.2)';
-                                ctx.moveTo(x0, y0);
-                                ctx.lineTo(x1, y1);
+                                ctx.moveTo(x0, y);
+                                ctx.lineTo(x1, y);
                                 ctx.stroke();
-
                                 ctx.translate(-offset, -offset);
-
                                 ctx.restore();
                             },
                         ],
@@ -1144,7 +1141,7 @@ export class EMEnergyAnalysisStatus extends Component<{}, {force_render: number}
         // want to push them into the uplot graph immediately.
         // This only works if the wrapper component is already created.
         // Hide the form rows to fix any visual bugs instead.
-        let show = API.hasFeature('meter') && API.hasFeature("energy_manager");
+        let show = util.render_allowed() && API.hasFeature('meter') && API.hasFeature("energy_manager");
 
         // As we don't check util.render_allowed(),
         // we have to handle rendering before the web socket connection is established.
@@ -1182,7 +1179,7 @@ export class EMEnergyAnalysisStatus extends Component<{}, {force_render: number}
                     </div>
                 </FormRow>
                 <FormRow label={__("em_energy_analysis_status.status.grid_connection_power")} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4" hidden={!show}>
-                    <InputText value={util.toLocaleFixed(power, 0) + " W"}/>
+                    <OutputFloat value={power} digits={0} scale={0} unit="W" maxFractionalDigitsOnPage={0} maxUnitLengthOnPage={1}/>
                 </FormRow>
             </>
         )

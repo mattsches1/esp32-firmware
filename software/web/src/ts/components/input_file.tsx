@@ -43,9 +43,6 @@ export function InputFile(props: InputFileProps) {
     const [file, setFile] = useState<File>(null);
     const [uploading, setUploading] = useState(false);
     const [progress, setProgress] = useState(0);
-
-    const percent = (progress * 100).toFixed(0);
-
     const id = !props.idContext ? util.useId() : useContext(props.idContext);
 
     const upload = async () => {
@@ -86,8 +83,8 @@ export function InputFile(props: InputFileProps) {
         <div hidden={!uploading}>
             <div class="form-progress mb-1">
                 <div class="progress-bar form-control progress-bar-no-transition"
-                    role="progressbar" style={"width: " + percent + "%"} aria-valuenow={progress * 100} aria-valuemin={0}
-                    aria-valuemax={100}></div>
+                    role="progressbar" style={"padding: 0; width: " + (progress * 100) + "%"} aria-valuenow={progress * 100} aria-valuemin={0}
+                    aria-valuemax={100}>{Math.round(progress * 100) + "%"}</div>
             </div>
             <label>{__("component.input_file.uploading")}</label>
         </div>
