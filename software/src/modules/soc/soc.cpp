@@ -69,11 +69,9 @@ void SOC::pre_setup()
 void SOC::setup()
 {
     if (!modbus_meter.initialized){
-        logger.printfln("SOC: Energy meter not available. Disabling phase switcher module.");
+        logger.printfln("SOC: Energy meter not available. Disabling SOC module.");
         return;
     }
-
-    soc_history.setup();
 
     // Reserve memory for strings to minimize heap fragmentation:
     api_data.amz_date.reserve(16);
@@ -87,7 +85,8 @@ void SOC::setup()
     api_data.login2.id_token.reserve(1024);
     api_data.login4.session_token.reserve(1240);
 
-    update_all_data();
+    soc_history.setup();
+
     api.addFeature("soc");
 
     api.restorePersistentConfig("soc/config", &config);
@@ -297,7 +296,7 @@ void SOC::sequencer_state_inactive()
         api_login_retry = false;
         pin_auth_retry = false;
 
-        if (login_ok) {
+        if (login_ok && !debug) {
             sequencer_state = get_amz_date;
         } else {        
             sequencer_state = init;
@@ -325,6 +324,7 @@ void SOC::sequencer_state_init()
     if (debug){
         logger.printfln("=====================================================");
         logger.printfln("Init\n");
+        log_memory();
     }
 
     String url;
@@ -342,7 +342,10 @@ void SOC::sequencer_state_init()
     int result = http_request(url, loginmyuconnect_fiat_com_root_cert_pem, HTTP_GET, &headers, &payload, &cookie_jar);
     
     if ((t_http_codes)result == HTTP_CODE_OK) {
-        if (debug) logger.printfln("     ... ok");
+        if (debug){
+            logger.printfln("     ... ok");
+            log_memory();
+        }
         sequencer_state = login1;
         sequencer_state_login1(&cookie_jar);
     } else {
@@ -368,6 +371,7 @@ void SOC::sequencer_state_login1()
     if (debug){
         logger.printfln("=====================================================");
         logger.printfln("Login 1\n");
+        log_memory();
     }
 
     // String url = "https://loginmyuconnect.fiat.com/accounts.login?loginID=" + config_in_use.get("user_name")->asString() + "&password=" + config_in_use.get("password")->asString() + "&targetEnv=jssdk&includeUserInfo=true&APIKey=" + API_KEY + "&format=json";
@@ -418,6 +422,7 @@ void SOC::sequencer_state_login1()
             logger.printfln(("     UID: " + api_data.login1.uid).c_str());
             String s = "login_token: " + api_data.login1.login_token;
             logger.write(s.c_str(), strlen(s.c_str()));
+            log_memory();
         }
 
         if (api_data.login1.uid != "null" && api_data.login1.login_token != "null") {
@@ -452,6 +457,7 @@ void SOC::sequencer_state_login1(CookieJar *cookie_jar)
     if (debug){
         logger.printfln("=====================================================");
         logger.printfln("Login 1\n");
+        log_memory();
     }
 
     // String url = "https://loginmyuconnect.fiat.com/accounts.login?loginID=" + config_in_use.get("user_name")->asString() + "&password=" + config_in_use.get("password")->asString() + "&targetEnv=jssdk&includeUserInfo=true&APIKey=" + API_KEY + "&format=json";
@@ -505,6 +511,7 @@ void SOC::sequencer_state_login1(CookieJar *cookie_jar)
             logger.printfln(("     UID: " + api_data.login1.uid).c_str());
             String s = "login_token: " + api_data.login1.login_token;
             logger.write(s.c_str(), strlen(s.c_str()));
+            log_memory();
         }
 
         if (api_data.login1.uid != "null" && api_data.login1.login_token != "null") {
@@ -512,6 +519,7 @@ void SOC::sequencer_state_login1(CookieJar *cookie_jar)
             sequencer_state_login2(cookie_jar);
         } else {
             logger.printfln("SOC: Login 1 failed, UID and/or login token invalid.");
+            if (debug) log_memory();
             soc_status_ok = false;
             sequencer_state = inactive;
         }
@@ -540,6 +548,7 @@ void SOC::sequencer_state_login2()
     if (debug){
         logger.printfln("=====================================================");
         logger.printfln("Login 2\n");
+        log_memory();
     }
 
     String url = (String)"https://loginmyuconnect.fiat.com/accounts.getJWT?fields=profile.firstName%2Cprofile.lastName%2Cprofile.email%2Ccountry%2Clocale%2Cdata.disclaimerCodeGSDP&APIKey=" + API_KEY + "&login_token=" + api_data.login1.login_token;
@@ -558,6 +567,7 @@ void SOC::sequencer_state_login2()
             logger.printfln("     ... ok");
             String s = "     id_token: " + api_data.login2.id_token;
             logger.write(s.c_str(), strlen(s.c_str()));
+            log_memory();
         }
 
         if (api_data.login2.id_token != "null") {
@@ -580,6 +590,7 @@ void SOC::sequencer_state_login2(CookieJar *cookie_jar)
     if (debug){
         logger.printfln("=====================================================");
         logger.printfln("Login 2\n");
+        log_memory();
     }
 
     String url = (String)"https://loginmyuconnect.fiat.com/accounts.getJWT?fields=profile.firstName%2Cprofile.lastName%2Cprofile.email%2Ccountry%2Clocale%2Cdata.disclaimerCodeGSDP&APIKey=" + API_KEY + "&login_token=" + api_data.login1.login_token;
@@ -597,6 +608,7 @@ void SOC::sequencer_state_login2(CookieJar *cookie_jar)
             logger.printfln("     ... ok");
             String s = "     id_token: " + api_data.login2.id_token;
             logger.write(s.c_str(), strlen(s.c_str()));
+            log_memory();
         }
 
         if (api_data.login2.id_token != "null") {
@@ -619,6 +631,7 @@ void SOC::sequencer_state_login3()
     if (debug){
         logger.printfln("=====================================================");
         logger.printfln("Login 3\n");
+        log_memory();
     }
 
     String url = "https://authz.sdpr-01.fcagcv.com/v2/cognito/identity/token";
@@ -652,6 +665,7 @@ void SOC::sequencer_state_login3()
 
         if (debug) {
             logger.printfln("     ... ok");
+            log_memory();
             // String s = "     IdentityId: " + api_data.login3.identity_id + "\n"
             //     + "     Token: " + api_data.login3.token;
             // logger.write(s.c_str(), strlen(s.c_str()));
@@ -680,6 +694,7 @@ void SOC::sequencer_state_login4()
     if (debug){
         logger.printfln("=====================================================");
         logger.printfln("Login 4\n");
+        log_memory();
     }
 
     String url = "https://cognito-identity.eu-west-1.amazonaws.com/";
@@ -714,6 +729,7 @@ void SOC::sequencer_state_login4()
         api_data.login4.session_token = json_doc["Credentials"]["SessionToken"].as<String>();
         if (debug) {
             logger.printfln("     ... ok");
+            log_memory();
             // String s = "     AccessKeyId: " + api_data.login4.access_key_id + "\n"
             //     + "     SecretKey: " + api_data.login4.secret_key + "\n"
             //     + "     SessionToken: " + api_data.login4.session_token;
@@ -748,6 +764,7 @@ void SOC::sequencer_state_get_amz_date()
    if (debug){
         logger.printfln("=====================================================");
         logger.printfln("Get amz_date\n");
+        log_memory();
     }
 
     #define HTTP_TIME_PATTERN "%a, %d %b %Y %H:%M:%S"
@@ -789,7 +806,11 @@ void SOC::sequencer_state_get_amz_date()
                 char amz_date[17];
                 strptime(h->value.c_str(), HTTP_TIME_PATTERN, &tm);
                 strftime(amz_date, sizeof(amz_date), "%Y%m%dT%H%M%SZ", &tm);
-                if (debug) logger.printfln("amz date via web request: %s", amz_date);
+                if (debug){
+                    logger.printfln("amz date via web request: %s", amz_date);
+                    log_memory();
+                }
+
                 api_data.amz_date = amz_date;
 
                 if (vin_list_request_active)
@@ -816,6 +837,7 @@ void SOC::sequencer_state_get_vehicles()
     if (debug){
         logger.printfln("=====================================================");
         logger.printfln("Getting vehicles\n");
+        log_memory();
     }
 
     #define REGION "eu-west-1"
@@ -862,6 +884,7 @@ void SOC::sequencer_state_get_vehicles()
                 vehicles.push_back({value["vin"].as<String>(), value["make"].as<String>(), value["modelDescription"].as<String>(), value["year"].as<uint16_t>(), value["color"].as<String>() });
             }
         }
+        if (debug) log_memory();
         vin_list_available = true;
         vin_list_request_active = false;
         vin_list_requested = false;
@@ -888,6 +911,7 @@ void SOC::sequencer_state_get_vehicle_status()
    if (debug){
         logger.printfln("=====================================================");
         logger.printfln("Getting vehicle status\n");
+        log_memory();
     }
 
     #define REGION "eu-west-1"
@@ -934,8 +958,10 @@ void SOC::sequencer_state_get_vehicle_status()
 
         soc = response["evInfo"]["battery"]["stateOfCharge"];
 
-        if (debug) logger.printfln("SOC: Current value is %d", soc);
-
+        if (debug){
+            logger.printfln("SOC: Current value is %d", soc);
+            log_memory();
+        }
         soc_request_active = false;
         soc_requested = false;
         soc_status_ok = true;
@@ -961,6 +987,7 @@ void SOC::sequencer_state_get_pin_auth()
    if (debug){
         logger.printfln("=====================================================");
         logger.printfln("Getting PIN auth\n");
+        log_memory();
     }
 
     #define REGION "eu-west-1"
@@ -1035,10 +1062,10 @@ void SOC::sequencer_state_get_pin_auth()
 
         if (debug) {
             logger.printfln("     ... ok");
+            log_memory();
             // logger.printfln("Pin Auth Token:\n");
             // logger.write(api_data.pin_auth_token.c_str(), api_data.pin_auth_token.length());
         } 
-
         pin_auth_ok = true;
         sequencer_state = deep_refresh;
 
@@ -1063,6 +1090,7 @@ void SOC::sequencer_state_deep_refresh()
    if (debug){
         logger.printfln("=====================================================");
         logger.printfln("Requesting deep refresh\n");
+        log_memory();
     }
 
     #define REGION "eu-west-1"
@@ -1119,7 +1147,10 @@ void SOC::sequencer_state_deep_refresh()
 
 
     if ((t_http_codes)result == HTTP_CODE_OK) {
-        if (debug) logger.printfln("     ... ok");;
+        if (debug){
+            logger.printfln("     ... ok");;
+            log_memory();
+        }
         sequencer_state = get_vehicle_status;
 
     } else {
@@ -1189,11 +1220,11 @@ int SOC::http_request(const String &url, const char* cert, http_method method, s
             if (headers_to_collect)
                 http.collectHeaders(headers_to_collect, num_headers_to_collect);
 
-            if (debug) {
-                logger.printfln("Starting HTTP request");
-                logger.printfln("URL: ");
-                logger.write(url.c_str(), url.length());
-            }
+            // if (debug) {
+            //     logger.printfln("Starting HTTP request");
+            //     logger.printfln("URL: ");
+            //     logger.write(url.c_str(), url.length());
+            // }
             
             // http.useHTTP10(true);
 
@@ -1213,7 +1244,7 @@ int SOC::http_request(const String &url, const char* cert, http_method method, s
                 }
 
                 // start connection and send HTTP header
-                if (debug) logger.printfln("SOC: [HTTPS] request...");
+                // if (debug) logger.printfln("SOC: [HTTPS] request...");
 
                 switch (method) {
                     case HTTP_POST: http_code = http.POST(*payload); break;
@@ -1223,7 +1254,7 @@ int SOC::http_request(const String &url, const char* cert, http_method method, s
                 // http_code will be negative on error
                 if (http_code > 0) {
                     // HTTP header has been send and Server response header has been handled
-                    if (debug) logger.printfln("SOC: [HTTPS] ... code: %d\n", http_code);
+                    // if (debug) logger.printfln("SOC: [HTTPS] ... code: %d\n", http_code);
             
                     // file found at server
                     if (http_code == HTTP_CODE_OK || http_code == HTTP_CODE_MOVED_PERMANENTLY) {
@@ -1235,16 +1266,16 @@ int SOC::http_request(const String &url, const char* cert, http_method method, s
                         for (int i = 0; i< http.headers(); i++){
                             headers->push_back({http.headerName(i), http.header(i)});
                         }
-                        if (debug) {
-                            logger.printfln("SOC: [HTTPS] Collected headers:");
-                            for (int i = 0; i< http.headers(); i++){
-                                logger.printfln(("             " + http.headerName(i) + " : " + http.header(i)).c_str());
-                            }
-                        }
+                        // if (debug) {
+                        //     logger.printfln("SOC: [HTTPS] Collected headers:");
+                        //     for (int i = 0; i< http.headers(); i++){
+                        //         logger.printfln(("             " + http.headerName(i) + " : " + http.header(i)).c_str());
+                        //     }
+                        // }
                     }
 
-                } else {
-                    if (debug) logger.printfln("SOC: [HTTPS] ... failed, error: %s", http.errorToString(http_code).c_str());
+                // } else {
+                //     if (debug) logger.printfln("SOC: [HTTPS] ... failed, error: %s", http.errorToString(http_code).c_str());
                 }
                 
                 http.end();
@@ -1284,9 +1315,9 @@ int SOC::http_request(const String &url, const char* cert, http_method method, s
             if (headers_to_collect)
                 http.collectHeaders(headers_to_collect, num_headers_to_collect);
 
-            if (debug) {
-                logger.printfln("Starting HTTP request");
-            }
+            // if (debug) {
+            //     logger.printfln("Starting HTTP request");
+            // }
 
             // http.useHTTP10(true);
             
@@ -1306,7 +1337,7 @@ int SOC::http_request(const String &url, const char* cert, http_method method, s
                 }
 
                 // start connection and send HTTP header
-                if (debug) logger.printfln("SOC: [HTTPS] request...");
+                // if (debug) logger.printfln("SOC: [HTTPS] request...");
 
                 switch (method) {
                     case HTTP_POST: http_code = http.POST(*payload); break;
@@ -1316,17 +1347,17 @@ int SOC::http_request(const String &url, const char* cert, http_method method, s
                 // http_code will be negative on error
                 if (http_code > 0) {
                     // HTTP header has been send and Server response header has been handled
-                    if (debug) logger.printfln("SOC: [HTTPS] ... code: %d\n", http_code);
+                    // if (debug) logger.printfln("SOC: [HTTPS] ... code: %d\n", http_code);
 
                     // file found at server
                     if (http_code == HTTP_CODE_OK || http_code == HTTP_CODE_MOVED_PERMANENTLY) {
                         deserializeJson(*response, http.getStream());
-                    } else {
-                        if (debug) {
-                            logger.printfln("HTTP Request failed; response:");
-                            String response_string = http.getString();
-                            logger.write(response_string.c_str(), response_string.length());
-                        }
+                    // } else {
+                    //     if (debug) {
+                    //         logger.printfln("HTTP Request failed; response:");
+                    //         String response_string = http.getString();
+                    //         logger.write(response_string.c_str(), response_string.length());
+                    //     }
                     }
 
                     if (headers_to_collect) {
@@ -1336,8 +1367,8 @@ int SOC::http_request(const String &url, const char* cert, http_method method, s
                         }
                     }
 
-                } else {
-                    if (debug) logger.printfln("SOC: [HTTPS] ... failed, error: %s", http.errorToString(http_code).c_str());
+                // } else {
+                //     if (debug) logger.printfln("SOC: [HTTPS] ... failed, error: %s", http.errorToString(http_code).c_str());
                 }
                 
                 http.end();
@@ -1374,9 +1405,9 @@ int SOC::http_request(const String &url, const char* cert, http_method method, s
             // http.setConnectTimeout(2000);
             // http.setTimeout(4000);
 
-            if (debug) {
-                logger.printfln("Starting HTTP request");
-            }
+            // if (debug) {
+            //     logger.printfln("Starting HTTP request");
+            // }
 
             // http.useHTTP10(true);
             
@@ -1392,7 +1423,7 @@ int SOC::http_request(const String &url, const char* cert, http_method method, s
                 }
 
                 // start connection and send HTTP header
-                if (debug) logger.printfln("SOC: [HTTPS] request...");
+                // if (debug) logger.printfln("SOC: [HTTPS] request...");
 
                 switch (method) {
                     case HTTP_POST: http_code = http.POST(*payload); break;
@@ -1402,21 +1433,21 @@ int SOC::http_request(const String &url, const char* cert, http_method method, s
                 // http_code will be negative on error
                 if (http_code > 0) {
                     // HTTP header has been send and Server response header has been handled
-                    if (debug) logger.printfln("SOC: [HTTPS] ... code: %d\n", http_code);
+                    // if (debug) logger.printfln("SOC: [HTTPS] ... code: %d\n", http_code);
 
                     // file found at server
                     if (http_code == HTTP_CODE_OK || http_code == HTTP_CODE_MOVED_PERMANENTLY) {
                         deserializeJson(response, http.getStream(), DeserializationOption::Filter(filter));
-                    } else {
-                        if (debug) {
-                            logger.printfln("HTTP Request failed; response:");
-                            String response_string = http.getString();
-                            logger.write(response_string.c_str(), response_string.length());
-                        }
+                    // } else {
+                    //     if (debug) {
+                    //         logger.printfln("HTTP Request failed; response:");
+                    //         String response_string = http.getString();
+                    //         logger.write(response_string.c_str(), response_string.length());
+                    //     }
                     }
 
-                } else {
-                    if (debug) logger.printfln("SOC: [HTTPS] ... failed, error: %s", http.errorToString(http_code).c_str());
+                // } else {
+                //     if (debug) logger.printfln("SOC: [HTTPS] ... failed, error: %s", http.errorToString(http_code).c_str());
                 }
                 
                 http.end();
@@ -1610,51 +1641,7 @@ void SOC::aws_get_authorization_header(http_method method, String &canonical_uri
 
 void SOC::log_memory()
 {
-    // logger.printfln("--------- MEMORY INFORMATION --------------");
-    // logger.printfln("esp_get_free_heap_size: %d", esp_get_free_heap_size());
-    // logger.printfln("esp_get_free_internal_heap_size: %d", esp_get_free_internal_heap_size());
-    // logger.printfln("esp_get_minimum_free_heap_size: %d", esp_get_minimum_free_heap_size());
-    // logger.printfln("esp_get_free_internal_heap_size: %d", esp_get_free_internal_heap_size());
-
-    // logger.printfln("--------- TOTAL --------------");
-    // logger.printfln("MALLOC_CAP_EXEC: %d", heap_caps_get_total_size(MALLOC_CAP_EXEC));
-    // logger.printfln("MALLOC_CAP_32BIT: %d", heap_caps_get_total_size(MALLOC_CAP_32BIT));
-    // logger.printfln("MALLOC_CAP_8BIT: %d", heap_caps_get_total_size(MALLOC_CAP_8BIT));
-    // logger.printfln("MALLOC_CAP_DMA: %d", heap_caps_get_total_size(MALLOC_CAP_DMA));
-    // logger.printfln("MALLOC_CAP_INTERNAL: %d", heap_caps_get_total_size(MALLOC_CAP_INTERNAL));
-    // logger.printfln("MALLOC_CAP_DEFAULT: %d", heap_caps_get_total_size(MALLOC_CAP_DEFAULT));
-
-    // logger.printfln("--------- MINIMIUM FREE MEMORY --------------");
-    // logger.printfln("MALLOC_CAP_EXEC: %d", heap_caps_get_minimum_free_size(MALLOC_CAP_EXEC));
-    // logger.printfln("MALLOC_CAP_32BIT: %d", heap_caps_get_minimum_free_size(MALLOC_CAP_32BIT));
-    // logger.printfln("MALLOC_CAP_8BIT: %d", heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT));
-    // logger.printfln("MALLOC_CAP_DMA: %d", heap_caps_get_minimum_free_size(MALLOC_CAP_DMA));
-    // logger.printfln("MALLOC_CAP_INTERNAL: %d", heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
-    // logger.printfln("MALLOC_CAP_DEFAULT: %d", heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT));
-
-    // logger.printfln("--------- FREE MEMORY --------------");
-    // logger.printfln("MALLOC_CAP_EXEC: %d", heap_caps_get_free_size(MALLOC_CAP_EXEC));
-    // logger.printfln("MALLOC_CAP_32BIT: %d", heap_caps_get_free_size(MALLOC_CAP_32BIT));
-    // logger.printfln("MALLOC_CAP_8BIT: %d", heap_caps_get_free_size(MALLOC_CAP_8BIT));
-    // logger.printfln("MALLOC_CAP_DMA: %d", heap_caps_get_free_size(MALLOC_CAP_DMA));
-    // logger.printfln("MALLOC_CAP_INTERNAL: %d", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
-    // logger.printfln("MALLOC_CAP_DEFAULT: %d", heap_caps_get_free_size(MALLOC_CAP_DEFAULT));
-
-    logger.printfln("--------- LARGEST FREE MEMORY --------------");
-    logger.printfln("MALLOC_CAP_EXEC: %d", heap_caps_get_largest_free_block(MALLOC_CAP_EXEC));
-    logger.printfln("MALLOC_CAP_32BIT: %d", heap_caps_get_largest_free_block(MALLOC_CAP_32BIT));
-    logger.printfln("MALLOC_CAP_8BIT: %d", heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
-    logger.printfln("MALLOC_CAP_DMA: %d", heap_caps_get_largest_free_block(MALLOC_CAP_DMA));
-    logger.printfln("MALLOC_CAP_INTERNAL: %d", heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
-    logger.printfln("MALLOC_CAP_DEFAULT: %d", heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
-
-    // logger.printfln("--------- FRAGMENTATION --------------");
-    // logger.printfln("MALLOC_CAP_EXEC: %d %%", 100 - heap_caps_get_largest_free_block(MALLOC_CAP_EXEC) * 100 / heap_caps_get_total_size(MALLOC_CAP_EXEC));
-    // logger.printfln("MALLOC_CAP_32BIT: %d %%", 100 - heap_caps_get_largest_free_block(MALLOC_CAP_32BIT) * 100 / heap_caps_get_total_size(MALLOC_CAP_32BIT));
-    // logger.printfln("MALLOC_CAP_8BIT: %d %%", 100 - heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) * 100 / heap_caps_get_total_size(MALLOC_CAP_8BIT));
-    // logger.printfln("MALLOC_CAP_DMA: %d %%", 100 - heap_caps_get_largest_free_block(MALLOC_CAP_DMA) * 100 / heap_caps_get_total_size(MALLOC_CAP_DMA));
-    // logger.printfln("MALLOC_CAP_INTERNAL: %d %%", 100 - heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) * 100 / heap_caps_get_total_size(MALLOC_CAP_INTERNAL));
-    // logger.printfln("MALLOC_CAP_DEFAULT: %d %%", 100 - heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT) * 100 / heap_caps_get_total_size(MALLOC_CAP_DEFAULT));
-
-
+    multi_heap_info_t dram_info;
+    heap_caps_get_info(&dram_info,  MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    logger.printfln("Largest free DRAM block: %d", dram_info.largest_free_block);
 }
