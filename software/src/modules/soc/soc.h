@@ -159,6 +159,7 @@ private:
     } api_data;
 
     ValueHistory soc_history;
+    CookieJar cookie_jar;
 
 };
                                     

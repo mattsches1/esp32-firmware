@@ -250,8 +250,8 @@ void SOC::sequencer()
     switch(sequencer_state){
         case inactive:              sequencer_state_inactive(); break;
         case init:                  sequencer_state_init(); break;
-        case login1:                sequencer_state_login1(); break;
-        case login2:                sequencer_state_login2(); break;
+        case login1:                sequencer_state_login1(&cookie_jar); break;
+        case login2:                sequencer_state_login2(&cookie_jar); break;
         case login3:                sequencer_state_login3(); break;
         case login4:                sequencer_state_login4(); break;
         case get_amz_date:          sequencer_state_get_amz_date(); break;
@@ -327,27 +327,39 @@ void SOC::sequencer_state_init()
         log_memory();
     }
 
-    String url;
-    url.reserve(140);
-    url = F("https://loginmyuconnect.fiat.com/accounts.webSdkBootstrap?apiKey=");
-    url += F(API_KEY);
-    
-    String payload = F("");
+    // CookieJar cookie_jar;
+    String url = "https://loginmyuconnect.fiat.com/accounts.webSdkBootstrap?apiKey=" API_KEY;
+    String payload;
+    payload.reserve(220);
     std::vector<Header> headers;
 
-    CookieJar cookie_jar;
-
-    // cookie_jar.clear();          // clear all cookies as long as we don't have an RTC to check expiration
+    if (debug){
+        logger.printfln("Allocated  before request: cookie jar: %d; payload: %d; headers: %d", cookie_jar.capacity(), payload.length(), headers.capacity());
+        log_memory();
+    }
 
     int result = http_request(url, loginmyuconnect_fiat_com_root_cert_pem, HTTP_GET, &headers, &payload, &cookie_jar);
-    
+
+    if (debug){
+        logger.printfln("Allocated after request: cookie jar: %d; payload: %d; headers: %d", cookie_jar.capacity(), payload.length(), headers.capacity());
+        log_memory();
+    }
+
+    headers.clear();
+    headers.shrink_to_fit();
+    payload.clear();
+
+    if (debug){
+        logger.printfln("Allocated memory after destroy: cookie jar: %d; payload: %d; headers: %d", cookie_jar.capacity(), payload.length(), headers.capacity());
+        log_memory();
+    }
+
     if ((t_http_codes)result == HTTP_CODE_OK) {
         if (debug){
             logger.printfln("     ... ok");
             log_memory();
         }
         sequencer_state = login1;
-        sequencer_state_login1(&cookie_jar);
     } else {
         logger.printfln("SOC: Init failed with HTTP code %d.", result);
         soc_status_ok = false;
@@ -516,7 +528,7 @@ void SOC::sequencer_state_login1(CookieJar *cookie_jar)
 
         if (api_data.login1.uid != "null" && api_data.login1.login_token != "null") {
             sequencer_state = login2;
-            sequencer_state_login2(cookie_jar);
+            // sequencer_state_login2(cookie_jar);
         } else {
             logger.printfln("SOC: Login 1 failed, UID and/or login token invalid.");
             if (debug) log_memory();
@@ -624,6 +636,11 @@ void SOC::sequencer_state_login2(CookieJar *cookie_jar)
         soc_status_ok = false;
         sequencer_state = inactive;
     }
+
+    cookie_jar->clear();
+    cookie_jar->shrink_to_fit();
+
+    // *cookie_jar = CookieJar();
 }
 
 void SOC::sequencer_state_login3()
@@ -707,9 +724,20 @@ void SOC::sequencer_state_login4()
     
     DynamicJsonDocument json_doc(2048);
     String payload;
+    payload.reserve(1200);
+
+    if (debug){
+        logger.printfln("After reserve");
+        log_memory();
+    }
 
     json_doc["IdentityId"] = api_data.login3.identity_id;
     json_doc["Logins"]["cognito-identity.amazonaws.com"] = api_data.login3.token;
+
+    if (debug){
+        logger.printfln("before serialize json");
+        log_memory();
+    }
 
     serializeJson(json_doc, payload);
     json_doc.clear();
@@ -720,8 +748,19 @@ void SOC::sequencer_state_login4()
     //     logger.printfln("             SHA256 of login token: %s", (sha256(api_data.login3.token)).c_str());
     // }
 
-    // int result = http_request(url, cognito_identity_eu_west_1_amazonaws_com_root_cert_pem, HTTP_POST, &headers, &payload, &cookie_jar, &json_doc);
     int result = http_request(url, cognito_identity_eu_west_1_amazonaws_com_root_cert_pem, HTTP_POST, &headers, &payload, nullptr, &json_doc);
+
+    if (debug){
+        logger.printfln("Before payload clear");
+        log_memory();
+    }
+
+    payload.clear();
+
+    if (debug){
+        logger.printfln("After payload clear");
+        log_memory();
+    }
 
     if ((t_http_codes)result == HTTP_CODE_OK) {
         api_data.login4.access_key_id = json_doc["Credentials"]["AccessKeyId"].as<String>();
@@ -797,7 +836,6 @@ void SOC::sequencer_state_get_amz_date()
         api_data.amz_date = F("");
         const char* headers_to_request = {"Date"};
 
-        // http_request(url, authz_sdpr_01_fcagcv_com_root_cert_pem, HTTP_GET, &headers, &payload, &cookie_jar, &headers_to_request, 1);
         http_request(url, authz_sdpr_01_fcagcv_com_root_cert_pem, HTTP_GET, &headers, &payload, nullptr, &headers_to_request, 1);
 
         for (auto h = headers.begin(); h != headers.end(); ++h) {
@@ -1643,5 +1681,5 @@ void SOC::log_memory()
 {
     multi_heap_info_t dram_info;
     heap_caps_get_info(&dram_info,  MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    logger.printfln("Largest free DRAM block: %d", dram_info.largest_free_block);
+    logger.printfln("Mem info: Total free: %d, Largest free: %d",dram_info.total_free_bytes, dram_info.largest_free_block);
 }
