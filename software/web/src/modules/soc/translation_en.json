@@ -19,8 +19,6 @@
                 "error" : "Error"
             },
             "ignore_once": "Ignore once",
-            "ignore_once_desc": "Ignore the SOC limit once for the current charging cycle",
-
             "configuration": "Configuration",
             "enabled": "Stop at target SOC",
             "enabled_desc": "Stops charging as soon as the configured state of charge has been reached",
@@ -83,6 +81,7 @@
             "soc": "State of Charge",
             "ignore_once_update_failed": "Failed to set ignore once option.",
             "manual_request_failed": "Failed to dispatch SOC request command",
+            "setpoint_update_failed": "Failed to set SOC setpoint.",
             "toggle_ignore_once_failed": "Failed to toggle ignore once command"
         }
     }

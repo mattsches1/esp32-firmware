@@ -126,9 +126,11 @@ private:
     SequencerState sequencer_state = SequencerState::inactive;
     std::mutex mutex;
 
+    ConfigRoot state;
     ConfigRoot config;
     ConfigRoot config_in_use;
-    ConfigRoot state;
+    ConfigRoot setpoint;
+    ConfigRoot setpoint_update;
     ConfigRoot api_debug_data;
 
     bool enabled;

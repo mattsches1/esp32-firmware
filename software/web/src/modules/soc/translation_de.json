@@ -18,9 +18,7 @@
                 "ok" : "OK",
                 "error" : "Fehler"
             },
-            "ignore_once": "Einmalig ignorieren",
-            "ignore_once_desc": "Ignoriert die Ladegrenze einmalig für den nächsten Ladezyklus",
-
+            "ignore_once": "Einmal ignorieren",
             "configuration": "Konfiguration",
             "enabled": "Automatischer Ladestopp",
             "enabled_desc": "Stoppt den Ladevorgang bei Erreichen des eingestellten Ladestands",
@@ -82,6 +80,7 @@
             "time": "Uhrzeit",
             "soc": "Ladestand",
             "ignore_once_update_failed": "Setzen der Option zum Ignorieren des Ladelimits fehlgeschlagen.",
+            "setpoint_update_failed": "Setzen des Ladestand-Sollwerts fehlgeschlagen.",
             "manual_request_failed": "Absetzen des Aktualisierungskommandos fehlgeschlagen.",
             "toggle_ignore_once_failed": "Umschalten des Kommandos \"Einmal ignorieren\" fehlgeschlagen"
         }

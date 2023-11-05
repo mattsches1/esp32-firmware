@@ -36,6 +36,7 @@ import { FormSeparator } from "../../ts/components/form_separator";
 import { InputText } from "../../ts/components/input_text";
 import { InputPassword } from "../../ts/components/input_password";
 import { InputNumber } from "../../ts/components/input_number";
+import { InputFloat } from "../../ts/components/input_float";
 import { InputSelect } from "../../ts/components/input_select";
 import uPlot from 'uplot';
 
@@ -45,6 +46,7 @@ type SocConfig = API.getType['soc/config'];
 
 interface SocState {
     state: API.getType['soc/state'];
+    setpoint: number;
     chart_selected: "history"|"live";
 }
 
@@ -461,6 +463,7 @@ function array_append<T>(a: Array<T>, b: Array<T>, tail: number): Array<T> {
 }
 
 export class Soc extends ConfigComponent<'soc/config', {}, SocConfig & SocState> {
+    timeout?: number;
     live_data: UplotData;
     pending_live_data: UplotData = {timestamps: [], samples: []};
     history_data: UplotData;
@@ -472,8 +475,15 @@ export class Soc extends ConfigComponent<'soc/config', {}, SocConfig & SocState>
                 __("soc.script.save_failed"),
                 __("soc.script.reboot_content_changed"));
 
+        this.timeout = undefined;
+
         util.addApiEventListener('soc/state', () => {
             this.setState({state: API.get('soc/state')});
+        });
+
+        util.addApiEventListener('soc/setpoint', () => {
+            let _setpoint = API.get('soc/setpoint').setpoint;
+            this.setState({setpoint: _setpoint});
         });
 
         util.addApiEventListener("soc/live", () => {
@@ -596,10 +606,23 @@ export class Soc extends ConfigComponent<'soc/config', {}, SocConfig & SocState>
                         </div>
                     </FormRow>
 
-                    <FormRow label={__("soc.content.ignore_once")}>
-                        <Switch desc={__("soc.content.ignore_once_desc")}
-                                checked={api_data.state.ignore_soc_limit_once}
-                                onClick={() =>  API.call('soc/toggle_ignore_once', {}, __("soc.script.toggle_ignore_once_failed"))}/>
+                    <FormRow label={__("soc.content.soc_setpoint.title")} label_muted={__("soc.content.soc_setpoint.description")}>
+                        <div class="row mx-n1">
+                            <div class="mb-1 col-8 px-1">
+                                <InputFloat min={10} max={100} digits={0} unit="%"
+                                    value={api_data.setpoint}
+                                    onValue={(v) => {
+                                        window.clearTimeout(this.timeout);
+                                        this.timeout = window.setTimeout(() => API.save('soc/setpoint', {"setpoint": v}, __("soc.script.setpoint_update_failed")), 1000);
+                                        this.setState({setpoint: v})
+                                    }}/>
+                            </div>
+                            <div class="mb-1 col-4 px-1">
+                                <Switch desc={__("soc.content.ignore_once")}
+                                        checked={api_data.state.ignore_soc_limit_once}
+                                        onClick={() =>  API.call('soc/toggle_ignore_once', {}, __("soc.script.toggle_ignore_once_failed"))}/>                                
+                            </div>
+                        </div>
                     </FormRow>
 
                     <FormSeparator heading={__("soc.content.configuration")}/>
@@ -641,14 +664,14 @@ export class Soc extends ConfigComponent<'soc/config', {}, SocConfig & SocState>
                                    />
                     </FormRow>
 
-                    <FormRow label={__("soc.content.soc_setpoint.title")} label_muted={__("soc.content.soc_setpoint.description")}>
+                    {/* <FormRow label={__("soc.content.soc_setpoint.title")} label_muted={__("soc.content.soc_setpoint.description")}>
                         <InputNumber required
                                     min={10}
                                     max={100}
                                     unit="%"
                                     value={api_data.setpoint}
                                     onValue={this.set("setpoint")}/>
-                    </FormRow>
+                    </FormRow> */}
 
                     <FormRow label={__("soc.content.update_rate_when_idle.title")} label_muted={__("soc.content.update_rate_when_idle.description")}>
                         <InputNumber required

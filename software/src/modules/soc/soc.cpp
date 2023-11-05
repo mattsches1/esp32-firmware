@@ -45,17 +45,6 @@ extern API api;
 
 void SOC::pre_setup()
 {
-    config = Config::Object({
-        {"enabled", Config::Bool(false)},
-        {"user_name", Config::Str("", 0, 64)},
-        {"password", Config::Str("", 0, 64)},
-        {"pin", Config::Str("", 4, 4)},
-        {"vin", Config::Str("", 17, 17)},
-        {"setpoint", Config::Uint(80, 10, 100)},
-        {"update_rate_when_charging", Config::Uint(300, 300, 3600)},
-        {"update_rate_when_idle", Config::Uint(3600, 60, 36000)}
-    });
-
     state = Config::Object({
         {"soc", Config::Uint8(0)},
         {"sequencer_state", Config::Uint8(0)},
@@ -64,6 +53,21 @@ void SOC::pre_setup()
         {"ignore_soc_limit_once", Config::Bool(false)}
     });
 
+    config = Config::Object({
+        {"enabled", Config::Bool(false)},
+        {"user_name", Config::Str("", 0, 64)},
+        {"password", Config::Str("", 0, 64)},
+        {"pin", Config::Str("", 4, 4)},
+        {"vin", Config::Str("", 17, 17)},
+        {"update_rate_when_charging", Config::Uint(300, 300, 3600)},
+        {"update_rate_when_idle", Config::Uint(3600, 60, 36000)}
+    });
+
+    setpoint = Config::Object({
+        {"setpoint", Config::Uint(80, 10, 100)}
+    });
+
+    setpoint_update = setpoint;
 }
 
 void SOC::setup()
@@ -73,7 +77,7 @@ void SOC::setup()
         return;
     }
 
-    // Reserve memory for strings to minimize heap fragmentation:
+    // Reserve memory for strings to reduce heap fragmentation:
     api_data.amz_date.reserve(16);
     api_data.login4.access_key_id.reserve(20);
     api_data.login1.uid.reserve(32);
@@ -91,8 +95,9 @@ void SOC::setup()
 
     api.restorePersistentConfig("soc/config", &config);
     config_in_use = config;
-
     enabled = config.get("enabled")->asBool();
+
+    api.restorePersistentConfig("soc/setpoint", &setpoint);
 
     task_scheduler.scheduleWithFixedDelay([this](){
         this->sequencer();
@@ -112,6 +117,13 @@ void SOC::register_urls()
 
     api.addState("soc/state", &state, {}, 1000);
  
+    api.addState("soc/setpoint", &setpoint, {}, 1000);
+    api.addCommand("soc/setpoint_update", &setpoint_update, {}, [this](){
+        uint16_t _setpoint = setpoint_update.get("setpoint")->asUint();
+        setpoint.get("setpoint")->updateUint(_setpoint);
+        api.writeConfig("soc/setpoint", &setpoint);
+    }, false);
+
     api.addPersistentConfig("soc/config", &config, {"password", "pin"}, 1000);
 
     api.addCommand("soc/vin_list", Config::Null(), {}, [this](){
@@ -274,7 +286,7 @@ void SOC::sequencer_state_inactive()
     if (charger_state != last_charger_state) {
         if (charger_state == CHARGER_STATE_NOT_PLUGGED_IN) {
             ignore_soc_limit_once = false;
-        } else if (charger_state == CHARGER_STATE_CHARGING && soc >= config.get("setpoint")->asUint()) {
+        } else if (charger_state == CHARGER_STATE_CHARGING && soc >= setpoint.get("setpoint")->asUint()) {
             logger.printfln("SOC: Charging started when above target SOC. Charging cycle will not be stopped by SOC module.");
             ignore_soc_limit_once = true;
         } 
@@ -314,7 +326,7 @@ void SOC::sequencer_state_inactive()
         if (phase_switcher_state != nullptr)
             phase_switcher_quick_charging_active = (phase_switcher_state->get("sequencer_state")->asUint() == 25);
 
-        if (charger_state == charging && enabled && soc >= config.get("setpoint")->asUint() && !ignore_soc_limit_once && !phase_switcher_quick_charging_active)
+        if (charger_state == charging && enabled && soc >= setpoint.get("setpoint")->asUint() && !ignore_soc_limit_once && !phase_switcher_quick_charging_active)
             sequencer_state = waiting_for_evse_stop;
     }
 }
@@ -1235,7 +1247,6 @@ void SOC::update_all_data()
     state.get("ignore_soc_limit_once")->updateBool(ignore_soc_limit_once);
 
     soc_history.add_sample(soc);
-
 }
 
 int SOC::http_request(const String &url, const char* cert, http_method method, std::vector<Header> *headers, String *payload, CookieJar *cookie_jar, const char *headers_to_collect[], size_t num_headers_to_collect) 

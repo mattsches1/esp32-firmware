@@ -21,6 +21,10 @@ export interface manual_request {
 
 }
 
+export interface setpoint {
+    setpoint: number
+}
+
 export interface toggle_ignore_once {
 
 }
