@@ -7,6 +7,7 @@
             "soc": "Ladestand"
         },
         "content": {
+            "title": "Ladestand",
             "soc": "Ladestand",
             "refresh": "Aktualisieren",
             "state": "Status",
@@ -20,7 +21,7 @@
             },
             "ignore_once": "Einmal ignorieren",
             "configuration": "Konfiguration",
-            "enabled": "Automatischer Ladestopp",
+            "enabled": "Ladestand aktiviert",
             "enabled_desc": "Stoppt den Ladevorgang bei Erreichen des eingestellten Ladestands",
             "user_name": "Benutzername",
             "password": "Passwort",

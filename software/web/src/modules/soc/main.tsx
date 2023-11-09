@@ -562,7 +562,7 @@ export class Soc extends ConfigComponent<'soc/config', {}, SocConfig & SocState>
         return (
             <SubPage>
                 <ConfigForm id="soc_config_form" 
-                            title={__("soc.content.soc")} 
+                            title={__("soc.content.title")} 
                             isModified={this.isModified()}
                             isDirty={this.isDirty()}
                             onSave={this.save}
@@ -578,6 +578,7 @@ export class Soc extends ConfigComponent<'soc/config', {}, SocConfig & SocState>
                             </div>
                             <div class="mb-1 col-4 px-1">
                                 <Button variant="primary" className="form-control"
+                                    disabled={!api_data.enabled}
                                     onClick={() =>  API.call('soc/manual_request', {}, __("soc.script.manual_request_failed"))}>
                                     {__("soc.content.refresh")}
                                 </Button>                            
@@ -663,15 +664,6 @@ export class Soc extends ConfigComponent<'soc/config', {}, SocConfig & SocState>
                                    invalidFeedback={__("soc.content.vin_invalid")}
                                    />
                     </FormRow>
-
-                    {/* <FormRow label={__("soc.content.soc_setpoint.title")} label_muted={__("soc.content.soc_setpoint.description")}>
-                        <InputNumber required
-                                    min={10}
-                                    max={100}
-                                    unit="%"
-                                    value={api_data.setpoint}
-                                    onValue={this.set("setpoint")}/>
-                    </FormRow> */}
 
                     <FormRow label={__("soc.content.update_rate_when_idle.title")} label_muted={__("soc.content.update_rate_when_idle.description")}>
                         <InputNumber required

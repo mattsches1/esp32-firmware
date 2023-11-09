@@ -7,6 +7,7 @@
             "soc": "State of Charge"
         },
         "content": {
+            "title": "State of Carge",
             "soc": "State of charge",
             "refresh": "Refresh",
             "state": "State",
@@ -20,7 +21,7 @@
             },
             "ignore_once": "Ignore once",
             "configuration": "Configuration",
-            "enabled": "Stop at target SOC",
+            "enabled": "SOC enabled",
             "enabled_desc": "Stops charging as soon as the configured state of charge has been reached",
             "user_name": "User name",
             "password": "Password",

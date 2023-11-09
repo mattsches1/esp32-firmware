@@ -77,6 +77,22 @@ void SOC::setup()
         return;
     }
 
+    api.restorePersistentConfig("soc/config", &config);
+    config_in_use = config;
+    enabled = config.get("enabled")->asBool();
+
+    api.restorePersistentConfig("soc/setpoint", &setpoint);
+
+    api.addFeature("soc");
+
+    soc_history.setup();
+
+    if (!enabled){
+        initialized = true;
+        logger.printfln("SOC module disabled by configuration.");
+        return;
+    }
+
     // Reserve memory for strings to reduce heap fragmentation:
     api_data.amz_date.reserve(16);
     api_data.login4.access_key_id.reserve(20);
@@ -88,16 +104,6 @@ void SOC::setup()
     api_data.login3.token.reserve(900);
     api_data.login2.id_token.reserve(1024);
     api_data.login4.session_token.reserve(1240);
-
-    soc_history.setup();
-
-    api.addFeature("soc");
-
-    api.restorePersistentConfig("soc/config", &config);
-    config_in_use = config;
-    enabled = config.get("enabled")->asBool();
-
-    api.restorePersistentConfig("soc/setpoint", &setpoint);
 
     task_scheduler.scheduleWithFixedDelay([this](){
         this->sequencer();
@@ -150,8 +156,10 @@ void SOC::register_urls()
     });
 
     api.addCommand("soc/manual_request", Config::Null(), {}, [this](){
-        soc_requested = true;
-        if (debug) logger.printfln("SOC: Manual request received");
+        if (enabled){
+            soc_requested = true;
+            if (debug) logger.printfln("SOC: Manual request received");
+        }
     }, false);
 
     api.addCommand("soc/toggle_ignore_once", Config::Null(), {}, [this](){
@@ -159,7 +167,7 @@ void SOC::register_urls()
         if (debug) logger.printfln("SOC: Ignore once set to %d", this->ignore_soc_limit_once);
     }, false);
 
-    soc_history.register_urls("soc");
+    if (enabled) soc_history.register_urls("soc");
 
     server.on("/soc/start_debug", HTTP_GET, [this](WebServerRequest request) {
         logger.printfln("SOC: Enabling debug mode");
@@ -280,7 +288,8 @@ void SOC::sequencer()
 
 void SOC::sequencer_state_inactive()
 {
-    if (!initialized) return;
+    if (!initialized) 
+        return;
 
     static ChargerState last_charger_state = charger_state;
     if (charger_state != last_charger_state) {
