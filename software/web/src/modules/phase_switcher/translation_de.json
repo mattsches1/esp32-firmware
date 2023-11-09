@@ -27,7 +27,7 @@
             "contactor_state_error": "Fehler",
 
             "configuration": "Konfiguration",
-            "phase_switcher_enabled": "Phasenumschaltung aktivieren",
+            "phase_switcher_enabled": "Phasenumschaltung aktiviert",
             "phase_switcher_enabled_desc": "Aktiviert die automatische Phasenumschaltung und die Ladestromregelung über die zur Verfügung stehende Leistung.",
 
             "operating_mode" : "Betriebsart",
