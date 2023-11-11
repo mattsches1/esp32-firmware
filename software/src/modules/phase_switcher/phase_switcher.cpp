@@ -347,7 +347,7 @@ void PhaseSwitcher::set_current(uint16_t available_charging_power, uint8_t phase
     if (phases != 0){
         requested_current = max(min(available_charging_power * 1000 / 230 / phases, 32000), 6000);
     } else {
-        requested_current = 6000;    
+        requested_current = 32000;    
     }
 
     api.callCommand("evse/external_current_update", Config::ConfUpdateObject{{
@@ -362,27 +362,31 @@ void PhaseSwitcher::handle_button()
     if (evse_low_level_state == nullptr) return;
 
     bool button_state = evse_low_level_state->get("gpio")->get(0)->asBool();
-    static uint32_t button_pressed_time;
+    static uint32_t button_pressed_time, button_released_time;
     static bool quick_charging_requested = false;
 
-    if (!button_state){
+    if (!button_state)
         button_pressed_time = millis();
-        quick_charging_requested = false;
-    } 
 
-    if (deadline_elapsed(button_pressed_time + QUICK_CHARGE_BUTTON_PRESSED_TIME) && !quick_charging_requested){
+    if (button_state)
+        button_released_time = millis();
+
+    if (deadline_elapsed(button_released_time + QUICK_CHARGE_DELAY_TIME) && quick_charging_requested){
+        if (debug) logger.printfln("    Phase switcher: Button released, initiating quick charging");
         start_quick_charging();
+        quick_charging_requested = false;
+    }
+
+    if (deadline_elapsed(button_pressed_time + QUICK_CHARGE_BUTTON_PRESSED_TIME)){
+        if (debug) logger.printfln("    Phase switcher: Quick charging command received and stored");
         quick_charging_requested = true;
-    } 
-
-
+    }
 }
 
 void PhaseSwitcher::start_quick_charging()
 {
-    if (!enabled){
+    if (!enabled)
         return;
-    }
 
     if (sequencer_state == standby || sequencer_state == stopped_by_evse){
         logger.printfln("Phase switcher: Quick charging requested");
@@ -587,7 +591,7 @@ void PhaseSwitcher::sequencer_state_active()
 void PhaseSwitcher::sequencer_state_quick_charging()
 {
     if (charger_state != charging){
-        logger.printfln("Phase switcher: Charging stopped by EVSE. Waiting either for disconnect or quick charge request.");
+        logger.printfln("Phase switcher: Charging stopped by EVSE. Waiting for either disconnect or quick charge request.");
         set_available_charging_power(api_available_charging_power.get("power")->asUint());
         sequencer_state = stopped_by_evse;
         quick_charging_active = false;
@@ -629,18 +633,17 @@ void PhaseSwitcher::sequencer_state_pausing_while_switching()
 
 void PhaseSwitcher::sequencer_state_stopped_by_evse()
 {
-    if (charger_state == ready_for_charging){
-        if (delayed_phase_request[0] || quick_charging_active){
-            logger.printfln("Phase switcher: Charging restarted by EVSE, changing to active state.");
-            if (!quick_charging_active){
-                if (debug) logger.printfln("  Phase switcher: charging started, requested_phases_pending_delayed %d", requested_phases_pending_delayed);
-                requested_phases = requested_phases_pending_delayed;
-                set_current(api_available_charging_power.get("power")->asUint(), requested_phases);
-            }
-            sequencer_state = active;
+    if (quick_charging_active){
+        logger.printfln("Phase switcher: Requesting EVSE to start charging.");
+        sequencer_state = waiting_for_evse_start;
+    } else if (charger_state == ready_for_charging || charger_state == charging){
+        if (delayed_phase_request[0]){
+            if (debug) logger.printfln("  Phase switcher: charging started, requested_phases_pending_delayed %d", requested_phases_pending_delayed);
+            requested_phases = requested_phases_pending_delayed;
+            set_current(api_available_charging_power.get("power")->asUint(), requested_phases);
         } else {
-            logger.printfln("Phase switcher: EVSE ready for charging, changing to standby state.");
-            sequencer_state = standby;
+            logger.printfln("Phase switcher: Charging initiated by EVSE but requested power is not sufficient. Requesting EVSE to stop charging.");
+            sequencer_state = cancelling_evse_start;
         }
     }
 }

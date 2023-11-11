@@ -28,11 +28,12 @@
 #include "delay_timer.h"
 #include "multi_value_history.h"
 
-#define EVSE_START_TIMEOUT 60000
+#define EVSE_START_TIMEOUT 30000
 #define EVSE_START_RETRIES 3
 #define EVSE_STOP_TIMEOUT 10000
 
 #define QUICK_CHARGE_BUTTON_PRESSED_TIME 2000
+#define QUICK_CHARGE_DELAY_TIME 1000
 
 #define MIN_POWER_ONE_PHASE (6 * 230)
 #define MIN_POWER_TWO_PHASES (6 * 230 * 2)
