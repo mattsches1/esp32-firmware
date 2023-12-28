@@ -39,12 +39,6 @@
 // Indirection expands macro. See https://gcc.gnu.org/onlinedocs/gcc-3.4.3/cpp/Stringification.html
 #define MACRO_VALUE_TO_STRING(x) MACRO_NAME_TO_STRING(x)
 
-#ifdef __GNUC__
-#define ATTRIBUTE_UNUSED __attribute__((unused))
-#else
-#define ATTRIBUTE_UNUSED
-#endif
-
 const char *tf_reset_reason();
 
 bool a_after_b(uint32_t a, uint32_t b);
@@ -92,10 +86,30 @@ err_t dns_gethostbyname_lwip_ctx(const char *hostname, ip_addr_t *addr, dns_foun
 // Helper function to execute dns_gethostbyname_addrtype in lwIP's TCPIP context.
 err_t dns_gethostbyname_addrtype_lwip_ctx(const char *hostname, ip_addr_t *addr, dns_found_callback found, void *callback_arg, u8_t dns_addrtype);
 
+struct dns_gethostbyname_addrtype_lwip_ctx_async_data
+{
+    int err; // output
+    ip_addr_t addr; // internal
+    ip_addr_t *addr_ptr; // output
+    void (*found_callback)(dns_gethostbyname_addrtype_lwip_ctx_async_data */*data*/); // input
+    void *user; // input/output
+};
+
+void dns_gethostbyname_addrtype_lwip_ctx_async(const char *hostname,
+                                               void (*found_callback)(dns_gethostbyname_addrtype_lwip_ctx_async_data *callback_arg),
+                                               dns_gethostbyname_addrtype_lwip_ctx_async_data *callback_arg,
+                                               u8_t dns_addrtype);
+
 void trigger_reboot(const char *initiator);
 
 time_t ms_until_datetime(int *year, int *month, int *day, int *hour, int *minutes, int *seconds);
 time_t ms_until_time(int h, int m);
+
+// Unchecked snprintf that returns size_t
+[[gnu::format(__printf__, 3, 4)]]
+size_t snprintf_u(char *buf, size_t len, const char *format, ...);
+
+size_t vsnprintf_u(char *buf, size_t len, const char *format, va_list args);
 
 class LogSilencer
 {

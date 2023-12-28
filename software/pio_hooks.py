@@ -14,6 +14,7 @@ import time
 import re
 import json
 import glob
+from pathlib import PurePath
 from base64 import b64encode
 from zlib import crc32
 import util
@@ -179,7 +180,6 @@ def generate_module_dependencies_header(info_path, header_path, backend_module, 
                         print(f"Error: Module '{module_name}' conflicts with module '{conflict_name}'.", file=sys.stderr)
                         sys.exit(1)
 
-
             if backend_module:
                 cur_module_index = backend_modules.index(backend_module)
 
@@ -309,7 +309,7 @@ def collect_translation(path, override=False):
         print(f"Found translation_*.tsx and translation_*.json in same module ({path})! Use either tsx or json translations!")
         sys.exit(1)
 
-    for translation_path in glob.glob(os.path.join(path, 'translation_*.tsx')) + glob.glob(os.path.join(path, 'translation_*.json')):
+    for translation_path in tsxs + jsons:
         m = re.match(r'translation_([a-z]+){0}\.(tsx|json)'.format('_override' if override else ''), os.path.split(translation_path)[-1])
 
         if m == None:
@@ -333,7 +333,7 @@ def collect_translation(path, override=False):
             try:
                 translation[language] = json.loads(content)
             except:
-                with open("/tmp/out.json", "w") as f:
+                with open("/tmp/out.json", "w", encoding='utf-8') as f:
                     f.write(content)
                 print('JSON error in', translation_path)
                 raise
@@ -356,7 +356,11 @@ HYPHENATE_THRESHOLD = 9
 
 missing_hyphenations = []
 
-def hyphenate(s):
+def hyphenate(s, key):
+    if '\u00AD' in s:
+        print("Found unicode soft hyphen in translation value {}: {}".format(key, s.replace('\u00AD', "___HERE___")))
+        sys.exit(1)
+
     # Replace longest words first. This prevents replacing parts of longer words.
     for word in sorted(re.split('\W+', s.replace("&shy;", "")), key=lambda x: len(x), reverse=True):
         for l, r in hyphenations:
@@ -376,7 +380,7 @@ def hyphenate_translation(translation, parent_key=None):
     if parent_key == None:
         parent_key = []
 
-    return {key: (hyphenate(value) if isinstance(value, str) else hyphenate_translation(value, parent_key=parent_key + [key])) for key, value in translation.items()}
+    return {key: (hyphenate(value, key) if isinstance(value, str) else hyphenate_translation(value, parent_key=parent_key + [key])) for key, value in translation.items()}
 
 def repair_rtc_dir():
     path = os.path.abspath("src/modules/rtc")
@@ -450,6 +454,7 @@ def main():
     build_flags = env.GetProjectOption("build_flags")
     frontend_debug = env.GetProjectOption("custom_frontend_debug") == "true"
     web_only = env.GetProjectOption("custom_web_only") == "true"
+    web_build_flags = env.GetProjectOption("custom_web_build_flags")
     monitor_speed = env.GetProjectOption("monitor_speed")
     nightly = "-DNIGHTLY" in build_flags
 
@@ -599,6 +604,12 @@ def main():
         'frontend_modules': [frontend_module.under for frontend_module in frontend_modules]
     }, separators=(',', ':'))
 
+    web_build_lines = []
+    for web_build_flag in web_build_flags.split('\n'):
+        web_build_lines.append(f'export const {web_build_flag};')
+
+    util.write_file_if_different(os.path.join('web', 'src', 'build.ts'), '\n'.join(web_build_lines))
+
     # Handle backend modules
     excluded_backend_modules = list(os.listdir('src/modules'))
     backend_modules = [util.FlavoredName(x).get() for x in env.GetProjectOption("custom_backend_modules").splitlines()]
@@ -606,11 +617,40 @@ def main():
     if nightly:
         backend_modules.append(util.FlavoredName("Debug").get())
 
+    with ChangedDirectory('src'):
+        excluded_bindings = [PurePath(x).as_posix() for x in glob.glob('bindings/brick_*') + glob.glob('bindings/bricklet_*')]
+
+    excluded_bindings.remove('bindings/bricklet_unknown.h')
+    excluded_bindings.remove('bindings/bricklet_unknown.c')
+
+    def include_bindings(path):
+        if not path.endswith('.h') and not path.endswith('.c') and not path.endswith('.cpp'):
+            return
+
+        with open(path, 'r', encoding='utf-8') as f:
+            for line in f.readlines():
+                m = p.match(line)
+
+                if m != None:
+                    binding = m.group(1)
+
+                    if binding + '.h' in excluded_bindings:
+                        excluded_bindings.remove(binding + '.h')
+
+                    if binding + '.c' in excluded_bindings:
+                        excluded_bindings.remove(binding + '.c')
+
+    p = re.compile(r'#\s*include\s+[<"](bindings/brick(?:let)?_.*)\.h[>"]')
+
     for backend_module in backend_modules:
         mod_path = os.path.join('src', 'modules', backend_module.under)
 
         if not os.path.exists(mod_path) or not os.path.isdir(mod_path):
             print("Backend module {} not found.".format(backend_module.space, mod_path))
+
+        for root, dirs, files in os.walk(mod_path):
+            for name in files:
+                include_bindings(os.path.join(root, name))
 
         excluded_backend_modules.remove(backend_module.under)
 
@@ -626,11 +666,23 @@ def main():
             with ChangedDirectory(mod_path):
                 subprocess.check_call([env.subst('$PYTHONEXE'), "-u", "prepare.py", abs_branding_module], env=environ)
 
-    if build_src_filter != None:
-        for excluded_backend_module in excluded_backend_modules:
-            build_src_filter.append('-<modules/{0}/*>'.format(excluded_backend_module))
+    for root, dirs, files in os.walk('src'):
+        root_path = PurePath(root)
+        root_parents = [root_path] + list(root_path.parents)
 
-        env.Replace(SRC_FILTER=[' '.join(build_src_filter)])
+        if PurePath('src', 'bindings') in root_parents or PurePath('src', 'modules') in root_parents:
+            continue
+
+        for name in files:
+            include_bindings(os.path.join(root, name))
+
+    for excluded_backend_module in excluded_backend_modules:
+        build_src_filter.append('-<modules/{0}/*>'.format(excluded_backend_module))
+
+    for excluded_binding in excluded_bindings:
+        build_src_filter.append('-<{0}>'.format(excluded_binding))
+
+    env.Replace(SRC_FILTER=[' '.join(build_src_filter)])
 
     all_mods = []
     for existing_backend_module in os.listdir(os.path.join('src', 'modules')):
@@ -713,24 +765,38 @@ def main():
 
         if os.path.exists(os.path.join(mod_path, 'api.ts')):
             with open(os.path.join(mod_path, 'api.ts'), 'r', encoding='utf-8') as f:
-                content = f.read()
+                content = f.readlines()
 
             api_path = frontend_module.under + "/"
 
-            api_match = api_path_pattern.match(content)
-            if api_match is not None:
-                api_path = api_match.group(1).strip()
+            found_api_exports = False
 
-            api_exports = exported_interface_pattern.findall(content) + exported_type_pattern.findall(content)
-            if len(api_exports) != 0:
+            for line in content:
+                match = api_path_pattern.match(line)
+                if match is not None:
+                    api_path = match.group(1).strip()
+                    continue
+
+                match = exported_interface_pattern.match(line)
+                if match is None:
+                    match = exported_type_pattern.match(line)
+                    if match is None:
+                        continue
+
+                found_api_exports = True
+
+                type_ = match.group(1)
+                api_suffix = type_.split("___")[0]
+
+                api_config_map_entries.append("'{}{}': module_{}.{},".format(api_path, api_suffix, module_counter, type_))
+                api_cache_entries.append("'{}{}': null as any,".format(api_path, api_suffix))
+                api_cache_entries.append("'{}{}_modified': null as any,".format(api_path, api_suffix))
+
+            if found_api_exports:
                 api_module = "module_{}".format(module_counter)
                 module_counter += 1
 
                 api_imports.append("import * as {} from '../modules/{}/api';".format(api_module, frontend_module.under))
-
-                api_config_map_entries += ["'{}{}': {}.{},".format(api_path, x, api_module, x) for x in api_exports]
-                api_cache_entries += ["'{}{}': null as any,".format(api_path, x) for x in api_exports]
-                api_cache_entries += ["'{}{}_modified': null as any,".format(api_path, x) for x in api_exports]
 
         for phase, scss_paths in [('pre', pre_scss_paths), ('post', post_scss_paths)]:
             scss_path = os.path.join(mod_path, phase + '.scss')
@@ -790,7 +856,7 @@ def main():
         '{{{theme_color}}}': color
     })
 
-    util.specialize_template(os.path.join("web", "main.ts.template"), os.path.join("web", "src", "main.ts"), {
+    util.specialize_template(os.path.join("web", "main.tsx.template"), os.path.join("web", "src", "main.tsx"), {
         '{{{module_imports}}}': '\n'.join(['import * as {0} from "./modules/{0}/main";'.format(x) for x in main_ts_entries]),
         '{{{modules}}}': ', '.join([x for x in main_ts_entries]),
         '{{{preact_debug}}}': 'import "preact/debug";' if frontend_debug else ''
@@ -916,7 +982,6 @@ def main():
         print('Web interface dependencies are not up-to-date ({0}), updating now'.format(node_modules_reason))
 
         util.remove_digest('web', 'node_modules', env=env)
-
 
         def clear_directory(path):
             if not os.path.exists(path):

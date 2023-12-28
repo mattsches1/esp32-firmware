@@ -27,7 +27,7 @@
 
 #include <ModbusTCP.h>
 
-#define MODBUS_TCP_METER_COUNT_MAX 4
+#define MODBUS_TCP_METER_COUNT_MAX 2
 #define MODBUS_TCP_METER_REGISTER_COUNT_MAX 10
 #define MODBUS_TCP_METER_REGISTER_LENGTH_MAX 4
 
@@ -59,7 +59,7 @@ public:
     void next_register();
     void next_meter();
     void zero_results();
-    void read_register(const char *host, Config *register_config, uint16_t *result);
+    void read_register(const char *host, const Config *register_config, uint16_t *result);
     uint8_t get_length_from_type(const uint8_t value_type);
     float get_value(const uint8_t meter_num, const uint8_t register_num);
 

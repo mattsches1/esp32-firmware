@@ -20,18 +20,14 @@
 import { h, Component, ComponentChildren } from "preact";
 
 interface FormSeparatorProps {
-    heading?: string
-    colClasses?: string
-    first?: boolean
-    extraClasses?: string
-    children?: ComponentChildren
+    heading?: string;
+    colClasses?: string;
+    first?: boolean;
+    extraClasses?: string;
+    children?: ComponentChildren;
 }
 
 export class FormSeparator extends Component<FormSeparatorProps, {}> {
-    constructor() {
-        super();
-    }
-
     render(props: FormSeparatorProps) {
         return (
             <div class={"row mb-3 " + (!props.first ? "pt-3" : "pt-0") + " " + (props.extraClasses === undefined ? "" : props.extraClasses)}>

@@ -18,6 +18,7 @@
 #include "task_scheduler.h"
 #include "module_dependencies.h"
 #include "ocpp.h"
+#include "modules/meters/meter_defs.h"
 
 // A module can't have a dependency on itself. Manually declare it here.
 extern Ocpp ocpp;
@@ -257,13 +258,17 @@ EVSEState platform_get_evse_state(int32_t connectorId) {
 
 // This is the Energy.Active.Import.Register measurand in Wh
 int32_t platform_get_energy(int32_t connectorId) {
-    REQUIRE_FEATURE(meter, 0);
+    REQUIRE_FEATURE(meter_all_values, 0);
 
-    Config *meter_values = api.getState("meter/values", false);
-    if (meter_values == nullptr)
+    Config *meter_all_values = api.getState("meter/all_values");
+    if (meter_all_values == nullptr)
         return 0;
 
-    return (int32_t)(meter_values->get("energy_abs")->asFloat() * 1000);
+    float result = meter_all_values->get(METER_ALL_VALUES_TOTAL_IMPORT_KWH)->asFloat();
+    if (isnan(result))
+        return 0;
+
+    return result * 1000;
 }
 
 bool platform_get_signed_meter_value(int32_t connectorId, SampledValueMeasurand measurand, SampledValuePhase phase, SampledValueLocation location, char buf[OCPP_PLATFORM_MEASURAND_MAX_DATA_LEN]){
@@ -772,8 +777,8 @@ void platform_reset(bool hard) {
         ongoing transaction.
         */
         evse_common.reset();
-#if MODULE_MODBUS_METER_AVAILABLE()
-        modbus_meter.reset();
+#if MODULE_METERS_RS485_BRICKLET_AVAILABLE()
+        meters_rs485_bricklet.reset();
 #endif
 #if MODULE_NFC_AVAILABLE()
         nfc.reset();

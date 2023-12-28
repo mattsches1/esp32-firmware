@@ -29,18 +29,22 @@ let x = {
             "iec_state_d": "D (not supported)",
             "iec_state_ef": "E/F (error)",
             "contactor_state": "Contactor check",
-            "contactor_names": "before contactor, behind contactor, state",
+            "contactor_names": /*SFN*/(is_evse_v3: boolean) => is_evse_v3 ? "contactor L1+N, contactor L2+L3, state" : "before contactor, behind contactor, state"/*NF*/,
             "contactor_not_live": "Not live",
             "contactor_live": "Live",
             "contactor_ok": "OK",
-            "contactor_error": "Error",
+            "contactor_error": /*SFN*/(contactor_error: number) => {
+                if (contactor_error == 0)
+                    return "Error";
+                return "Error code " + contactor_error.toString();
+                }/*NF*/,
             "allowed_charging_current": "Allowed charging current",
             "error_state": "Error state",
             "error_state_desc": <><a href="{{{manual_url}}}">see manual for details</a></>,
             "error_ok": "OK",
-            "error_switch": "Switch error",
-            "error_contactor": "Contactor error",
-            "error_communication": "Communication error",
+            "error_switch": "Switch",
+            "error_contactor": /*SFN*/(pe_error: boolean, contactor_error: boolean) => (contactor_error == pe_error ? "Contactor/PE" : (pe_error ? "PE" : "Contactor"))/*NF*/,
+            "error_communication": "Communication",
             "lock_state": "Cable lock",
             "lock_init": "Init",
             "lock_open": "Open",
@@ -49,7 +53,6 @@ let x = {
             "lock_opening": "Opening",
             "lock_error": "Error",
             "time_since_state_change": "Time since state change",
-            "state_change": "State change",
             "uptime": "Uptime",
             "configuration": "Hardware configuration",
             "has_lock_switch": "Cable lock available",
@@ -68,14 +71,10 @@ let x = {
             "led_state": "LED state",
             "led_state_off": "Off",
             "led_state_on": "On",
-            "led_state_blinking": "Acknowledge blinking",
-            "led_state_flickering": "Rejecting blinking",
-            "led_state_breathing": "Demanding blinking",
-            "led_state_error": /*SFN*/(count: number) => {
-                return "Blinking (" + count + " x)";
-            }/*NF*/,
+            "led_state_blinking": "Blinking",
+            "led_state_flickering": "Flickering",
+            "led_state_breathing": "Breathing",
             "led_state_api": "API",
-            "led_duration": "Duration",
             "cp_pwm_dc": "CP PWM duty cycle",
             "adc_values": "ADC values",
             "voltages": "Voltages",
@@ -89,16 +88,11 @@ let x = {
             "debug_stop": "Stop+Download",
             "debug_description": "Create charge log",
             "debug_description_muted": "to diagnose charging problems",
-            "active_high": "If open",
-            "active_low": "If closed",
-            "gpio_state": "State",
             "gpio_out_high": "High impedance",
             "gpio_out_low": "Connected to ground",
             "gpio_out": "General purpose output",
             "gpio_in": "General purpose input",
             "gpio_shutdown": "Shutdown input",
-            "button_pressed": "At button press",
-            "button_released": "At button release",
             "button_configuration": "Button configuration",
 
             "auto_start_description": "Manual charge release",
@@ -122,12 +116,8 @@ let x = {
             "meter_monitoring": "Meter monitoring",
             "meter_monitoring_desc": "Monitors the energy meter and blocks charging if a malfunction is detected.",
 
-            "enable_led_api": "Status-LED control",
-            "enable_led_api_desc": "Allows an external source to control the Status-LED.",
-            "api_must_be_enabled": "API must be enabled to use this feature.",
-            "cron_state_change_trigger": /*FFN*/(state: string) => <>If the charge status changes to "<b>{state}</b>",{" "}</>/*NF*/,
-            "cron_action_text": /*FFN*/(current: number) => <>set the allowed charging current to <b>{current} A</b>.</>/*NF*/,
-            "cron_led_action_text": /*FFN*/(state: string, duration: number) => state == "An" || state == "Aus" ? <>turn the status-LED <b>{state}</b> for <b>{duration} seconds</b>.</> : <>show <b>{state}</b> for <b>{duration / 1000} seconds</b> on the status-LED.</>/*NF*/,
+            "enable_led_api": "Status LED control",
+            "enable_led_api_desc": "Allows an external source to control the status LED.",
 
             "slot": /*SFN*/(i: number) => { return {
                 0: "Supply cable",
@@ -144,7 +134,7 @@ let x = {
                 11: "OCPP",
                 12: "Energy/Time limit",
                 13: "Meter monitoring",
-                14: "Cron"
+                14: "Automation"
             }[i];}/*NF*/,
 
             // EVSE V1 only
@@ -185,9 +175,9 @@ let x = {
             "active_high_suffix": " if open",
 
             "todo": "Have a feature request? Write an e-mail to info@tinkerforge.com",
-            "gpio_in_muted": "Readable on GPIO 16",
+            "gpio_in_muted": "readable on GPIO 16",
             "gpio_out_muted": <><a href="https://en.wikipedia.org/wiki/Open_collector">open collector</a></>,
-            "button_configuration_muted": "Action to be executed when the button is pressed",
+            "button_configuration_muted": "Action to be executed when the button is pressed.",
             "button_configuration_deactivated": "No action",
             "button_configuration_start_charging": "Start charging",
             "button_configuration_stop_charging": "Stop charging",
@@ -203,8 +193,10 @@ let x = {
             "dc_fault_current_6_ma": "DC fault",
             "dc_fault_current_system": "System error",
             "dc_fault_current_unknown": "Unknown error",
-            "dc_fault_current_calibration": "Calibration error",
+            "dc_fault_current_calibration": /*SFN*/ (dc_fault_state: number, dc_fault_pins: number) => "Calibration error" + (dc_fault_state != 0 ? (": " + dc_fault_pins.toString()) : "")/*NF*/,
             "dc_fault_current_reset": "Reset",
+            "dc_fault_current_20_ma": "AC fault",
+            "dc_fault_current_6_ma_20_ma": "AC and DC fault",
 
             "reset_dc_fault_title": "Reset the DC fault protector",
             "reset_dc_fault_content": <>Resetting the DC fault protector restores the ability to charge. <b>Ensure that the reason why the DC fault protector triggered is resolved!</b> <a href="{{{manual_url}}}">See manual for details.</a> Really reset the DC fault protector?</>,
@@ -212,18 +204,44 @@ let x = {
             "reset": "Reset",
             "trigger_dc_fault_test": "Test DC fault protector",
             "time_since_dc_fault_check": "Time since last DC fault protector test",
-            "cron_sd_trigger_text": /*FFN*/(state: boolean) => <>If the shutdown input switches to <b>{state ? "open" : "closed"}</b>{" "}</>/*NF*/,
-            "cron_gpin_trigger_text": /*FFN*/(state: boolean) => <>If the General Purpose input switches to <b>{state ? "open" : "closed"}</b>{" "}</>/*NF*/,
-            "cron_button_trigger_text": /*FFN*/(state: boolean) => <>If the button is <b>{state ? "pressed" : "released"}</b>{" "}</>/*NF*/,
-            "cron_gpout_action_text": /*FFN*/(state: number) => state ? <>set general purpose output to <b>high impedance</b>.</> : <><b>connect</b> general purpose output <b>to ground</b>.</>/*NF*/,
 
             // EVSE version specific value for common placeholder
-            "error_2": /*SFN*/(is_evse_v2: boolean) => is_evse_v2 ? "DC fault protector error" : "Calibration error"/*NF*/,
+            "error_2": /*SFN*/(is_evse_v2: boolean) => is_evse_v2 ? "DC fault protector" : "Calibration"/*NF*/,
             "adc_names": /*FFN*/(is_evse_v2: boolean) => is_evse_v2 ? <>CP/PE before resistor (PWM high), CP/PE after resistor (PWM high)<br/>CP/PE before resistor (PWM low), CP/PE after resistor (PWM low)<br/>PP/PE, +12V rail<br/>-12V rail</> : <>CP/PE, PP/PE</>/*NF*/,
-            "voltage_names": /*FFN*/(is_evse_v2: boolean) => is_evse_v2 ? <>CP/PE before resistor (PWM high), CP/PE after resistor (PWM high)<br/>CP/PE before resistor (PWM low), CP/PE after resistor (PWM low)<br/>PP/PE, +12V rail<br/>-12V rail</> : <>CP/PE, PP/PE,<br/> CP/PE (high)</>/*NF*/
+            "voltage_names": /*FFN*/(is_evse_v2: boolean) => is_evse_v2 ? <>CP/PE before resistor (PWM high), CP/PE after resistor (PWM high)<br/>CP/PE before resistor (PWM low), CP/PE after resistor (PWM low)<br/>PP/PE, +12V rail<br/>-12V rail</> : <>CP/PE, PP/PE,<br/> CP/PE (high)</>/*NF*/,
+            "dc_fault_sensor_type": "DC fault protector version",
+            "dc_fault_pins": "DC fault protector pins",
+            "temperature": "Temperature",
+            "phases_current": "Phases current",
+            "phases_requested": "Phases requested",
+            "phases_status": "Phases status",
+            "switch_to_one_phase": "Switch to one phase",
+            "switch_to_three_phases": "Switch to three phases"
+        },
+        "automation": {
+            "external_current_wd": "External control watchdog",
+            "external_current_wd_trigger": <>When the <b>external</b> control <b>watchdog</b> is triggered, </>,
+            "api_must_be_enabled": "API must be enabled to use this feature.",
+            "state_change": "State change",
+            "led_duration": "Duration",
+            "led_state": "LED state",
+            "led_state_off": "Off",
+            "led_state_on": "On",
+            "led_state_blinking": "Acknowledge blinking",
+            "led_state_flickering": "Rejecting blinking",
+            "led_state_breathing": "Demanding blinking",
+            "led_state_error": /*SFN*/(count: number) => {
+                return "Blinking (" + count + " x)";
+            }/*NF*/,
+            "from": "From",
+            "to": "To",
+            "any": "Any state",
+            "allowed_charging_current": "Allowed charging current",
+            "automation_state_change_trigger": /*FFN*/(old_state: string, new_state: string) => <>When the vehicle state changes from "<b>{old_state}</b>" to "<b>{new_state}</b>",{" "}</>/*NF*/,
+            "automation_action_text": /*FFN*/(current: string) => <>set the allowed charging current to <b>{current} A</b>.</>/*NF*/,
+            "automation_led_action_text": /*FFN*/(state: string, duration: number) => state == "An" || state == "Aus" ? <>turn the status-LED <b>{state}</b> for <b>{duration} seconds</b>.</> : <>show <b>{state}</b> for <b>{duration / 1000} seconds</b> on the status-LED.</>/*NF*/
         },
         "script": {
-            "error_code": "Error code",
             "set_charging_current_failed": "Failed to set charging current",
             "start_charging_failed": "Failed to start charging",
             "stop_charging_failed": "Failed to stop charging",
@@ -247,7 +265,7 @@ let x = {
             "reset_slot_failed": "Releasing the current limit failed",
 
             "slot_disabled": "Not active",
-            "slot_blocks": "Blocks",
+            "slot_blocks": "Blocked",
             "slot_no_limit": "Released",
 
             "slot": /*SFN*/(i: number, is_evse_v2: boolean) => {return {
@@ -265,7 +283,7 @@ let x = {
                 11: "OCPP",
                 12: "energy/time limit",
                 13: "meter monitoring",
-                14: "cron"
+                14: "automation"
             }[i];}/*NF*/,
 
             "reboot_content_changed": "charge settings",
@@ -278,9 +296,11 @@ let x = {
             "gpio_configuration_failed": "Updating the GPIO configuration failed",
 
             "meter_type_0": "No energy meter found",
-            "meter_type_1": "SDM72",
-            "meter_type_2": "SDM630",
-            "meter_type_3": "SDM72V2",
+            "meter_type_1": "Eastron SDM72",
+            "meter_type_2": "Eastron SDM630",
+            "meter_type_3": "Eastron SDM72V2",
+            "meter_type_6": "Eltako DSZ15DZMOD",
+            "meter_type_7": "YTL DEM4A",
             "meter_type_254": "internal"
         }
     }

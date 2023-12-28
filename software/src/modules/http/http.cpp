@@ -18,13 +18,12 @@
  */
 
 #include "http.h"
-#include "module_dependencies.h"
 
 #include "api.h"
 #include "task_scheduler.h"
 #include "web_server.h"
 
-#if MODULE_ESP32_ETHERNET_BRICK_AVAILABLE()
+#if defined(BOARD_HAS_PSRAM)
 #define RECV_BUF_SIZE 4096
 #else
 #define RECV_BUF_SIZE 2048
@@ -318,4 +317,8 @@ bool Http::pushStateUpdate(size_t stateIdx, const String &payload, const String 
 bool Http::pushRawStateUpdate(const String &payload, const String &path)
 {
     return true;
+}
+
+IAPIBackend::WantsStateUpdate Http::wantsStateUpdate(size_t stateIdx) {
+    return IAPIBackend::WantsStateUpdate::No;
 }

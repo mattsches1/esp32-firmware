@@ -1,0 +1,86 @@
+/** @jsxImportSource preact */
+import { h } from "preact";
+let x = {
+    "meters": {
+        "status": {
+            "power_history": null,
+            "current_power": "Power"
+        },
+        "navbar": {
+            "meters": "Energy Meters"
+        },
+        "content": {
+            "meters": "Energy Meters",
+            "history": "History (48 h)",
+            "live": "Live",
+            "detailed_values": "Details",
+            "detailed_values_none": "No values are available yet.",
+
+            {{{values}}},
+
+            {{{groups}}},
+
+            {{{fragments}}},
+
+            "table_display_name": "Display name",
+            "table_power": "Power",
+            "table_energy_import": "Energy draw",
+            "table_energy_export": "Energy feed",
+            "table_phases": "Phases",
+
+            "add_meter_title": "Add energy meter",
+            "add_meter_prefix": "",
+            "add_meter_infix": " of ",
+            "add_meter_suffix": " energy meters configured",
+            "add_meter_slot": "Number",
+            "add_meter_class": "Class",
+            "add_meter_class_select": "Select...",
+
+            "edit_meter_title": "Edit energy meter",
+            "edit_meter_slot": "Number",
+            "unknown_slot": /*SFN*/ (slot: number) => `Unknown meter number ${slot}`/*NF*/,
+            "edit_meter_class": "Class",
+            "edit_meter_class_select": "Select...",
+
+            "settings": "Settings",
+
+            "last_reset": "Last energy meter reset",
+            "last_reset_unknown": "Unknown",
+            "last_reset_counter": /*SFN*/ (n: number) => `${n} times resetted`/*NF*/,
+            "reset": "Reset energy meter",
+            "never": "Never",
+
+            "reset_modal": "Reset meter values?",
+            "reset_modal_body": /*SFN*/(meter_name: string) => `Really reset all resettable meter values of ${meter_name}?`/*NF*/,
+            "reset_modal_abort": "Abort",
+            "reset_modal_confirm": "Reset",
+            "reset_failed": "Failed to reset meter values",
+
+            "meter_type": "Energy meter type"
+        },
+        "automation": {
+            "meter_reset": "Energy Meter reset",
+            "automation_action_text": /*FFN*/(meter_name: string) => <><b>reset</b> energy meter <b>{meter_name}</b>.</>/*NF*/,
+            "meter_slot": "Meter"
+        },
+        "script": {
+            "time": "Time of day",
+            "power": "Power",
+            "save_failed": "Failed to save the energy meters settings.",
+            "reboot_content_changed": "energy meters settings",
+            "meter": /*SFN*/(slot: number|"?") => "Meter #" + slot/*NF*/,
+
+            "meter_type_0": "No energy meter found",
+            "meter_type_1": "Eastron SDM72",
+            "meter_type_2": "Eastron SDM630",
+            "meter_type_3": "Eastron SDM72V2",
+            "meter_type_4": "Eastron SDM72CTM",
+            "meter_type_5": "Eastron SDM630MCT",
+            "meter_type_6": "Eltako DSZ15DZMOD",
+            "meter_type_7": "YTL DEM4A",
+            "meter_type_254": "Internal",
+            "meter_type_255": "Auto detect",
+            "reboot_required": "Reboot required"
+        }
+    }
+}

@@ -20,24 +20,31 @@
 import * as util from "../util";
 
 import { h, Context } from "preact";
-import { useContext, useState } from "preact/hooks";
+import { useContext } from "preact/hooks";
 
 interface OutputFloatProps {
-    idContext?: Context<string>
-    value: number
-    digits: 0|1|2|3
-    scale: number
-    unit: string
-    maxFractionalDigitsOnPage?: number
-    maxUnitLengthOnPage?: number
-    small?: boolean
+    idContext?: Context<string>;
+    value: number;
+    digits: 0 | 1 | 2 | 3;
+    scale: number;
+    unit: string;
+    maxFractionalDigitsOnPage?: number;
+    maxUnitLengthOnPage?: number;
+    small?: boolean;
+    class?: string;
 }
 
 export function OutputFloat(props: OutputFloatProps) {
     const id = !props.idContext ? util.useId() : useContext(props.idContext);
     let pow10 = Math.pow(10, props.scale);
 
-    let val = util.toLocaleFixed(props.value / pow10, props.digits);
+    let val = "";
+    let val_0 = "";
+
+    if (util.hasValue(props.value)) {
+        val = util.toLocaleFixed(props.value / pow10, props.digits);
+        val_0 = util.toLocaleFixed(props.value / pow10, 0);
+    }
 
     let maxFracDigits = props.maxFractionalDigitsOnPage === undefined ? 3 : props.maxFractionalDigitsOnPage;
     let maxUnitLength = props.maxUnitLengthOnPage === undefined ? (props.small ? 1.75 : 2.5) : props.maxUnitLengthOnPage; // Hand-tuned at the moment to fit kvarh
@@ -46,17 +53,17 @@ export function OutputFloat(props: OutputFloatProps) {
         "calc(100% - 2px " + // border
                   "- .75rem " + // left padding
                   `- ${maxUnitLength}rem ` + // unit
-                  `- ${util.toLocaleFixed(props.value / pow10, 0).length}ch` + // digits before decimal separator
+                  `- ${val_0.length}ch` + // digits before decimal separator
         `), calc(${props.digits == 0 ? (maxFracDigits > 0 ? maxFracDigits + 1 : 0) : (maxFracDigits-props.digits)}ch + .75rem));`;
 
     return (
         <div class={"input-group" + (props.small ? " input-group-sm" : "")}>
-            <input class={"form-control" + (props.small ? " form-control-sm" : "") + " no-spin text-right"}
-                    style={pad_right}
-                       id={id}
-                       type="text"
-                       disabled
-                       value={val}/>
+            <input class={"form-control" + (props.small ? " form-control-sm" : "") + " no-spin text-right " + (props.class ? props.class : "")}
+                   style={pad_right}
+                   id={id}
+                   type="text"
+                   disabled
+                   value={val}/>
             <div class="input-group-append">
                 <div class={"form-control" + (props.small ? " form-control-sm" : "") + " input-group-text"} style={`width: ${maxUnitLength + 1.5}rem;`}>
                     {this.props.unit}

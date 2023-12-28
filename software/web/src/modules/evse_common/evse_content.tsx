@@ -20,21 +20,21 @@
 
 import * as util from "../../ts/util";
 import * as API from "../../ts/api";
-
-import {  h, Component, Fragment } from "preact";
+import { h, Component, Fragment } from "preact";
 import { Button } from "react-bootstrap";
-import { CollapsedSection } from "src/ts/components/collapsed_section";
-import { DebugLogger } from "src/ts/components/debug_logger";
-import { FormRow } from "src/ts/components/form_row";
-import { FormSeparator } from "src/ts/components/form_separator";
-import { IndicatorGroup } from "src/ts/components/indicator_group";
-import { InputFile } from "src/ts/components/input_file";
-import { InputIndicator } from "src/ts/components/input_indicator";
-import { InputText } from "src/ts/components/input_text";
-import { PageHeader } from "src/ts/components/page_header";
-import { SubPage } from "src/ts/components/sub_page";
-import { __, translate_unchecked } from "src/ts/translation";
-import { EVSE_SLOT_EXTERNAL } from "./api";
+import { CollapsedSection } from "../../ts/components/collapsed_section";
+import { DebugLogger } from "../../ts/components/debug_logger";
+import { FormRow } from "../../ts/components/form_row";
+import { FormSeparator } from "../../ts/components/form_separator";
+import { IndicatorGroup } from "../../ts/components/indicator_group";
+import { InputFile } from "../../ts/components/input_file";
+import { InputIndicator } from "../../ts/components/input_indicator";
+import { InputText } from "../../ts/components/input_text";
+import { PageHeader } from "../../ts/components/page_header";
+import { SubPage } from "../../ts/components/sub_page";
+import { __, translate_unchecked } from "../../ts/translation";
+import { EVSE_SLOT_EXTERNAL, EVSE_SLOT_AUTOMATION } from "./api";
+import { OutputFloat } from "../../ts/components/output_float";
 
 let toDisplayCurrent = (x: number) => util.toLocaleFixed(x / 1000.0, 3) + " A"
 
@@ -50,8 +50,16 @@ export class EVSE extends Component<{}, {}> {
         let user_calibration = API.get('evse/user_calibration');
 
         let is_evse_v2 = hardware_cfg.evse_version >= 20;
+        let is_evse_v3 = hardware_cfg.evse_version >= 30;
 
         let min = Math.min(...slots.filter(s => s.active).map(s => s.max_current));
+
+        let pe_error = state.error_state == 4 && ((!is_evse_v3 && state.contactor_error == 4)
+                                                    || (is_evse_v3 && (state.contactor_error & 1) == 1));
+
+        // EVSE 3.0 can report both a PE and a contactor error!
+        let contactor_error = state.error_state == 4 && ((!is_evse_v3 && state.contactor_error != 4)
+                                                           || (is_evse_v3 && (state.contactor_error & 1) == 0));
 
         return <SubPage>
             <PageHeader title={__("evse.content.status")} />
@@ -78,12 +86,12 @@ export class EVSE extends Component<{}, {}> {
                                 ["success", __("evse.content.error_ok")],
                                 ["danger", __("evse.content.error_switch")],
                                 ["danger", __("evse.content.error_2")(is_evse_v2)],
-                                ["danger", __("evse.content.error_contactor")],
+                                ["danger", __("evse.content.error_contactor")(pe_error, contactor_error)],
                                 ["danger", __("evse.content.error_communication")]
                             ]}/>
                     </FormRow>
 
-                    <FormRow label={__("evse.content.contactor_state")} label_muted={__("evse.content.contactor_names")}>
+                    <FormRow label={__("evse.content.contactor_state")} label_muted={__("evse.content.contactor_names")(is_evse_v3)}>
                         <div class="row mx-n1">
                             <IndicatorGroup
                                 class="mb-1 col px-1"
@@ -94,17 +102,17 @@ export class EVSE extends Component<{}, {}> {
                                 ]}/>
                             <IndicatorGroup
                                 class="mb-1 col px-1"
-                                value={state.contactor_state > 1 ? 1 : 0}
+                                value={(state.contactor_state & 2) == 2 ? 1 : 0}
                                 items={[
                                     ["secondary", __("evse.content.contactor_not_live")],
                                     ["primary", __("evse.content.contactor_live")]
                                 ]}/>
                             <IndicatorGroup
                                 class="mb-1 col-auto px-1"
-                                value={state.contactor_error != 0 ? 1 : 0}
+                                value={state.contactor_error > (is_evse_v3 ? 1 : 0) ? 1 : 0}
                                 items={[
                                     ["success", __("evse.content.contactor_ok")],
-                                    ["danger", state.contactor_error != 0 ? __("evse.script.error_code") + " " + state.contactor_error : __("evse.content.contactor_error")]
+                                    ["danger", __("evse.content.contactor_error")(state.contactor_error >> (is_evse_v3 ? 1 : 0))]
                                 ]}/>
                         </div>
                     </FormRow>
@@ -120,8 +128,12 @@ export class EVSE extends Component<{}, {}> {
                                         ["danger", __("evse.content.dc_fault_current_6_ma")],
                                         ["danger", __("evse.content.dc_fault_current_system")],
                                         ["danger", __("evse.content.dc_fault_current_unknown")],
-                                        ["danger", __("evse.content.dc_fault_current_calibration")]
-                                    ]}/>
+                                        ["danger", __("evse.content.dc_fault_current_calibration")(state.dc_fault_current_state, ll_state.dc_fault_pins)],
+                                    ].concat((ll_state.dc_fault_sensor_type > 0 ? [
+                                        ["danger", __("evse.content.dc_fault_current_20_ma")],
+                                        ["danger", __("evse.content.dc_fault_current_6_ma_20_ma")],
+                                    ] : [])) as any
+                                    }/>
                                 <Button
                                     disabled={state.dc_fault_current_state == 0}
                                     variant="danger"
@@ -134,7 +146,7 @@ export class EVSE extends Component<{}, {}> {
                                             no_text: __("evse.content.abort"),
                                             yes_text: __("evse.content.reset"),
                                             no_variant: "secondary",
-                                            yes_variant: "danger"
+                                            yes_variant: "danger",
                                         }))
                                         return false;
 
@@ -174,7 +186,7 @@ export class EVSE extends Component<{}, {}> {
 
                     <FormSeparator heading={__("evse.content.charging_current")}/>
 
-                    {slots.slice(0, 14).map((slot, i) => {
+                    {slots.map((slot, i) => {
                         let variant = "";
                         let value = "";
 
@@ -195,39 +207,57 @@ export class EVSE extends Component<{}, {}> {
                             variant = slot.max_current == min ? "warning" : "primary";
                         }
 
-                        if (i != EVSE_SLOT_EXTERNAL)
-                            return <FormRow key={i} label={__("evse.content.slot")(i)}>
-                                <InputIndicator value={value} variant={variant as any} />
-                            </FormRow>
-
-                        return <FormRow key={i} label={__("evse.content.slot")(i)}>
-                            <InputIndicator value={value} variant={variant as any}
-                                onReset={
-                                    () => {
-                                        API.save('evse/external_defaults', {
-                                                "current": 32000,
-                                                "clear_on_disconnect": false
-                                            },
-                                            __("evse.script.reset_slot_failed"));
+                        switch (i) {
+                            case EVSE_SLOT_EXTERNAL:
+                                return <FormRow key={i} label={__("evse.content.slot")(i)}>
+                                    <InputIndicator value={value} variant={variant as any}
+                                        onReset={
+                                            () => {
+                                                API.save('evse/external_defaults', {
+                                                        "current": 32000,
+                                                        "clear_on_disconnect": false
+                                                    },
+                                                    __("evse.script.reset_slot_failed"));
 
 
-                                        API.save('evse/external_current',
-                                            {"current": 32000},
-                                            __("evse.script.reset_slot_failed"));
+                                                API.save('evse/external_current',
+                                                    {"current": 32000},
+                                                    __("evse.script.reset_slot_failed"));
 
-                                        API.save('evse/external_clear_on_disconnect',
-                                            {"clear_on_disconnect": false},
-                                            __("evse.script.reset_slot_failed"));
-                                    }
-                                }
-                                resetVariant="danger"
-                                resetText={__("evse.content.reset_slot")}
-                                resetHidden={!slot.active || slot.max_current == 32000}/>
-                        </FormRow>
+                                                API.save('evse/external_clear_on_disconnect',
+                                                    {"clear_on_disconnect": false},
+                                                    __("evse.script.reset_slot_failed"));
+                                            }
+                                        }
+                                        resetVariant="danger"
+                                        resetText={__("evse.content.reset_slot")}
+                                        resetHidden={!slot.active || slot.max_current == 32000}/>
+                                </FormRow>
+                            case EVSE_SLOT_AUTOMATION:
+                                return <FormRow key={i} label={__("evse.content.slot")(i)}>
+                                    <InputIndicator value={value} variant={variant as any}
+                                        onReset={
+                                            () => API.save('evse/automation_current',
+                                                    {"current": 32000},
+                                                    __("evse.script.reset_slot_failed"))
+                                        }
+                                        resetVariant="danger"
+                                        resetText={__("evse.content.reset_slot")}
+                                        resetHidden={!slot.active || slot.max_current == 32000}/>
+                                </FormRow>
+                            default:
+                                return <FormRow key={i} label={__("evse.content.slot")(i)}>
+                                    <InputIndicator value={value} variant={variant as any} />
+                                </FormRow>
+                        }
                     })}
 
                     <FormSeparator heading={__("evse.content.configuration")}/>
 
+                    {/*Hide this by default to not confuse users.
+                       In the unexpected case that the EVSE reports that it has
+                       a lock switch (because of a firmware error?), show this.*/}
+                    {!hardware_cfg.has_lock_switch ? undefined :
                     <FormRow label={__("evse.content.has_lock_switch")}>
                         <IndicatorGroup
                             value={hardware_cfg.has_lock_switch ? 1 : 0}
@@ -236,6 +266,7 @@ export class EVSE extends Component<{}, {}> {
                                 ["primary", __("evse.content.lock_yes")]
                             ]}/>
                     </FormRow>
+                    }
 
                     <FormRow label={__("evse.content.jumper_config_max_current")} label_muted={__("evse.content.jumper_config")}>
                         <IndicatorGroup
@@ -350,13 +381,49 @@ export class EVSE extends Component<{}, {}> {
                             <InputText value={util.format_timespan_ms(ll_state.charging_time)}/>
                         </FormRow>
 
-                        {!is_evse_v2 ? undefined :
+                        {!is_evse_v3 ? undefined :
+                        <>
+                            <FormRow label={__("evse.content.temperature")}>
+                                <OutputFloat value={ll_state.temperature} digits={2} scale={2} unit="°C"/>
+                            </FormRow>
+
+                            <FormRow label={__("evse.content.phases_current")}>
+                                <InputText value={ll_state.phases_current}/>
+                            </FormRow>
+
+                            <FormRow label={__("evse.content.phases_requested")}>
+                                <InputText value={ll_state.phases_requested}/>
+                            </FormRow>
+
+                            <FormRow label={__("evse.content.phases_status")}>
+                                <InputText value={ll_state.phases_status}/>
+                            </FormRow>
+                        </>
+                        }
+
+                        {!is_evse_v3 && !is_evse_v2 ? undefined :
+                        <>
                             <FormRow label={__("evse.content.time_since_dc_fault_check")}>
                                 <InputText value={util.format_timespan_ms(ll_state.time_since_dc_fault_check)}/>
                             </FormRow>
+
+                            <FormRow label={__("evse.content.dc_fault_sensor_type")}>
+                                <InputText value={ll_state.dc_fault_sensor_type.toString()}/>
+                            </FormRow>
+
+                            <FormRow label={__("evse.content.dc_fault_pins")}>
+                                <InputText value={ll_state.dc_fault_pins.toString()}/>
+                            </FormRow>
+                        </>
                         }
 
                         <FormRow label={__("evse.content.reset_description")} label_muted={__("evse.content.reset_description_muted")}>
+                            {!is_evse_v3 ? undefined :
+                                <div class="input-group pb-2">
+                                    <Button variant="primary" className="form-control rounded-right mr-2" onClick={() => API.call('evse/debug_switch_to_one_phase', {}, "")}>{__("evse.content.switch_to_one_phase")}</Button>
+                                    <Button variant="primary" className="form-control rounded-left" onClick={() => API.call('evse/debug_switch_to_three_phases', {}, "")}>{__("evse.content.switch_to_three_phases")}</Button>
+                                </div>
+                            }
                             <div class="input-group pb-2">
                                 <Button variant="primary" className="form-control rounded-right mr-2" onClick={() => API.call('evse/reset', {}, "")}>{__("evse.content.reset_evse")}</Button>
                                 <Button variant="primary" className="form-control rounded-left" onClick={() => API.call('evse/reflash', {}, "")}>{__("evse.content.reflash_evse")}</Button>

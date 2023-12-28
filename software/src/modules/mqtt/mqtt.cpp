@@ -30,16 +30,18 @@
 
 #include "matchTopicFilter.h"
 
-#if MODULE_CRON_AVAILABLE()
+#if MODULE_AUTOMATION_AVAILABLE()
 extern Mqtt mqtt;
 #endif
 
 extern char local_uid_str[32];
 
-#if MODULE_ESP32_ETHERNET_BRICK_AVAILABLE()
-#define MQTT_RECV_BUFFER_SIZE 4096U
+#if defined(BOARD_HAS_PSRAM)
+#define MQTT_RECV_BUFFER_SIZE 6144U
+#define MQTT_SEND_BUFFER_SIZE 32768U
 #else
-#define MQTT_RECV_BUFFER_SIZE 2048U
+#define MQTT_RECV_BUFFER_SIZE 4096U
+#define MQTT_SEND_BUFFER_SIZE 4096U
 #endif
 
 #define MQTT_RECV_BUFFER_HEADROOM (MQTT_RECV_BUFFER_SIZE / 4)
@@ -56,7 +58,7 @@ void Mqtt::pre_setup()
         {"global_topic_prefix", Config::Str(String(BUILD_HOST_PREFIX) + "/" + "ABC", 0, 64)},
         {"client_name", Config::Str(String(BUILD_HOST_PREFIX) + "-" + "ABC", 1, 64)},
         {"interval", Config::Uint32(1)}
-    }), [](Config &cfg) -> String {
+    }), [](Config &cfg, ConfigSource source) -> String {
 #if MODULE_MQTT_AUTO_DISCOVERY_AVAILABLE()
         const String &global_topic_prefix = cfg.get("global_topic_prefix")->asString();
         const String &auto_discovery_prefix = mqtt_auto_discovery.config.get("auto_discovery_prefix")->asString();
@@ -74,12 +76,12 @@ void Mqtt::pre_setup()
         {"last_error", Config::Int(0)}
     });
 
-#if MODULE_CRON_AVAILABLE()
-    cron.register_trigger(
-        CronTriggerID::MQTT,
+#if MODULE_AUTOMATION_AVAILABLE()
+    automation.register_trigger(
+        AutomationTriggerID::MQTT,
         Config::Object({
-            {"topic", Config::Str("", 0, 64)},
-            {"payload", Config::Str("", 0, 64)},
+            {"topic", Config::Str("", 0, 32)},
+            {"payload", Config::Str("", 0, 32)},
             {"retain", Config::Bool(false)},
             {"use_prefix", Config::Bool(false)}
         }),
@@ -92,18 +94,18 @@ void Mqtt::pre_setup()
         }
     );
 
-    cron.register_action(
-        CronActionID::MQTT,
+    automation.register_action(
+        AutomationActionID::MQTT,
         Config::Object({
-            {"topic", Config::Str("", 0, 64)},
-            {"payload", Config::Str("", 0, 64)},
+            {"topic", Config::Str("", 0, 32)},
+            {"payload", Config::Str("", 0, 32)},
             {"retain", Config::Bool(false)},
             {"use_prefix", Config::Bool(false)}
         }),
         [this](const Config *cfg) {
             String topic = cfg->get("topic")->asString();
             if (cfg->get("use_prefix")->asBool()) {
-                topic = config.get("global_topic_prefix")->asString() + "/cron_action/" + topic;
+                topic = config.get("global_topic_prefix")->asString() + "/automation_action/" + topic;
             }
             publish(topic, cfg->get("payload")->asString(), cfg->get("retain")->asBool());
         },
@@ -188,7 +190,7 @@ bool Mqtt::publish(const String &topic, const String &payload, bool retain)
     if (this->state.get("connection_state")->asInt() != (int)MqttConnectionState::CONNECTED)
         return false;
 
-    return esp_mqtt_client_publish(this->client, topic.c_str(), payload.c_str(), payload.length(), 0, retain) >= 0;
+    return esp_mqtt_client_enqueue(this->client, topic.c_str(), payload.c_str(), payload.length(), 0, retain, true) >= 0;
 }
 
 bool Mqtt::pushStateUpdate(size_t stateIdx, const String &payload, const String &path)
@@ -210,6 +212,12 @@ bool Mqtt::pushStateUpdate(size_t stateIdx, const String &payload, const String 
 bool Mqtt::pushRawStateUpdate(const String &payload, const String &path)
 {
     return this->publish_with_prefix(path, payload);
+}
+
+IAPIBackend::WantsStateUpdate Mqtt::wantsStateUpdate(size_t stateIdx) {
+    return this->state.get("connection_state")->asInt() == (int)MqttConnectionState::CONNECTED ?
+           IAPIBackend::WantsStateUpdate::AsString :
+           IAPIBackend::WantsStateUpdate::No;
 }
 
 void Mqtt::resubscribe() {
@@ -284,11 +292,20 @@ void Mqtt::onMqttDisconnect()
     }
 }
 
-#if MODULE_CRON_AVAILABLE()
+#if MODULE_AUTOMATION_AVAILABLE()
 static bool trigger_action(Config *cfg, void *data) {
     return mqtt.action_triggered(cfg, data);
 }
 #endif
+
+static bool filter_mqtt_log(const char *topic, size_t topic_len) {
+#if MODULE_AUTOMATION_AVAILABLE()
+    if (topic_len >= 12 && strncmp(topic, "automation_action/", 12) == 0)
+        return false;
+#endif
+
+    return true;
+}
 
 void Mqtt::onMqttMessage(char *topic, size_t topic_len, char *data, size_t data_len, bool retain)
 {
@@ -391,7 +408,7 @@ void Mqtt::onMqttMessage(char *topic, size_t topic_len, char *data, size_t data_
     // The spec says:
     // It MUST set the RETAIN flag to 0 when a PUBLISH Packet is sent to a Client
     // because it matches an established subscription regardless of how the flag was set in the message it received [MQTT-3.3.1-9].
-    if (!retain && memcmp(topic, "cron_action/", 12))
+    if (!retain && filter_mqtt_log(topic, topic_len))
         logger.printfln("MQTT: Received message on unknown topic '%.*s' (data_len=%u)", static_cast<int>(topic_len), topic, data_len);
 }
 
@@ -529,6 +546,7 @@ void Mqtt::setup()
     mqtt_cfg.username = config_in_use.get("broker_username")->asEphemeralCStr();
     mqtt_cfg.password = config_in_use.get("broker_password")->asEphemeralCStr();
     mqtt_cfg.buffer_size = MQTT_RECV_BUFFER_SIZE;
+    mqtt_cfg.out_buffer_size = MQTT_SEND_BUFFER_SIZE;
     mqtt_cfg.network_timeout_ms = 1000;
     mqtt_cfg.message_retransmit_timeout = 400;
 
@@ -547,9 +565,9 @@ void Mqtt::register_urls()
     api.addPersistentConfig("mqtt/config", &config, {"broker_password"});
     api.addState("mqtt/state", &state);
 
-#if MODULE_CRON_AVAILABLE()
-    if (cron.is_trigger_active(CronTriggerID::MQTT)) {
-        ConfigVec trigger_config = cron.get_configured_triggers(CronTriggerID::MQTT);
+#if MODULE_AUTOMATION_AVAILABLE()
+    if (automation.is_trigger_active(AutomationTriggerID::MQTT) && config.get("enable_mqtt")->asBool()) {
+        ConfigVec trigger_config = automation.get_configured_triggers(AutomationTriggerID::MQTT);
         std::vector<String> subscribed_topics;
         for (auto &conf: trigger_config) {
             bool already_subscribed = false;
@@ -561,18 +579,17 @@ void Mqtt::register_urls()
             if (!already_subscribed) {
                 String topic = conf.second->get("topic")->asString();
                 if (conf.second->get("use_prefix")->asBool()) {
-                    topic = config.get("global_topic_prefix")->asString() + "/cron_trigger/" + topic;
+                    topic = config.get("global_topic_prefix")->asString() + "/automation_trigger/" + topic;
                 }
-
                 subscribe(topic, [this, idx](const char *tpic, size_t tpic_len, char * data, size_t data_len) {
                     MqttMessage msg;
                     msg.topic = String(tpic).substring(0, tpic_len);
                     msg.payload = String(data).substring(0, data_len);
                     msg.retained = false;
-                    if (cron.trigger_action(CronTriggerID::MQTT, &msg, &trigger_action))
+                    if (automation.trigger_action(AutomationTriggerID::MQTT, &msg, &trigger_action))
                         return;
-                }, false);
-                subscribed_topics.push_back(topic);
+                }, !conf.second->get("retain")->asBool());
+                 subscribed_topics.push_back(topic);
             }
         }
     }
@@ -607,14 +624,23 @@ void Mqtt::register_events() {
     }
 }
 
-#if MODULE_CRON_AVAILABLE()
+#if MODULE_AUTOMATION_AVAILABLE()
 bool Mqtt::action_triggered(Config *config, void *data) {
     Config *cfg = (Config*)config->get();
     MqttMessage *msg = (MqttMessage *)data;
-    switch (config->getTag<CronTriggerID>())
+    const CoolString &payload = cfg->get("payload")->asString();
+
+    CoolString topic = cfg->get("topic")->asString();
+    if (cfg->get("use_prefix")->asBool()) {
+        topic = this->config.get("global_topic_prefix")->asString();
+        topic += "/automation_trigger/";
+        topic += cfg->get("topic")->asString();
+    }
+
+    switch (config->getTag<AutomationTriggerID>())
     {
-        case CronTriggerID::MQTT:
-        if (cfg->get("payload")->asString() == msg->payload)
+    case AutomationTriggerID::MQTT:
+        if (msg->topic == topic && (payload == msg->payload || payload.length() == 0))
             return true;
         break;
 

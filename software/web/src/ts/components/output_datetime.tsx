@@ -18,30 +18,17 @@
  */
 
 import { h, Context } from "preact";
-import { useContext, useState } from "preact/hooks";
+import { useContext } from "preact/hooks";
 import { JSXInternal } from "preact/src/jsx";
 
 import * as util from "../../ts/util";
 
 interface OutputDatetimeProps extends Omit<JSXInternal.HTMLAttributes<HTMLInputElement>, "value" | "class" | "id" | "type" | "onInput" | "disabled"> {
-    idContext?: Context<string>
-    date: Date
-    onClick?: () => void
-    buttonText?: string
-    disabled?: boolean
-}
-
-function toIsoString(date: Date) {
-    const pad = function(num: number) {
-        return (num < 10 ? '0' : '') + num;
-    };
-
-    return date.getFullYear() +
-        '-' + pad(date.getMonth() + 1) +
-        '-' + pad(date.getDate()) +
-        'T' + pad(date.getHours()) +
-        ':' + pad(date.getMinutes()) +
-        ':' + pad(date.getSeconds());
+    idContext?: Context<string>;
+    date: Date;
+    onClick?: () => void;
+    buttonText?: string;
+    disabled?: boolean;
 }
 
 export function OutputDatetime(props: OutputDatetimeProps) {
@@ -52,7 +39,7 @@ export function OutputDatetime(props: OutputDatetimeProps) {
                 type="datetime-local"
                 step={1}
                 disabled={true}
-                value={toIsoString(props.date)}
+                value={util.toIsoString(props.date)}
                 required
                 />
 

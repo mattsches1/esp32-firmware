@@ -170,13 +170,13 @@ export function uPlotTimelinePlugin(options: any) {
                     },
                     points: {
                         show: false,
-                    }
+                    },
                 },
                 scales: {
                     y: {
                         range: [0, 1],
-                    }
-                }
+                    },
+                },
             });
 
             uPlot.assign(opts.axes[1], {
@@ -220,6 +220,7 @@ export function uPlotTimelinePlugin(options: any) {
                     show: false,
                 },
                 side: 3,
+                gap: 15,
             });
 
             opts.series.forEach((s: uPlot.Series, i: number) => {
@@ -229,6 +230,6 @@ export function uPlotTimelinePlugin(options: any) {
                     });
                 }
             });
-        }
+        },
     };
 }

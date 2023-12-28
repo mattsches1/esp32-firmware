@@ -29,12 +29,18 @@
 
 extern NFC nfc;
 
-#define AUTHORIZED_TAG_LIST_LENGTH 16
+#if defined(BOARD_HAS_PSRAM)
+#define MAX_AUTHORIZED_TAGS 32
+#else
+#define MAX_AUTHORIZED_TAGS 16
+#endif
 
 #define DETECTION_THRESHOLD_MS 2000
 
 void NFC::pre_setup()
 {
+    this->DeviceModule::pre_setup();
+
     seen_tags = Config::Array(
         {},
         new Config{Config::Object({
@@ -54,11 +60,13 @@ void NFC::pre_setup()
                 {"tag_type", Config::Uint(0, 0, 4)},
                 {"tag_id", Config::Str("", 0, NFC_TAG_ID_STRING_LENGTH)}
             })},
-            0, AUTHORIZED_TAG_LIST_LENGTH,
+            0, MAX_AUTHORIZED_TAGS,
             Config::type_id<Config::ConfObject>())
         }
-    }), [this](Config &cfg) -> String {
+    }), [this](Config &cfg, ConfigSource source) -> String {
         Config *tags = (Config *)cfg.get("authorized_tags");
+
+        // Check tag_id format
         for(int tag = 0; tag < tags->count(); ++tag) {
             String id_copy = tags->get(tag)->get("tag_id")->asString();
             id_copy.toUpperCase();
@@ -74,13 +82,40 @@ void NFC::pre_setup()
             }
         }
 
+        // Add more validation above this block!
+        if (source == ConfigSource::File) {
+            // The validation below was missing in old firmwares.
+            // To make sure a config that is stored in the ESP's flash
+            // can be loaded on start-up, fix the mappings instead of
+            // returning an error.
+            bool update_file = false;
+            for(int tag = 0; tag < tags->count(); ++tag) {
+                uint8_t user_id = tags->get(tag)->get("user_id")->asUint();
+                if (!users.is_user_configured(user_id)) {
+                    logger.printfln("Fixing NFC tag %s referencing a deleted user.", tags->get(tag)->get("tag_id")->asEphemeralCStr());
+                    tags->get(tag)->get("user_id")->updateUint(0);
+                    update_file = true;
+                }
+            }
+            if (update_file)
+                API::writeConfig("nfc/config", &cfg);
+
+        } else {
+            // Check user_id_mappings
+            for(int tag = 0; tag < tags->count(); ++tag) {
+                uint8_t user_id = tags->get(tag)->get("user_id")->asUint();
+                if (!users.is_user_configured(user_id))
+                    return String("Unknown user with ID ") + (int)user_id + ".";
+            }
+        }
+
         return "";
     });
 
     inject_tag = ConfigRoot(Config::Object({
         {"tag_type", Config::Uint(0, 0, 4)},
         {"tag_id", Config::Str("", 0, NFC_TAG_ID_STRING_LENGTH)}
-    }), [this](Config &cfg) -> String {
+    }), [this](Config &cfg, ConfigSource source) -> String {
         String id_copy = cfg.get("tag_id")->asString();
         id_copy.toUpperCase();
         cfg.get("tag_id")->updateString(id_copy);
@@ -97,17 +132,17 @@ void NFC::pre_setup()
         return "";
     });
 
-#if MODULE_CRON_AVAILABLE()
-    cron.register_trigger(
-        CronTriggerID::NFC,
+#if MODULE_AUTOMATION_AVAILABLE()
+    automation.register_trigger(
+        AutomationTriggerID::NFC,
         Config::Object({
             {"tag_type", Config::Uint(0, 0, 4)},
             {"tag_id", Config::Str("", 0, NFC_TAG_ID_STRING_LENGTH)}
         })
     );
 
-    cron.register_action(
-        CronActionID::NFCInjectTag,
+    automation.register_action(
+        AutomationActionID::NFCInjectTag,
         Config::Object({
             {"tag_type", Config::Uint(0, 0, 4)},
             {"tag_id", Config::Str("", 0, NFC_TAG_ID_STRING_LENGTH)},
@@ -124,6 +159,11 @@ void NFC::pre_setup()
             last_tag_injection -= 1;
     });
 #endif
+
+    auth_info = Config::Object({
+        {"tag_type", Config::Uint8(0)},
+        {"tag_id", Config::Str("", 0, 30)}
+    });
 }
 
 void NFC::setup_nfc()
@@ -171,20 +211,30 @@ void NFC::check_nfc_state()
 
 uint8_t NFC::get_user_id(tag_info_t *tag, uint8_t *tag_idx)
 {
-    Config *auth_tags = (Config *)config_in_use.get("authorized_tags");
+    for (uint8_t i = 0; i < auth_tag_count; ++i) {
+        const auto &auth_tag = auth_tags[i];
 
-    for (uint8_t auth_tag_idx = 0; auth_tag_idx < auth_tags->count(); ++auth_tag_idx) {
-        Config *auth_tag = (Config *)auth_tags->get(auth_tag_idx);
-
-        if (auth_tag->get("tag_type")->asUint() == tag->tag_type && auth_tag->get("tag_id")->asString() == tag->tag_id) {
-            *tag_idx = auth_tag_idx;
-            return auth_tag->get("user_id")->asUint();
+        if (auth_tag.tag_type == tag->tag_type
+         && strncmp(auth_tag.tag_id, tag->tag_id, sizeof(auth_tag.tag_id)) == 0) {
+            *tag_idx = i;
+            return auth_tag.user_id;
         }
     }
     return 0;
 }
 
-#if MODULE_CRON_AVAILABLE()
+void NFC::remove_user(uint8_t user_id)
+{
+    Config *tags = (Config *) config.get("authorized_tags");
+
+    for(int i = 0; i < tags->count(); ++i) {
+        if(tags->get(i)->get("user_id")->asUint() == user_id)
+            tags->get(i)->get("user_id")->updateUint(0);
+    }
+    API::writeConfig("nfc/config", &config);
+}
+
+#if MODULE_AUTOMATION_AVAILABLE()
 static bool trigger_action(Config *cfg, void *data) {
     return nfc.action_triggered(cfg, data);
 }
@@ -200,9 +250,11 @@ void NFC::tag_seen(tag_info_t *tag, bool injected)
 #if MODULE_EVSE_LED_AVAILABLE()
         evse_led.set_module(EvseLed::Blink::Ack, 2000);
 #endif
-        users.trigger_charge_action(user_id, injected ? USERS_AUTH_TYPE_NFC_INJECTION : USERS_AUTH_TYPE_NFC, Config::Object({
-                {"tag_type", Config::Uint8(tag->tag_type)},
-                {"tag_id", Config::Str(tag->tag_id, 0, 30)}}).value,
+
+        auth_info.get("tag_type")->updateUint(tag->tag_type);
+        auth_info.get("tag_id")->updateString(tag->tag_id);
+
+        users.trigger_charge_action(user_id, injected ? USERS_AUTH_TYPE_NFC_INJECTION : USERS_AUTH_TYPE_NFC, auth_info.value,
                 injected ? tag_injection_action : TRIGGER_CHARGE_ANY);
 #if MODULE_OCPP_AVAILABLE()
         ocpp.on_tag_seen(tag->tag_id);
@@ -216,8 +268,8 @@ void NFC::tag_seen(tag_info_t *tag, bool injected)
 #endif
     }
 
-#if MODULE_CRON_AVAILABLE()
-    cron.trigger_action(CronTriggerID::NFC, tag, &trigger_action);
+#if MODULE_AUTOMATION_AVAILABLE()
+    automation.trigger_action(AutomationTriggerID::NFC, tag, &trigger_action);
 #endif
 }
 
@@ -325,6 +377,24 @@ void NFC::update_seen_tags()
     new_tags = tmp;
 }
 
+void NFC::setup_auth_tags() {
+    const auto *auth_tags_cfg = (Config *) config.get("authorized_tags");
+    auth_tag_count = auth_tags_cfg->count();
+    if (auth_tag_count == 0)
+        return;
+
+    auth_tags = heap_alloc_array<auth_tag_t>(auth_tag_count);
+    memset(auth_tags.get(), 0, sizeof(auth_tag_t) * auth_tag_count);
+
+    for(int i = 0; i < auth_tag_count; ++i) {
+        const auto tag = auth_tags_cfg->get(i);
+
+        auth_tags[i].tag_type = tag->get("tag_type")->asUint();
+        auth_tags[i].user_id = tag->get("user_id")->asUint();
+        tag->get("tag_id")->asString().toCharArray(auth_tags[i].tag_id, sizeof(auth_tags[i].tag_id));
+    }
+}
+
 void NFC::setup()
 {
     setup_nfc();
@@ -332,7 +402,7 @@ void NFC::setup()
         return;
 
     api.restorePersistentConfig("nfc/config", &config);
-    config_in_use = config;
+    setup_auth_tags();
 
     for (int i = 0; i < TAG_LIST_LENGTH; ++i) {
         seen_tags.add();
@@ -390,12 +460,12 @@ void NFC::loop()
     this->DeviceModule::loop();
 }
 
-#if MODULE_CRON_AVAILABLE()
+#if MODULE_AUTOMATION_AVAILABLE()
 bool NFC::action_triggered(Config *config, void *data) {
     auto cfg = config->get();
     tag_info_t *tag = (tag_info_t *)data;
-    switch (config->getTag<CronTriggerID>()) {
-        case CronTriggerID::NFC:
+    switch (config->getTag<AutomationTriggerID>()) {
+        case AutomationTriggerID::NFC:
         if (cfg->get("tag_type")->asUint() == tag->tag_type && cfg->get("tag_id")->asString() == tag->tag_id) {
             return true;
         }

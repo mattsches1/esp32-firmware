@@ -49,7 +49,27 @@ let x = {
             "confirm_title": "Disable WiFi Access Point?",
             "confirm_content": null,
             "confirm_abort": "Abort",
-            "confirm_confirm": "Disable"
+            "confirm_confirm": "Disable",
+
+            "wpa_personal": "WPA2/3 Personal",
+            "wpa_auth_type": "Authentication",
+            "eap_tls": "WPA2 Enterprise - EAP-TLS",
+            "eap_peap_ttls": "WPA2 Enterprise - EAP-PEAP/TTLS",
+            "eap_identity": "Identity",
+            "eap_username": "Username",
+            "eap_password": "Password",
+            "eap_ca_cert": "CA certificate",
+            "eap_client_cert": "Client certificate",
+            "eap_client_key": "Client key",
+            "eap_cert_placeholder": "No certificate",
+            "eap_key_placeholder": "No key",
+            "optional_eap_cert_muted": /*FFN*/ () => {
+                return <><a href="#certs">Add certificate</a>; optional</>
+            } /*NF*/,
+            "eap_cert_muted": /*FFN*/ () => {
+                return <a href="#certs">Add certificate</a>
+            } /*NF*/,
+            "optional": "optional"
         },
         "script": {
             "scan_wifi_init_failed": "Search for networks failed. Failed to start scan.",

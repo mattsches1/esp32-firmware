@@ -33,9 +33,9 @@ void EvseLed::pre_setup()
         {"duration", Config::Uint16(0)}
     });
 
-#if MODULE_CRON_AVAILABLE()
-    cron.register_action(
-        CronActionID::LED,
+#if MODULE_AUTOMATION_AVAILABLE()
+    automation.register_action(
+        AutomationActionID::LED,
         Config::Object({
             {"state", Config::Int(-1)},
             {"duration", Config::Uint16(0)}
@@ -128,7 +128,7 @@ bool EvseLed::set(Blink state, uint16_t duration_ms, bool via_api)
 
     uint8_t error_code = 1;
 
-    evse_common.set_indicator_led(state, duration_ms, &error_code);
+    evse_common.set_indicator_led(state, duration_ms, 0, 0, 0, &error_code); //Don't set colors for now, let the EVSE choose.
 
     if (error_code == 0) {
         current_state = state;

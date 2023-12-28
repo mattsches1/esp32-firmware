@@ -125,13 +125,13 @@ Entity(True, Component.SENSOR, Feature.EVSE, "chargerstate", "evse/state", "Fahr
      "icon": "mdi:ev-plug-type2"},
     {}),
 
-Entity(True, Component.NUMBER, Feature.EVSE, "globalcurrent", "evse/external_current", "Konfigurierter Ladestrom", "Configured charging current", "evse/external_enabled", "{\\\\\\\"enabled\\\\\\\":true}", "{\\\\\\\"enabled\\\\\\\":false}",
+Entity(True, Component.NUMBER, Feature.EVSE, "globalcurrent", "evse/external_current", "Ladestromlimit", "charging current limit", "evse/external_enabled", "{\\\\\\\"enabled\\\\\\\":true}", "{\\\\\\\"enabled\\\\\\\":false}",
     {"value_template":"{{value_json.current}}",
      "unit_of_measurement":"mA",
-     "min": 6000,
+     "min": 0,
      "max": 32000,
      "step": 1000,
-     "mode": "box",
+     "mode": "auto",
      "icon": "mdi:gauge"},
     {}),
 

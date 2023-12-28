@@ -18,13 +18,10 @@
  */
 
 import $ from "../../ts/jq";
-
 import * as util from "../../ts/util";
 import * as API from "../../ts/api";
-
 import { h, render, Fragment, Component } from "preact";
 import { translate_unchecked, __ } from "../../ts/translation";
-
 import { ConfigComponent } from "../../ts/components/config_component";
 import { ConfigForm } from "../../ts/components/config_form";
 import { FormRow } from "../../ts/components/form_row";
@@ -41,8 +38,6 @@ import { Table } from "../../ts/components/table";
 type ChargeManagerConfig = API.getType["charge_manager/config"];
 type ChargerConfig = ChargeManagerConfig["chargers"][0];
 type ScanCharger = Exclude<API.getType['charge_manager/scan_result'], string>[0];
-
-const MAX_CONTROLLED_CHARGERS = 10;
 
 interface ChargeManagerState {
     addCharger: ChargerConfig
@@ -124,8 +119,7 @@ export class ChargeManager extends ConfigComponent<'charge_manager/config', {}, 
     override async sendSave(t: "charge_manager/config", cfg: ChargeManagerConfig) {
         const modal = util.async_modal_ref.current;
         let illegal_chargers = "";
-        for (let i = 0; i < cfg.chargers.length; i++)
-        {
+        for (let i = 0; i < cfg.chargers.length; i++) {
             if (this.isMultiOrBroadcastIp(cfg.chargers[i].host))
                 illegal_chargers += cfg.chargers[i].name + ": " + cfg.chargers[i].host + "<br>";
         }
@@ -169,8 +163,7 @@ export class ChargeManager extends ConfigComponent<'charge_manager/config', {}, 
         this.setState({chargers: c})
     }
 
-    async scan_services()
-    {
+    async scan_services() {
         try {
             await API.call('charge_manager/scan', {}, __("charge_manager.script.scan_failed"))
         } catch {
@@ -187,8 +180,7 @@ export class ChargeManager extends ConfigComponent<'charge_manager/config', {}, 
         return part4 + "." + part3 + "." + part2 + "." + part1;
     }
 
-    isMultiOrBroadcastIp(v: string): boolean
-    {
+    isMultiOrBroadcastIp(v: string): boolean {
         const ip = util.parseIP(v);
         if (isNaN(ip))
             return false;
@@ -221,12 +213,13 @@ export class ChargeManager extends ConfigComponent<'charge_manager/config', {}, 
         const ap_broadcast =  (~ap_subnet) | ap_network;
         if (API.get("wifi/ap_config").subnet != "255.255.255.254" && (v == this.intToIP(ap_network) || v == this.intToIP(ap_broadcast)))
             return true;
-
     }
 
     render(props: {}, state: ChargeManagerConfig & ChargeManagerState) {
         if (!util.render_allowed())
             return <></>
+
+        const MAX_CONTROLLED_CHARGERS = API.hasModule("esp32_ethernet_brick") ? 32 : 10;
 
         let energyManagerMode = API.hasModule("energy_manager") && !(API.hasModule("evse_v2") || API.hasModule("evse"));
         let warpUltimateMode  = API.hasModule("energy_manager") &&  (API.hasModule("evse_v2") || API.hasModule("evse"));
@@ -406,26 +399,25 @@ export class ChargeManager extends ConfigComponent<'charge_manager/config', {}, 
                                 ],
                                 editTitle: __("charge_manager.content.edit_charger_title"),
                                 onEditShow: async () => this.setState({editCharger: {name: charger.name.trim(), host: charger.host.trim()}}),
-                                onEditGetRows: () => [
-                                    {
-                                        name: __("charge_manager.content.edit_charger_name"),
-                                        value: <InputText value={state.editCharger.name}
-                                                        onValue={(v) => this.setState({editCharger: {...state.editCharger, name: v}})}
-                                                        maxLength={32}
-                                                        required/>
-                                    },
-                                    {
-                                        name: __("charge_manager.content.edit_charger_host"),
-                                        value: <InputText value={state.editCharger.host}
-                                                        onValue={(v) => this.setState({editCharger: {...state.editCharger, host: v}})}
-                                                        maxLength={64}
-                                                        pattern="^[a-zA-Z0-9\-\.]+$"
-                                                        required
-                                                        disabled={!energyManagerMode && (charger.host == '127.0.0.1' || charger.host == 'localhost')}
-                                                        class={check_host(state.editCharger.host, i) != undefined ? "is-invalid" : ""}
-                                                        invalidFeedback={check_host(state.editCharger.host, i)}/>
-                                    }
-                                ],
+                                onEditGetChildren: () => [<>
+                                    <FormRow label={__("charge_manager.content.edit_charger_name")}>
+                                        <InputText value={state.editCharger.name}
+                                            onValue={(v) => this.setState({editCharger: {...state.editCharger, name: v}})}
+                                            maxLength={32}
+                                            required
+                                        />
+                                    </FormRow>
+                                    <FormRow label={__("charge_manager.content.edit_charger_host")}>
+                                        <InputText value={state.editCharger.host}
+                                            onValue={(v) => this.setState({editCharger: {...state.editCharger, host: v}})}
+                                            maxLength={64}
+                                            pattern="^[a-zA-Z0-9\-\.]+$"
+                                            required
+                                            disabled={!energyManagerMode && (charger.host == '127.0.0.1' || charger.host == 'localhost')}
+                                            class={check_host(state.editCharger.host, i) != undefined ? "is-invalid" : ""}
+                                            invalidFeedback={check_host(state.editCharger.host, i)}/>
+                                    </FormRow>
+                                </>],
                                 onEditSubmit: async () => {
                                     this.setState({chargers: state.chargers.map((charger, k) => i === k ? state.editCharger : charger)});
                                     this.setDirty(true);
@@ -444,52 +436,47 @@ export class ChargeManager extends ConfigComponent<'charge_manager/config', {}, 
                             this.scan_services();
                             this.intervalID = window.setInterval(this.scan_services, 3000);
                         }}
-                        onAddGetRows={() => [
-                            {
-                                name: __("charge_manager.content.add_charger_name"),
-                                value: <InputText value={state.addCharger.name}
-                                                onValue={(v) => this.setState({addCharger: {...state.addCharger, name: v}})}
-                                                maxLength={32}
-                                                required/>
-                            },
-                            {
-                                name: __("charge_manager.content.add_charger_host"),
-                                value: <InputText value={state.addCharger.host}
-                                                onValue={(v) => this.setState({addCharger: {...state.addCharger, host: v}})}
-                                                maxLength={64}
-                                                pattern="^[a-zA-Z0-9\-\.]+$"
-                                                required
-                                                class={check_host(state.addCharger.host, -1) != undefined ? "is-invalid" : ""}
-                                                invalidFeedback={check_host(state.addCharger.host, -1)}/>
-                            },
-                            {
-                                name: __("charge_manager.content.add_charger_found"),
-                                value:
-                                    <ListGroup>
-                                    {
-                                        state.scanResult.filter(c => !state.chargers.some(c1 => c1.host == c.hostname + ".local" || c1.host == c.ip))
-                                            .map(c => (
-                                                <ListGroupItem key={c.hostname}
-                                                            action type="button"
-                                                            onClick={c.error != 0 ? undefined : () => {
-                                                                this.setState({addCharger: {host: c.hostname + ".local", name: c.display_name}})
-                                                            }}
-                                                            style={c.error == 0 ? "" : "cursor: default; background-color: #eeeeee !important;"}>
-                                                    <div class="d-flex w-100 justify-content-between">
-                                                        <span class="h5 text-left">{c.display_name}</span>
-                                                        {c.error == 0 ? null :
-                                                            <span class="text-right" style="color:red">{translate_unchecked(`charge_manager.content.scan_error_${c.error}`)}</span>
-                                                        }
-                                                    </div>
-                                                    <div class="d-flex w-100 justify-content-between">
-                                                        <a target="_blank" rel="noopener noreferrer" href={"http://" + c.hostname + ".local"}>{c.hostname + ".local"}</a>
-                                                        <a target="_blank" rel="noopener noreferrer" href={"http://" + c.ip}>{c.ip}</a>
-                                                    </div>
-                                                </ListGroupItem>))
-                                    }
-                                    </ListGroup>
-                            }
-                        ]}
+                        onAddGetChildren={() => [<>
+                            <FormRow label={__("charge_manager.content.add_charger_name")}>
+                                <InputText value={state.addCharger.name}
+                                    onValue={(v) => this.setState({addCharger: {...state.addCharger, name: v}})}
+                                    maxLength={32}
+                                    required
+                                />
+                            </FormRow>
+                            <FormRow label={__("charge_manager.content.add_charger_host")}>
+                                <InputText value={state.addCharger.host}
+                                    onValue={(v) => this.setState({addCharger: {...state.addCharger, host: v}})}
+                                    maxLength={64}
+                                    pattern="^[a-zA-Z0-9\-\.]+$"
+                                    required
+                                    class={check_host(state.addCharger.host, -1) != undefined ? "is-invalid" : ""}
+                                    invalidFeedback={check_host(state.addCharger.host, -1)}/>
+                            </FormRow>
+                            <FormRow label={__("charge_manager.content.add_charger_found")}>
+                                <ListGroup>{
+                                    state.scanResult.filter(c => !state.chargers.some(c1 => c1.host == c.hostname + ".local" || c1.host == c.ip))
+                                        .map(c => (
+                                            <ListGroupItem key={c.hostname}
+                                                        action type="button"
+                                                        onClick={c.error != 0 ? undefined : () => {
+                                                            this.setState({addCharger: {host: c.hostname + ".local", name: c.display_name}})
+                                                        }}
+                                                        style={c.error == 0 ? "" : "cursor: default; background-color: #eeeeee !important;"}>
+                                                <div class="d-flex w-100 justify-content-between">
+                                                    <span class="h5 text-left">{c.display_name}</span>
+                                                    {c.error == 0 ? null :
+                                                        <span class="text-right" style="color:red">{translate_unchecked(`charge_manager.content.scan_error_${c.error}`)}</span>
+                                                    }
+                                                </div>
+                                                <div class="d-flex w-100 justify-content-between">
+                                                    <a target="_blank" rel="noopener noreferrer" href={"http://" + c.hostname + ".local"}>{c.hostname + ".local"}</a>
+                                                    <a target="_blank" rel="noopener noreferrer" href={"http://" + c.ip}>{c.ip}</a>
+                                                </div>
+                                            </ListGroupItem>))
+                                }</ListGroup>
+                            </FormRow>
+                        </>]}
                         onAddSubmit={async () => {
                             this.setState({chargers: state.chargers.concat({name: state.addCharger.name.trim(), host: state.addCharger.host.trim()})});
                             this.setDirty(true);
@@ -534,9 +521,7 @@ export class ChargeManager extends ConfigComponent<'charge_manager/config', {}, 
                                 </Collapse>
 
                                 <Collapse in={!state.showExpert}>
-                                    <div>
-                                        {available_current}
-                                    </div>
+                                    <div>{available_current}</div>
                                 </Collapse>
 
                                 {minimum_current}
@@ -550,7 +535,7 @@ export class ChargeManager extends ConfigComponent<'charge_manager/config', {}, 
     }
 }
 
-render(<ChargeManager/>, $('#charge_manager')[0]);
+render(<ChargeManager />, $("#charge_manager")[0]);
 
 interface ChargeManagerStatusState {
     state: API.getType['charge_manager/state']

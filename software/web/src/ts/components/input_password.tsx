@@ -40,14 +40,14 @@ interface InputPasswordProps extends Omit<JSXInternal.HTMLAttributes<HTMLInputEl
 }
 
 interface InputPasswordState {
-    show: boolean
-    clearSelected: boolean
+    show: boolean;
+    clearSelected: boolean;
 }
 
 export class InputPassword extends Component<InputPasswordProps, InputPasswordState> {
     constructor() {
         super();
-        this.state = {show: false, clearSelected: false}
+        this.state = {show: false, clearSelected: false};
     }
 
     toggleClear() {
@@ -70,11 +70,11 @@ export class InputPassword extends Component<InputPasswordProps, InputPasswordSt
         else if ("required" in props && !props.value)
             invalidFeedback = <div class="invalid-feedback">{__("component.input_text.required")}</div>;
         else if ("minLength" in props && !("maxLength" in props))
-            invalidFeedback = <div class="invalid-feedback">{__("component.input_text.min_only_prefix") + props.minLength.toString() + __("component.input_text.min_only_suffix")}</div>;
+            invalidFeedback = <div class="invalid-feedback">{__("component.input_text.min_only")(props.minLength.toString())}</div>;
         else if (!("minLength" in props) && "maxLength" in props)
-            invalidFeedback = <div class="invalid-feedback">{__("component.input_text.max_only_prefix") + props.maxLength.toString() + __("component.input_text.max_only_suffix")}</div>;
+            invalidFeedback = <div class="invalid-feedback">{__("component.input_text.max_only")(props.maxLength.toString())}</div>;
         else if ("minLength" in props && "maxLength" in props)
-            invalidFeedback = <div class="invalid-feedback">{__("component.input_text.min_max_prefix") + props.minLength.toString() + __("component.input_text.min_max_infix") + props.maxLength.toString() + __("component.input_text.min_max_suffix")}</div>;
+            invalidFeedback = <div class="invalid-feedback">{__("component.input_text.min_max")(props.minLength.toString(), props.maxLength.toString())}</div>;
 
         const toBeCleared = props.value === "" && (props.allowAPIClear || state.clearSelected);
 
@@ -99,13 +99,14 @@ export class InputPassword extends Component<InputPasswordProps, InputPasswordSt
                             }}
                         }
                         disabled={toBeCleared}
-                        {...props} />
+                        {...props}
+                    />
                     <div class="input-group-append">
                         { props.showAlways ? null :
                             <Button variant="primary" className={"px-1" + (props.hideClear ? " rounded-right" : "")} style="line-height: 20px;" onClick={() => this.setState({show: !state.show})} disabled={toBeCleared}>{state.show ? <EyeOff/> : <Eye/>}</Button>
                         }
                         { props.hideClear ? null :
-                            <div class="input-group-text custom-control custom-switch rounded-right" style="padding-left: 2.5rem;">
+                            <div class="input-group-text custom-control custom-switch rounded-right" style="padding-left: 2.75rem; padding-right: 0.5rem;">
                                 <input id={id+"-clear"} type="checkbox" class="custom-control-input" aria-label="Clear password" onClick={() => this.toggleClear()} checked={toBeCleared}/>
                                 <label class="custom-control-label" for={id+"-clear"} style="line-height: 20px;">{props.clearSymbol ?? <Trash2/>}</label>
                             </div>
@@ -113,7 +114,7 @@ export class InputPassword extends Component<InputPasswordProps, InputPasswordSt
                     </div>
                     {invalidFeedback}
                 </div>
-
+                <div class="mt-2" hidden={!util.capsLockActive()}>{__("component.input_password.capslock_enabled")}</div>
             </>
         );
     }

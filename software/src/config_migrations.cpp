@@ -38,7 +38,26 @@ struct ConfigMigration {
     void (*const fn)(void);
 };
 
-ATTRIBUTE_UNUSED
+[[gnu::unused]]
+static bool rename_config_file(const char *config, const char *new_name) {
+    String s = config;
+    s.replace('/', '_');
+    String filename = "/migration/" + s;
+
+    s = new_name;
+    s.replace('/', '_');
+    String target_filename = "/migration/" + s;
+
+    if (!LittleFS.exists(filename)) {
+        logger.printfln("Skipping migration of %s: File %s not found", config, filename.c_str());
+        return false;
+    }
+
+    LittleFS.rename(filename, target_filename);
+    return true;
+}
+
+[[gnu::unused]]
 static bool read_config_file(const char *config, JsonDocument &json)
 {
     String s = config;
@@ -64,7 +83,7 @@ static bool read_config_file(const char *config, JsonDocument &json)
     return true;
 }
 
-ATTRIBUTE_UNUSED
+[[gnu::unused]]
 static void write_config_file(const char *config, JsonDocument &json)
 {
     String s = config;
@@ -76,7 +95,7 @@ static void write_config_file(const char *config, JsonDocument &json)
     file.close();
 }
 
-ATTRIBUTE_UNUSED
+[[gnu::unused]]
 static void delete_config_file(const char *config)
 {
     String s = config;
@@ -86,7 +105,7 @@ static void delete_config_file(const char *config)
     LittleFS.remove(filename);
 }
 
-ATTRIBUTE_UNUSED
+[[gnu::unused]]
 static void migrate_charge_manager_minimum_current()
 {
     DynamicJsonDocument json{16384};
@@ -325,6 +344,31 @@ static const ConfigMigration migrations[] = {
             migrate_charge_manager_minimum_current();
         }
     },
+    {
+        2, 2, 0,
+        // 2.2.0 changes
+        // - Add a marker file to continue using EnergyImExSum until the next factory reset or deletion of tracked charges.
+        // - Move meter/sdm630_reset to meters/0/sdm630_reset, track total, import and export value on reset
+        // - Move meter/last_reset to meters/0/last_reset
+        [](){
+            if (LittleFS.exists("/charge-records")) {
+                File f = LittleFS.open("/charge-records/use_imexsum", "w");
+                f.write((uint8_t)'T');
+            }
+
+            DynamicJsonDocument json{1024};
+            DynamicJsonDocument json2{1024};
+            if (read_config_file("meter/sdm630_reset", json)) {
+                float energy_total = json.as<float>();
+                json2["energy_total"] = energy_total;
+                json2["energy_import"] = 0.0f;
+                json2["energy_export"] = 0.0f;
+                write_config_file("meters/0/sdm630_reset", json2);
+            }
+
+            rename_config_file("meter/last_reset", "meters/0/last_reset");
+        }
+    }
 #endif
 
 #if defined(BUILD_NAME_ENERGY_MANAGER)
@@ -336,6 +380,299 @@ static const ConfigMigration migrations[] = {
             migrate_charge_manager_minimum_current();
         }
     },
+    {
+        2, 0, 0,
+        // 2.0.0 changes
+        // - Migrate energy manager rules to automation.
+        // - Migrate some settings from Energy Manager config to Power Manager config.
+        // - Migrate meter config to new meters framework.
+        [] () {
+            // - Migrate energy manager rules to automation.
+            {
+                DynamicJsonDocument json{16384};
+                DynamicJsonDocument tasks{16384};
+
+                if (read_config_file("energy_manager/config", json)) {
+                    auto config = json.as<JsonObject>();
+
+                    // It seems like there is an error in the != operator overload for ints in arduino json which causes statements that should return false to return true.
+                    if (config["relay_config"].as<int>() == 1) {
+                        int when = config["relay_rule_when"];
+                        DynamicJsonDocument task{16384};
+                        auto trigger = task.createNestedArray("trigger");
+                        trigger.add(0);
+                        auto trigger_config = trigger.createNestedObject();
+                        switch (when) {
+                            case 0:
+                                trigger[0] = 12;
+                                trigger_config["state"] = config["relay_rule_is"].as<int>() == 1 ? false : true;
+                                break;
+
+                            case 1:
+                                trigger[0] = 13;
+                                trigger_config["state"] = config["relay_rule_is"].as<int>() == 1 ? false : true;
+                                break;
+
+                            case 2:
+                                trigger[0] = 14;
+                                trigger_config["phase"] = config["relay_rule_is"].as<int>() == 2 ? 1 : 3;
+                                break;
+
+                            case 3:
+                                trigger[0] = 15;
+                                trigger_config["contactor_okay"] = config["relay_rule_is"].as<int>() == 5 ? true : false;
+                                break;
+
+                            case 4:
+                                trigger[0] = 16;
+                                trigger_config["power_available"] = config["relay_rule_is"].as<int>() == 6 ? true : false;
+                                break;
+
+                            case 5:
+                                trigger[0] = 17;;
+                                trigger_config["drawing_power"] = config["relay_rule_is"].as<int>() == 8 ? true : false;
+                        }
+                        auto action = task.createNestedArray("action");
+                        action.add(13);
+                        auto action_config = action.createNestedObject();
+                        action_config["state"] = true;
+                        tasks.add(task);
+                    }
+
+                    if (config["input3_rule_then"].as<int>() != 0) {
+                        DynamicJsonDocument task{16384};
+                        auto trigger = task.createNestedArray("trigger");
+                        trigger.add(12);
+                        auto trigger_config = trigger.createNestedObject();
+                        trigger_config["state"] = config["input3_rule_is"].as<int>() == 0 ? true : false;
+                        auto action = task.createNestedArray("action");
+                        action.add(0);
+                        auto action_config = action.createNestedObject();
+
+                        DynamicJsonDocument reset_task{16384};
+                        auto reset_trigger = reset_task.createNestedArray("trigger");
+                        reset_trigger.add(12);
+                        auto reset_trigger_config = reset_trigger.createNestedObject();
+                        reset_trigger_config["state"] = config["input3_rule_is"].as<int>() == 0 ? false : true;
+                        auto reset_action = reset_task.createNestedArray("action");
+                        reset_action.add(0);
+                        auto reset_action_config = reset_action.createNestedObject();
+
+                        bool ignore_high = false;
+                        bool ignore_low = false;
+                        switch (config["input3_rule_then"].as<int>()) {
+                            case 2:
+                                action[0] = 15;
+                                action_config["slot"] = 0;
+                                action_config["block"] = true;
+                                reset_action[0] = 15;
+                                reset_action_config["slot"] = 0;
+                                reset_action_config["block"] = false;
+                                break;
+
+                            case 3:
+                                action[0] = 14;
+                                action_config["current"] = config["input3_rule_then_limit"];
+                                reset_action[0] = 14;
+                                reset_action_config["current"] = -1;
+                                break;
+
+                            case 4:
+                            {
+                                int on_high = config["input3_rule_then_on_high"];
+                                if (on_high == 255) {
+                                    ignore_high = true;
+                                } else {
+                                    action[0] = 12;
+                                    action_config["mode"] = on_high;
+                                    trigger_config["state"] = true;
+                                }
+                                int on_low = config["input3_rule_then_on_low"];
+                                if (on_low == 255) {
+                                    ignore_low = true;
+                                } else {
+                                    reset_action[0] = 12;
+                                    reset_action_config["mode"] = on_low;
+                                    reset_trigger_config["state"] = false;
+                                }
+                            }
+                                break;
+                        }
+                        if (!ignore_high) {
+                            tasks.add(task);
+                        }
+                        if (!ignore_low) {
+                            tasks.add(reset_task);
+                        }
+                    }
+
+                    if (config["input4_rule_then"].as<int>() != 0 && config["input4_rule_then"].as<int>() != 1) {
+                        DynamicJsonDocument task{16384};
+                        auto trigger = task.createNestedArray("trigger");
+                        trigger.add(13);
+                        auto trigger_config = trigger.createNestedObject();
+                        trigger_config["state"] = config["input4_rule_is"].as<int>() == 0 ? true : false;
+                        auto action = task.createNestedArray("action");
+                        action.add(0);
+                        auto action_config = action.createNestedObject();
+
+                        DynamicJsonDocument reset_task{16384};
+                        auto reset_trigger = reset_task.createNestedArray("trigger");
+                        reset_trigger.add(13);
+                        auto reset_trigger_config = reset_trigger.createNestedObject();
+                        reset_trigger_config["state"] = config["input4_rule_is"].as<int>() == 0 ? false : true;
+                        auto reset_action = reset_task.createNestedArray("action");
+                        reset_action.add(0);
+                        auto reset_action_config = reset_action.createNestedObject();
+
+                        bool ignore_high = false;
+                        bool ignore_low = false;
+                        switch (config["input4_rule_then"].as<int>()) {
+                            case 2:
+                                action[0] = 15;
+                                action_config["slot"] = 0;
+                                action_config["block"] = true;
+                                reset_action[0] = 15;
+                                reset_action_config["slot"] = 0;
+                                reset_action_config["block"] = false;
+                                break;
+
+                            case 3:
+                                action[0] = 14;
+                                action_config["current"] = config["input4_rule_then_limit"];
+                                reset_action[0] = 14;
+                                reset_action_config["current"] = -1;
+                                break;
+
+                            case 4:
+                            {
+                                int on_high = config["input4_rule_then_on_high"];
+                                if (on_high == 255) {
+                                    ignore_high = true;
+                                } else {
+                                    action[0] = 12;
+                                    action_config["mode"] = on_high;
+                                    trigger_config["state"] = true;
+                                }
+                                int on_low = config["input4_rule_then_on_low"];
+                                if (on_low == 255) {
+                                    ignore_low = true;
+                                } else {
+                                    reset_action[0] = 12;
+                                    reset_action_config["mode"] = on_low;
+                                    reset_trigger_config["state"] = false;
+                                }
+                            }
+                                break;
+                        }
+                        if (!ignore_high) {
+                            tasks.add(task);
+                        }
+                        if (!ignore_low) {
+                            tasks.add(reset_task);
+                        }
+                    }
+
+                    if (config["auto_reset_mode"].as<bool>() == true) {
+                        DynamicJsonDocument task{16384};
+                        auto trigger = task.createNestedArray("trigger");
+                        trigger.add(1);
+                        auto trigger_config = trigger.createNestedObject();
+                        trigger_config["mday"] = -1;
+                        trigger_config["mday"] = -1;
+                        trigger_config["hour"] = config["auto_reset_time"].as<int>() / 60;
+                        trigger_config["minute"] = config["auto_reset_time"].as<int>() % 60;
+
+                        auto action = task.createNestedArray("action");
+                        action.add(0);
+                        auto action_config = action.createNestedObject();
+                        action[0] = 12;
+                        action_config["mode"] = 4;
+                        tasks.add(task);
+                    }
+
+                    DynamicJsonDocument automation_json{16384};
+                    if (LittleFS.exists("/migration/automation_config")) {
+                        read_config_file("automation/config", automation_json);
+                    } else {
+                        automation_json.createNestedArray("tasks");
+                    }
+                    auto automation_config = automation_json.as<JsonObject>();
+                    for (auto task : tasks.as<JsonArray>()) {
+                        automation_config["tasks"].add(task);
+                    }
+                    write_config_file("automation/config", automation_json);
+
+                    config.remove("auto_reset_mode");
+                    config.remove("auto_reset_time");
+                    config.remove("relay_config");
+                    config.remove("relay_rule_when");
+                    config.remove("relay_rule_when");
+                    config.remove("relay_rule_is");
+                    config.remove("input3_rule_then");
+                    config.remove("input3_rule_then_limit");
+                    config.remove("input3_rule_is");
+                    config.remove("input3_rule_then_on_high");
+                    config.remove("input3_rule_then_on_low");
+                    config.remove("input4_rule_then");
+                    config.remove("input4_rule_then_limit");
+                    config.remove("input4_rule_is");
+                    config.remove("input4_rule_then_on_high");
+                    config.remove("input4_rule_then_on_low");
+
+                    write_config_file("energy_manager/config", json);
+                }
+            }
+
+            // Migrate some settings from Energy Manager config to Power Manager config.
+            {
+                StaticJsonDocument<384> em_cfg;
+
+                if (read_config_file("energy_manager/config", em_cfg)) {
+                    StaticJsonDocument<384> pm_cfg;
+                    pm_cfg.to<JsonObject>();
+
+                    pm_cfg["excess_charging_enable"] = em_cfg["excess_charging_enable"];
+                    pm_cfg["default_mode"]           = em_cfg["default_mode"];
+                    pm_cfg["meter_slot_grid_power"]  = em_cfg["meter_slot_grid_power"];
+                    pm_cfg["target_power_from_grid"] = em_cfg["target_power_from_grid"];
+                    pm_cfg["guaranteed_power"]       = em_cfg["guaranteed_power"];
+                    pm_cfg["cloud_filter_mode"]      = em_cfg["cloud_filter_mode"];
+
+                    em_cfg.remove("excess_charging_enable");
+                    em_cfg.remove("default_mode");
+                    em_cfg.remove("meter_slot_grid_power");
+                    em_cfg.remove("target_power_from_grid");
+                    em_cfg.remove("guaranteed_power");
+                    em_cfg.remove("cloud_filter_mode");
+
+                    write_config_file("energy_manager/config", em_cfg);
+                    write_config_file("power_manager/config", pm_cfg);
+                }
+
+                rename_config_file("energy_manager/debug_config", "power_manager/debug_config");
+            }
+
+            // Migrate meter config to new meters framework.
+            {
+                const char *old_config_path = "energy_manager/meter_config";
+                DynamicJsonDocument old_json{128};
+
+                if (read_config_file(old_config_path, old_json)) {
+                    if (old_json.containsKey("meter_source")) {
+                        uint32_t meter_source = old_json["meter_source"].as<uint32_t>();
+                        if (meter_source == 100) {
+                            const char *new_config_str = "[4,{\"display_name\":\"API-Stromzähler\",\"value_ids\":[1,2,3,13,17,21,39,48,57,122,130,138,83,91,99,353,354,355,365,366,367,7,29,33,74,154,115,356,368,364,209,211,273,275,341,388,4,5,6,8,25,369,370,371,377,378,379,375,380,372,373,374,376,213,277,161,177,193,163,179,195,165,181,197,225,241,257,227,243,259,229,245,261,214,210,212]}]";
+                            File file = LittleFS.open("/migration/meters_0_config", "w");
+                            file.write(reinterpret_cast<const uint8_t *>(new_config_str), strlen(new_config_str));
+                            file.close();
+                        }
+                    }
+                    delete_config_file(old_config_path);
+                }
+            }
+        }
+    }
 #endif
 };
 

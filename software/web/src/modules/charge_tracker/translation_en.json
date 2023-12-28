@@ -47,8 +47,12 @@
 
             "csv_flavor": "CSV flavor",
             "csv_flavor_muted": "",
-            "csv_flavor_excel": "Compatible to Excel (; as field separator, Windows 1252 encoded)",
+            "csv_flavor_excel": "Compatible to Excel (; as field separator, Windows-1252 encoded)",
             "csv_flavor_rfc4180": "According to RFC4180 (, as field separator, UTF-8 encoded)"
+        },
+        "automation": {
+            "charge_tracker_reset": "Remove tracked charges",
+            "automation_action_text": "remove all tracked charges and reboot."
         },
         "script": {
             "csv_header_start": "Start time",
@@ -73,7 +77,7 @@
             "download_usernames_failed": "Failed to download the usernames used in tracked charges",
 
             "save_failed": "Failed to save the charge manager settings.",
-            "reboot_content_changed": "charge manager settings"
+            "reboot_content_changed": "charge tracker settings"
         }
     }
 }

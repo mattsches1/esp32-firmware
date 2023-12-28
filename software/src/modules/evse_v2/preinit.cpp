@@ -3,6 +3,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "LittleFS.h"
+
 #include "bindings/hal_common.h"
 #include "bindings/bricklet_evse_v2.h"
 #include "modules/esp32_ethernet_brick/hal_arduino_esp32_ethernet_brick/hal_arduino_esp32_ethernet_brick.h"
@@ -10,7 +12,7 @@
 #include "tools.h"
 #include "api.h"
 
-#include "modules.h"
+#include "module_dependencies.h"
 
 #define BUTTON_MIN_PRESS_THRES 10000
 #define BUTTON_MAX_PRESS_THRES 30000
@@ -19,24 +21,19 @@
 
 extern TF_HAL hal;
 
-#define GREEN_LED 2
-#define BLUE_LED 15
+extern int8_t blue_led_pin;
+extern int8_t green_led_pin;
 
 void evse_v2_button_recovery_handler() {
-    int result = tf_hal_create(&hal);
-    if (result != TF_E_OK)
+    if (!esp32_ethernet_brick.initHAL())
         return;
-    tf_hal_set_timeout(&hal, 100000);
 
     TF_EVSEV2 evse;
-    result = tf_evse_v2_create(&evse, nullptr, &hal);
+    int result = tf_evse_v2_create(&evse, nullptr, &hal);
     if (result != TF_E_OK)
         return;
 
     uint32_t start = millis();
-
-    pinMode(GREEN_LED, OUTPUT);
-    pinMode(BLUE_LED, OUTPUT);
 
     uint32_t button_press_time = BUTTON_IS_PRESSED;
     bool first = true;
@@ -51,8 +48,8 @@ void evse_v2_button_recovery_handler() {
             logger.printfln("Button is pressed. Waiting for release.");
             first = false;
         } else {
-            led_blink(BLUE_LED, 200, 1, 0);
-            led_blink(GREEN_LED, 200, 1, 0);
+            led_blink(blue_led_pin, 200, 1, 0);
+            led_blink(green_led_pin, 200, 1, 0);
         }
     }
 
@@ -124,10 +121,12 @@ void evse_v2_button_recovery_handler() {
             logger.printfln("Running stage 0: Resetting network configuration and disabling web interface login");
 
             mount_or_format_spiffs();
+#if MODULE_USERS_AVAILABLE()
             if (api.restorePersistentConfig("users/config", &users.config)) {
                 users.config.get("http_auth_enabled")->updateBool(false);
                 api.writeConfig("users/config", &users.config);
             }
+#endif
 
             api.removeConfig("ethernet/config");
             api.removeConfig("wifi/sta_config");
@@ -145,10 +144,12 @@ void evse_v2_button_recovery_handler() {
             break;
         // Stage 2 - ESP still crashed. Format data partition. (This also removes tracked charges and the username file)
         case 2:
+#if MODULE_FIRMWARE_UPDATE_AVAILABLE()
             logger.printfln("Running stage 2: Formatting data partition");
             mount_or_format_spiffs();
             factory_reset(false);
             logger.printfln("Stage 2 done");
+#endif
             break;
         // Stage 3 - ESP still crashed after formatting the data partition. The firmware is unrecoverably broken. To prevent a fast boot loop, delay here.
         case 3:

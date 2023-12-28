@@ -25,8 +25,8 @@ import * as util from "../util";
 
 // https://github.com/piotrwitek/utility-types#pickbyvaluet-valuetype
 type PickByValue<T, ValueType> = Pick<
-  T,
-  { [Key in keyof T]-?: T[Key] extends ValueType ? Key : never }[keyof T]
+    T,
+    { [Key in keyof T]-?: T[Key] extends ValueType ? Key : never }[keyof T]
 >;
 
 export interface ConfigComponentState {
@@ -38,8 +38,9 @@ export abstract class ConfigComponent<Config extends keyof ConfigMap, P = {}, S 
     error_string?: string;
     reboot_string?: string;
 
-    constructor(t: Config, error_string?: string, reboot_string?: string, initial_state?: Partial<API.getType[Config] & S>) {
-        super();
+    constructor(t: Config, error_string?: string, reboot_string?: string, initial_state?: Partial<API.getType[Config] & S>, props?: P, context?: any) {
+        super(props, context);
+
         this.t = t;
         this.error_string = error_string;
         this.reboot_string = reboot_string;
@@ -74,7 +75,7 @@ export abstract class ConfigComponent<Config extends keyof ConfigMap, P = {}, S 
         cfg = await this.transformSave(cfg);
 
         await this.sendSave(this.t, cfg);
-    }
+    };
 
     reset = async () => {
         const modal = util.async_modal_ref.current;
@@ -88,20 +89,20 @@ export abstract class ConfigComponent<Config extends keyof ConfigMap, P = {}, S 
             }))
             return;
         await this.sendReset(this.t);
-    }
+    };
 
     isModified = () => {
         return this.getIsModified(this.t);
-    }
+    };
 
     isDirty = () => {
         return this.state.internal_isDirty;
-    }
+    };
 
     setDirty = (dirty: boolean) => {
         if (this.state.internal_isDirty != dirty)
             this.setState({internal_isDirty: dirty} as any);
-    }
+    };
 
     set<T extends keyof (API.getType[Config] & S & ConfigComponentState)>(x: T) {
         return (s: (API.getType[Config] & S & ConfigComponentState)[T]) => this.setState({ [x]: s } as unknown as Partial<API.getType[Config] & S & ConfigComponentState>);

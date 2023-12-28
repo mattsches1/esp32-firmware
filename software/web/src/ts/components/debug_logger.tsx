@@ -21,7 +21,7 @@ import * as util from "../../ts/util";
 import { h, Component, Fragment } from "preact";
 import { Button } from "react-bootstrap";
 import { FormRow } from "./form_row";
-import { __, translate_unchecked } from "../translation";
+import { translate_unchecked } from "../translation";
 import { ConfigMap } from "../api_defs";
 import { InputText } from "./input_text";
 
@@ -45,8 +45,7 @@ export class DebugLogger extends Component<DebugLoggerProps, DebugLoggerState>
     debug_log: Array<string> = [];
     debug_suffix: string = '';
 
-    constructor(props: any)
-    {
+    constructor(props: any) {
         super(props);
 
         this.state = {
@@ -118,7 +117,7 @@ export class DebugLogger extends Component<DebugLoggerProps, DebugLoggerState>
             return;
         }
 
-        try{
+        try {
             await util.download("/" + this.props.prefix + "/start_debug");
         } catch {
             this.setState({debug_running: false, debug_status: translate_unchecked(this.props.translationPrefix + ".script.starting_debug_failed")});

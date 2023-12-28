@@ -34,6 +34,8 @@ EVSE::EVSE() : DeviceModule("evse", "EVSE", "EVSE", [](){evse_common.setup_evse(
 
 void EVSE::pre_setup()
 {
+    this->DeviceModule::pre_setup();
+
     // States
     evse_common.state = Config::Object({
         {"iec61851_state", Config::Uint8(0)},
@@ -140,8 +142,12 @@ void EVSE::get_data_storage(uint8_t page, uint8_t *data)
     tf_evse_get_data_storage(&device, page, data);
 }
 
-void EVSE::set_indicator_led(int16_t indication, uint16_t duration, uint8_t *ret_status)
+void EVSE::set_indicator_led(int16_t indication, uint16_t duration, uint16_t color_h, uint8_t color_s, uint8_t color_v, uint8_t *ret_status)
 {
+    // EVSE 1.0 does not support setting the LED's color.
+    (void) color_h;
+    (void) color_s;
+    (void) color_v;
     tf_evse_set_indicator_led(&device, indication, duration, ret_status);
 }
 

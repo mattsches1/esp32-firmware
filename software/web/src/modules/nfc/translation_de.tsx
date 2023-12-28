@@ -38,27 +38,44 @@ let x = {
             "type_2": "NFC Forum Typ 2",
             "type_3": "NFC Forum Typ 3",
             "type_4": "NFC Forum Typ 4",
-            "tag_id_invalid_feedback": "Die Tag-ID muss aus vier bis zehn Gruppen mit jeweils einer zweistelligen Hexadezimalzahl, getrennt durch einen Doppelpunkt, bestehen. Zum Beispiel 01:23:45:67:89:AB",
-
+            "tag_id_invalid_feedback": "Die Tag-ID muss aus vier bis zehn Gruppen mit jeweils einer zweistelligen Hexadezimalzahl, getrennt durch einen Doppelpunkt, bestehen. Zum Beispiel 01:23:45:67:89:AB"
+        },
+        "automation": {
+            "nfc": "NFC-Tags",
+            "add_tag_description": "Das neue Tag kann zum Anlernen an die rechte Seite der Wallbox gehalten werden. Alternativ können Tag-ID und Tag-Typ manuell angegeben werden.",
             "trigger_charge_any": "Ladevorgang Start/Stopp",
             "trigger_charge_start": "Ladevorgang Start",
             "trigger_charge_stop": "Ladevorgang Stopp",
             "tag_action": "Tag Aktion",
-
+            "tag_id_invalid_feedback": "Die Tag-ID muss aus vier bis zehn Gruppen mit jeweils einer zweistelligen Hexadezimalzahl, getrennt durch einen Doppelpunkt, bestehen. Zum Beispiel 01:23:45:67:89:AB",
+            "table_tag_id": "Tag-ID",
+            "table_user_id": "Zugeordneter Benutzer",
+            "table_tag_type": "Tag-Typ",
+            "type_0": "Mifare Classic",
+            "type_1": "NFC Forum Typ 1",
+            "type_2": "NFC Forum Typ 2",
+            "type_3": "NFC Forum Typ 3",
+            "type_4": "NFC Forum Typ 4",
+            "last_seen": "Vor ",
+            "last_seen_suffix": "",
             "last_seen_and_known_tags": "Zuletzt erkannte und bekannte Tags",
-            "cron_action_text": /*FFN*/(tag_id: string, tag_type: string, tag_action: number) => {
+            "automation_action_text": /*FFN*/(tag_id: string, tag_type: string, tag_action: number) => {
+                let action = <></>;
+                if (tag_action !== 0) {
+                    action = <> um einen Ladevorgang zu {tag_action == 1 ? "starten" : tag_action == 2 ? "stoppen" : ""}</>;
+                }
                 return <>
-                    fake das vorhalten des NFC-Tag <b>{tag_id}</b> ({tag_type}) um einen Ladevorgang zu {tag_action == 1 ? "starten." : tag_action == 2 ? "stoppen." : "."}.
+                    simuliere das <b>NFC</b>-Tag "<b>{tag_id}</b>" ({tag_type}){action}.
                 </>
             }/*NF*/,
-            "cron_trigger_text": /*FFN*/(tag_id: string, tag_type: string) => {
+            "automation_trigger_text": /*FFN*/(tag_id: string, tag_type: string) => {
                 return (
                 <>
-                    Wenn das NFC-Tag '<b>{tag_id}</b>' ({tag_type}) erkannt wird,{" "}
+                    Wenn das <b>NFC</b>-Tag "<b>{tag_id}</b>" ({tag_type}) erkannt wird,{" "}
                 </>
                 )
             }/*NF*/,
-            "cron_trigger_nfc": "NFC-Tag erkannt"
+            "automation_trigger_nfc": "NFC-Tag erkannt"
         },
         "script": {
             "not_seen": "Unbekannt",

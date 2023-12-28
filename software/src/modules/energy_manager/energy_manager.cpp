@@ -34,8 +34,12 @@
 
 #include "gcc_warnings.h"
 
+extern EnergyManager energy_manager;
+
 void EnergyManager::pre_setup()
 {
+    this->DeviceModule::pre_setup();
+
     // States
     state = Config::Object({
         {"phases_switched", Config::Uint8(0)},
@@ -48,28 +52,6 @@ void EnergyManager::pre_setup()
     });
 
     low_level_state = Config::Object({
-        {"power_at_meter", Config::Float(0)},
-        {"power_at_meter_filtered", Config::Float(0)}, //TODO make this int?
-        {"power_available", Config::Int32(0)},
-        {"power_available_filtered", Config::Int32(0)},
-        {"overall_min_power", Config::Int32(0)},
-        {"threshold_3to1", Config::Int32(0)},
-        {"threshold_1to3", Config::Int32(0)},
-        {"charge_manager_available_current", Config::Uint32(0)},
-        {"charge_manager_allocated_current", Config::Uint32(0)},
-        {"max_current_limited", Config::Uint32(0)},
-        {"uptime_past_hysteresis", Config::Bool(false)},
-        {"is_3phase", Config::Bool(false)},
-        {"wants_3phase", Config::Bool(false)},
-        {"wants_3phase_last", Config::Bool(false)},
-        {"is_on_last", Config::Bool(false)},
-        {"wants_on_last", Config::Bool(false)},
-        {"phase_state_change_blocked", Config::Bool(false)},
-        {"phase_state_change_delay", Config::Uint32(0)},
-        {"on_state_change_blocked", Config::Bool(false)},
-        {"on_state_change_delay", Config::Uint32(0)},
-        {"charging_blocked", Config::Uint32(0)},
-        {"switching_state", Config::Uint32(0)},
         {"consecutive_bricklet_errors", Config::Uint32(0)},
         // Bricklet states below
         {"contactor", Config::Bool(false)},
@@ -80,76 +62,25 @@ void EnergyManager::pre_setup()
         },
         {"uptime", Config::Uint32(0)},
     });
-    meter_state = Config::Object({ // TODO: Remove?
-        {"energy_meter_type", Config::Uint8(0)},
-        {"energy_meter_power", Config::Float(0)}, // watt
-        {"energy_meter_energy_import", Config::Float(0)}, // kWh
-        {"energy_meter_energy_export", Config::Float(0)}, // kWh
-    });
 
     // Config
     config = ConfigRoot(Config::Object({
         {"contactor_installed", Config::Bool(false)},
         {"phase_switching_mode", Config::Uint(PHASE_SWITCHING_AUTOMATIC, PHASE_SWITCHING_MIN, PHASE_SWITCHING_MAX)},
-        {"excess_charging_enable", Config::Bool(false)},
-        {"default_mode", Config::Uint(0, 0, 3)},
-        {"auto_reset_mode", Config::Bool(false)},
-        {"auto_reset_time", Config::Uint(0, 0, 1439)},
-        {"target_power_from_grid", Config::Int32(0)}, // in watt
-        {"guaranteed_power", Config::Uint(1380, 0, 22080)}, // in watt
-        {"cloud_filter_mode", Config::Uint(CLOUD_FILTER_MEDIUM, CLOUD_FILTER_OFF, CLOUD_FILTER_STRONG)},
-        {"relay_config", Config::Uint8(0)},
-        {"relay_rule_when", Config::Uint8(0)},
-        {"relay_rule_is", Config::Uint8(0)},
-        {"input3_rule_then", Config::Uint8(0)},
-        {"input3_rule_then_limit", Config::Uint32(0)}, // in A
-        {"input3_rule_is", Config::Uint8(0)},
-        {"input3_rule_then_on_high", Config::Uint(MODE_DO_NOTHING, 0, 255)},
-        {"input3_rule_then_on_low", Config::Uint(MODE_DO_NOTHING, 0, 255)},
-        {"input4_rule_then", Config::Uint8(0)},
-        {"input4_rule_then_limit", Config::Uint32(0)}, // in A
-        {"input4_rule_is", Config::Uint8(0)},
-        {"input4_rule_then_on_high", Config::Uint(MODE_DO_NOTHING, 0, 255)},
-        {"input4_rule_then_on_low", Config::Uint(MODE_DO_NOTHING, 0, 255)},
-    }), [](const Config &cfg) -> String {
-        uint32_t max_current_ma = charge_manager.config_in_use.get("maximum_available_current")->asUint();
-        uint32_t input3_rule_then_limit_ma = cfg.get("input3_rule_then_limit")->asUint();
-        uint32_t input4_rule_then_limit_ma = cfg.get("input4_rule_then_limit")->asUint();
-
-        if (input3_rule_then_limit_ma > max_current_ma) {
-            return "Input 3 current limit exceeds maximum total current of all chargers.";
-        }
-        if (input4_rule_then_limit_ma > max_current_ma) {
-            return "Input 4 current limit exceeds maximum total current of all chargers.";
-        }
+    }), [](const Config &cfg, ConfigSource source) -> String {
+        const Config *pm_cfg = power_manager.get_config();
 
         if (cfg.get("phase_switching_mode")->asUint() == 3) { // external control
             if (cfg.get("contactor_installed")->asBool() != true)
                 return "Can't enable external control with no contactor installed.";
-            if (cfg.get("excess_charging_enable")->asBool() != false)
+            if (pm_cfg->get("excess_charging_enable")->asBool() != false)
                 return "Can't enable external control unless excess charging is disabled.";
-            if (cfg.get("default_mode")->asUint() != MODE_FAST)
+            if (pm_cfg->get("default_mode")->asUint() != MODE_FAST)
                 return "Can't enable external control with any charging mode besides 'Fast'.";
-            if (cfg.get("auto_reset_mode")->asBool() != false)
-                return "Can't enable external control unless auto reset mode is disabled.";
-            if (cfg.get("input3_rule_then")->asUint() == INPUT_CONFIG_SWITCH_MODE)
-                return "Can't enable external control when input 3 is configured to change charging mode.";
-            if (cfg.get("input4_rule_then")->asUint() == INPUT_CONFIG_SWITCH_MODE)
-                return "Can't enable external control when input 4 is configured to change charging mode.";
         }
 
         return "";
     });
-
-    debug_config = Config::Object({
-        {"hysteresis_time", Config::Uint(HYSTERESIS_MIN_TIME_MINUTES, 0, 60)}, // in minutes
-    });
-
-    // Runtime config
-    charge_mode = Config::Object({
-        {"mode", Config::Uint(0, 0, 3)},
-    });
-    charge_mode_update = charge_mode;
 
     external_control = Config::Object({
         {"phases_wanted", Config::Uint32(0)},
@@ -184,7 +115,161 @@ void EnergyManager::pre_setup()
         {"year", Config::Uint(0, 2000, 2255)},
         {"month", Config::Uint(0, 1, 12)},
     });
+
+    for (uint32_t slot = 0; slot < METERS_SLOTS; ++slot) {
+        history_meter_setup_done[slot] = false;
+        history_meter_power_value[slot] = NAN;
+    }
+
+#if MODULE_AUTOMATION_AVAILABLE()
+    automation.register_action(
+        AutomationActionID::EMPhaseSwitch,
+        Config::Object({
+            {"phases_wanted", Config::Uint(1)}
+        }),
+        [this](const Config *cfg) {
+            api.callCommand("energy_manager/external_control_update", Config::ConfUpdateObject{{
+                {"phases_wanted", cfg->get("phases_wanted")->asUint()}
+            }});
+        });
+
+    automation.register_action(
+        AutomationActionID::EMChargeModeSwitch,
+        Config::Object({
+            {"mode", Config::Uint(0, 0, 4)}
+        }),
+        [this](const Config *cfg) {
+            auto configured_mode = cfg->get("mode")->asUint();
+
+            // Automation rule configured to switch to default mode
+            if (configured_mode == 4) {
+                configured_mode = this->default_mode;
+            }
+
+            api.callCommand("power_manager/charge_mode_update", Config::ConfUpdateObject{{
+                {"mode", configured_mode}
+            }});
+        });
+
+    automation.register_action(
+        AutomationActionID::EMRelaySwitch,
+        Config::Object({
+            {"state", Config::Bool(false)}
+        }),
+        [this](const Config *cfg) {
+            this->set_output(cfg->get("state")->asBool());
+        }
+    );
+
+    automation.register_action(
+        AutomationActionID::EMLimitMaxCurrent,
+        Config::Object({
+            {"current", Config::Int(0, -1)}
+        }),
+        [this](const Config *cfg) {
+            auto current = cfg->get("current")->asInt();
+            if (current == -1) {
+                this->reset_limit_max_current();
+            } else {
+                this->limit_max_current(static_cast<uint32_t>(current));
+            }
+        });
+
+    automation.register_action(
+        AutomationActionID::EMBlockCharge,
+        Config::Object({
+            {"slot", Config::Uint(0, 0, 3)},
+            {"block", Config::Bool(false)}
+        }),
+        [this](const Config *cfg) {
+            this->charging_blocked.pin[cfg->get("slot")->asUint()] = static_cast<uint8_t>(cfg->get("block")->asBool());
+        });
+
+    automation.register_trigger(
+        AutomationTriggerID::EMInputThree,
+        Config::Object({
+            {"state", Config::Bool(false)}
+        }));
+
+    automation.register_trigger(
+        AutomationTriggerID::EMInputFour,
+        Config::Object({
+            {"state", Config::Bool(false)}
+        }));
+
+    automation.register_trigger(
+        AutomationTriggerID::EMPhaseSwitch,
+        Config::Object({
+            {"phase", Config::Uint(1)}
+        }));
+
+    automation.register_trigger(
+        AutomationTriggerID::EMContactorMonitoring,
+        Config::Object({
+            {"contactor_okay", Config::Bool(false)}
+        }));
+
+    automation.register_trigger(
+        AutomationTriggerID::EMPowerAvailable,
+        Config::Object({
+            {"power_available", Config::Bool(false)}
+        }));
+
+    automation.register_trigger(
+        AutomationTriggerID::EMGridPowerDraw,
+        Config::Object({
+            {"drawing_power", Config::Bool(false)}
+        }));
+#endif
 }
+
+#if MODULE_AUTOMATION_AVAILABLE()
+bool EnergyManager::action_triggered(Config *automation_config, void *data) {
+    Config *cfg = static_cast<Config *>(automation_config->get());
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wswitch-enum"
+
+    switch (automation_config->getTag<AutomationTriggerID>()) {
+        case AutomationTriggerID::EMInputThree:
+            if (cfg->get("state")->asBool() == state.get("input3_state")->asBool()) {
+                return true;
+            }
+            break;
+
+        case AutomationTriggerID::EMInputFour:
+            if (cfg->get("state")->asBool() == state.get("input4_state")->asBool()) {
+                return true;
+            }
+            break;
+
+        case AutomationTriggerID::EMPhaseSwitch:
+            if (cfg->get("phase")->asUint() == state.get("phases_switched")->asUint()) {
+                return true;
+            }
+            break;
+
+        case AutomationTriggerID::EMContactorMonitoring:
+            return (*static_cast<bool *>(data) == cfg->get("contactor_okay")->asBool());
+
+        case AutomationTriggerID::EMPowerAvailable:
+            return (*static_cast<bool *>(data) == cfg->get("power_available")->asBool());
+
+        case AutomationTriggerID::EMGridPowerDraw:
+            return ((power_at_meter_raw_w > 0) == cfg->get("drawing_power")->asBool());
+
+        default:
+            break;
+    }
+#pragma GCC diagnostic pop
+
+    return false;
+}
+
+static bool trigger_action(Config *config, void *data) {
+    return energy_manager.action_triggered(config, data);
+}
+#endif
 
 void EnergyManager::setup_energy_manager()
 {
@@ -221,49 +306,53 @@ void EnergyManager::setup()
         return;
     }
 
+#if MODULE_AUTOMATION_AVAILABLE()
+    task_scheduler.scheduleOnce([this]() {
+        automation.trigger_action(AutomationTriggerID::EMInputThree, nullptr, trigger_action);
+        automation.trigger_action(AutomationTriggerID::EMInputFour, nullptr, trigger_action);
+    }, 0);
+#endif
+
     api.addFeature("energy_manager");
 
     update_status_led();
 
     // Forgets all settings when new setting is introduced: "Failed to restore persistent config config: JSON object is missing key 'input3_rule_then_limit'\nJSON object is missing key 'input4_rule_then_limit'"
     api.restorePersistentConfig("energy_manager/config", &config);
-    config_in_use = config;
-
-#if MODULE_DEBUG_AVAILABLE()
-    api.restorePersistentConfig("energy_manager/debug_config", &debug_config);
-#endif
-    debug_config_in_use = debug_config;
 
     charge_manager.set_allocated_current_callback([this](uint32_t current_ma){
         //logger.printfln("energy_manager: allocated current callback: %u", current_ma);
         charge_manager_allocated_current_ma = current_ma;
     });
 
-    // Cache config for energy update
-    default_mode                = config_in_use.get("default_mode")->asUint();
-    excess_charging_enable      = config_in_use.get("excess_charging_enable")->asBool();
-    target_power_from_grid_w    = config_in_use.get("target_power_from_grid")->asInt();          // watt
-    guaranteed_power_w          = config_in_use.get("guaranteed_power")->asUint();               // watt
-    contactor_installed         = config_in_use.get("contactor_installed")->asBool();
-    phase_switching_mode        = config_in_use.get("phase_switching_mode")->asUint();
-    switching_hysteresis_ms     = debug_config_in_use.get("hysteresis_time")->asUint() * 60 * 1000;    // milliseconds (from minutes)
-    max_current_unlimited_ma    = charge_manager.config_in_use.get("maximum_available_current")->asUint();      // milliampere
-    min_current_1p_ma           = charge_manager.config_in_use.get("minimum_current_1p")->asUint();             // milliampere
-    min_current_3p_ma           = charge_manager.config_in_use.get("minimum_current")->asUint();                // milliampere
+    // Get configs from Power Manager
+    pm_low_level_state            = power_manager.get_config_low_level_state();
+    pm_config                     = power_manager.get_config();
+    const Config *pm_debug_config = power_manager.get_debug_config();
+    pm_charge_mode                = power_manager.get_config_charge_mode();
 
-    uint32_t auto_reset_time    = config_in_use.get("auto_reset_time")->asUint();
-    auto_reset_hour   = auto_reset_time / 60;
-    auto_reset_minute = auto_reset_time % 60;
+    // Cache config for energy update
+    default_mode                = pm_config->get("default_mode")->asUint();
+    excess_charging_enable      = pm_config->get("excess_charging_enable")->asBool();
+    meter_slot_power            = pm_config->get("meter_slot_grid_power")->asUint();
+    target_power_from_grid_w    = pm_config->get("target_power_from_grid")->asInt();          // watt
+    guaranteed_power_w          = pm_config->get("guaranteed_power")->asUint();               // watt
+    contactor_installed         = config.get("contactor_installed")->asBool();
+    phase_switching_mode        = config.get("phase_switching_mode")->asUint();
+    switching_hysteresis_ms     = pm_debug_config->get("hysteresis_time")->asUint() * 60 * 1000;         // milliseconds (from minutes)
+    max_current_unlimited_ma    = charge_manager.config.get("maximum_available_current")->asUint();      // milliampere
+    min_current_1p_ma           = charge_manager.config.get("minimum_current_1p")->asUint();             // milliampere
+    min_current_3p_ma           = charge_manager.config.get("minimum_current")->asUint();                // milliampere
 
     mode = default_mode;
-    charge_mode.get("mode")->updateUint(mode);
+    pm_charge_mode->get("mode")->updateUint(mode);
 
     if (phase_switching_mode == PHASE_SWITCHING_EXTERNAL_CONTROL)
         state.get("external_control")->updateUint(EXTERNAL_CONTROL_STATE_UNAVAILABLE);
 
     // Set up meter power filter.
     uint32_t power_mavg_span_s;
-    switch (mode) {
+    switch (pm_config->get("cloud_filter_mode")->asUint()) {
         default:
         case CLOUD_FILTER_OFF:    power_mavg_span_s =   0; break;
         case CLOUD_FILTER_LIGHT:  power_mavg_span_s = 120; break;
@@ -280,10 +369,12 @@ void EnergyManager::setup()
     // Bricklet and meter access, requires power filter to be set up
     update_all_data();
 
-    // Set up output relay and input pins
-    output = new OutputRelay(config_in_use);
-    input3 = new InputPin(3, 0, config_in_use, all_data.input[0]);
-    input4 = new InputPin(4, 1, config_in_use, all_data.input[1]);
+#if MODULE_AUTOMATION_AVAILABLE()
+    task_scheduler.scheduleOnce([this]() {
+        automation.trigger_action(AutomationTriggerID::EMPhaseSwitch, nullptr, trigger_action);
+        automation.trigger_action(AutomationTriggerID::EMGridPowerDraw, nullptr, trigger_action);
+    }, 0);
+#endif
 
     // If the user accepts the additional wear, the minimum hysteresis time is 10s. Less than that will cause the control algorithm to oscillate.
     uint32_t hysteresis_min_ms = 10 * 1000;  // milliseconds
@@ -294,10 +385,13 @@ void EnergyManager::setup()
     int32_t min_phases;
     if (phase_switching_mode == PHASE_SWITCHING_ALWAYS_1PHASE) {
         min_phases = 1;
+        max_phases = 1;
     } else if (phase_switching_mode == PHASE_SWITCHING_ALWAYS_3PHASE) {
         min_phases = 3;
+        max_phases = 3;
     } else { // automatic, external or PV1P/FAST3P
         min_phases = 1;
+        max_phases = 3;
     }
     if (min_phases < 3) {
         overall_min_power_w = static_cast<int32_t>(230 * 1 * min_current_1p_ma / 1000);
@@ -317,28 +411,42 @@ void EnergyManager::setup()
         threshold_1to3_w = max_1phase_w;
     }
 
-    low_level_state.get("overall_min_power")->updateInt(overall_min_power_w);
-    low_level_state.get("threshold_3to1")->updateInt(threshold_3to1_w);
-    low_level_state.get("threshold_1to3")->updateInt(threshold_1to3_w);
+    pm_low_level_state->get("overall_min_power")->updateInt(overall_min_power_w);
+    pm_low_level_state->get("threshold_3to1")->updateInt(threshold_3to1_w);
+    pm_low_level_state->get("threshold_1to3")->updateInt(threshold_1to3_w);
 
     // Initialize contactor check state so that the check doesn't trip immediately if the first response from the bricklet is invalid.
     all_data.contactor_check_state = 1;
 
+    // Start this task even if a config error is set below: If only MeterEM::update_all_values runs there are 2.5 sec gaps in the meters data.
+    task_scheduler.scheduleWithFixedDelay([this](){
+        this->update_all_data();
+    }, 0, EM_TASK_DELAY_MS);
+
+    task_scheduler.scheduleWithFixedDelay([this](){collect_data_points();}, 15000, 10000);
+    task_scheduler.scheduleWithFixedDelay([this](){set_pending_data_points();}, 15000, 100);
+
     // Check for incomplete configuration after as much as possible has been set up.
     // The default configuration after a factory reset must be good enough for everything to run without crashing.
-    if ((config_in_use.get("phase_switching_mode")->asUint() == PHASE_SWITCHING_AUTOMATIC) && !config_in_use.get("contactor_installed")->asBool()) {
+    if ((config.get("phase_switching_mode")->asUint() == PHASE_SWITCHING_AUTOMATIC) && !config.get("contactor_installed")->asBool()) {
         logger.printfln("energy_manager: Invalid configuration: Automatic phase switching selected but no contactor installed.");
         set_config_error(CONFIG_ERROR_FLAGS_PHASE_SWITCHING_MASK);
         return;
     }
 
-    task_scheduler.scheduleWithFixedDelay([this](){
-        this->update_all_data();
-    }, 0, EM_TASK_DELAY_MS);
-
-    task_scheduler.scheduleWithFixedDelay([this](){
-        this->update_io();
-    }, EM_TASK_DELAY_MS, EM_TASK_DELAY_MS);
+    bool power_meter_available = false;
+#if MODULE_METERS_AVAILABLE()
+    float unused_power;
+    if (meters.get_power(meter_slot_power, &unused_power) == MeterValueAvailability::Unavailable) {
+        meter_slot_power = UINT32_MAX;
+    } else {
+        power_meter_available = true;
+    }
+#endif
+    if (excess_charging_enable && !power_meter_available) {
+        set_config_error(CONFIG_ERROR_FLAGS_EXCESS_NO_METER_MASK);
+        logger.printfln("energy_manager: Excess charging enabled but configured meter can't provide power values.");
+    }
 
     start_network_check_task();
 
@@ -368,21 +476,11 @@ void EnergyManager::setup()
 
     task_scheduler.scheduleOnce([this](){
         uptime_past_hysteresis = true;
-        low_level_state.get("uptime_past_hysteresis")->updateBool(uptime_past_hysteresis);
+        pm_low_level_state->get("uptime_past_hysteresis")->updateBool(uptime_past_hysteresis);
     }, switching_hysteresis_ms);
 
-    if (config_in_use.get("auto_reset_mode")->asBool())
-        start_auto_reset_task();
-
-    task_scheduler.scheduleOnce([this](){
-        if (excess_charging_enable && em_meter_config.config_in_use.get("meter_source")->asUint() == 0) {
-            set_error(ERROR_FLAGS_BAD_CONFIG_MASK);
-            logger.printfln("energy_manager: Excess charging enabled but no meter configured.");
-        }
-    }, 0);
-
-    task_scheduler.scheduleWithFixedDelay([this](){collect_data_points();}, 15000, 10000);
-    task_scheduler.scheduleWithFixedDelay([this](){set_pending_data_points();}, 15000, 100);
+    task_scheduler.scheduleOnce([this](){this->show_blank_value_id_update_warnings = true;}, 250);
+    reset_limit_max_current();
 }
 
 void EnergyManager::register_urls()
@@ -409,29 +507,7 @@ void EnergyManager::register_urls()
     });
 
     api.addPersistentConfig("energy_manager/config", &config, {}, 1000);
-#if MODULE_DEBUG_AVAILABLE()
-    api.addPersistentConfig("energy_manager/debug_config", &debug_config, {}, 1000);
-#endif
     api.addState("energy_manager/low_level_state", &low_level_state, {}, 1000);
-    api.addState("energy_manager/meter_state", &meter_state, {}, 1000);
-
-    api.addState("energy_manager/charge_mode", &charge_mode, {}, 1000);
-    api.addCommand("energy_manager/charge_mode_update", &charge_mode_update, {}, [this](){
-        uint32_t new_mode = charge_mode_update.get("mode")->asUint();
-
-        if (new_mode == MODE_DO_NOTHING)
-            return;
-
-        auto runtime_mode = charge_mode.get("mode");
-        uint32_t old_mode = runtime_mode->asUint();
-        runtime_mode->updateUint(new_mode);
-        mode = new_mode;
-
-        if (new_mode != old_mode)
-            just_switched_mode = true;
-
-        logger.printfln("energy_manager: Switched mode %u->%u", old_mode, mode);
-    }, false);
 
     api.addState("energy_manager/external_control", &external_control, {}, 1000);
     api.addCommand("energy_manager/external_control_update", &external_control_update, {}, [this](){
@@ -487,45 +563,60 @@ void EnergyManager::loop()
     }
 }
 
+const Config * EnergyManager::get_config()
+{
+    return &config;
+}
+
 void EnergyManager::update_all_data()
 {
     update_all_data_struct();
+
+    /**
+     * Use uint8_t to collect all triggers, so that only one ifdef is needed.
+     * Bit 0: input 3
+     * Bit 1: input 4
+     * Bit 2: phase switching
+     * Bit 3: Contactor monitoring
+     * Bits 4-7: unused
+     */
+    uint32_t automation_trigger = 0;
 
     low_level_state.get("contactor")->updateBool(all_data.contactor_value);
     low_level_state.get("led_rgb")->get(0)->updateUint(all_data.rgb_value_r);
     low_level_state.get("led_rgb")->get(1)->updateUint(all_data.rgb_value_g);
     low_level_state.get("led_rgb")->get(2)->updateUint(all_data.rgb_value_b);
-    state.get("input3_state")->updateBool(all_data.input[0]);
-    state.get("input4_state")->updateBool(all_data.input[1]);
+    automation_trigger |= state.get("input3_state")->updateBool(all_data.input[0]) ? 1u : 0u;
+    automation_trigger |= state.get("input4_state")->updateBool(all_data.input[1]) ? 2u : 0u;
     state.get("relay_state")->updateBool(all_data.relay);
     low_level_state.get("input_voltage")->updateUint(all_data.voltage);
     low_level_state.get("contactor_check_state")->updateUint(all_data.contactor_check_state);
     low_level_state.get("uptime")->updateUint(all_data.uptime);
 
-    if (all_data.energy_meter_type != METER_TYPE_NONE) {
-        meter_state.get("energy_meter_type")->updateUint(all_data.energy_meter_type);
-        meter_state.get("energy_meter_power")->updateFloat(all_data.power);
-        meter_state.get("energy_meter_energy_import")->updateFloat(all_data.energy_import);
-        meter_state.get("energy_meter_energy_export")->updateFloat(all_data.energy_export);
-    }
+#if MODULE_METERS_EM_AVAILABLE()
+    meters_em.update_from_em_all_data(all_data);
+#endif
+
+    // Update meter values even if the config is bad.
+    if (is_error(ERROR_FLAGS_BAD_CONFIG_MASK))
+        return;
 
     // Update states derived from all_data
     is_3phase   = contactor_installed ? all_data.contactor_value : phase_switching_mode == PHASE_SWITCHING_ALWAYS_3PHASE;
     have_phases = 1 + static_cast<uint32_t>(is_3phase) * 2;
-    low_level_state.get("is_3phase")->updateBool(is_3phase);
-    state.get("phases_switched")->updateUint(have_phases);
+    pm_low_level_state->get("is_3phase")->updateBool(is_3phase);
+    automation_trigger |= state.get("phases_switched")->updateUint(have_phases) ? 4u : 0u;
 
-    power_at_meter_raw_w = all_data.energy_meter_type ? all_data.power : meter.values.get("power")->asFloat(); // watt
-
-    if (!isnan(power_at_meter_raw_w)) {
-        int32_t raw_power_w = static_cast<int32_t>(power_at_meter_raw_w);
-
-#if MODULE_EM_PV_FAKER_AVAILABLE()
-        // PV faker must influence meter value before doing anything with it.
-        raw_power_w -= em_pv_faker.state.get("fake_power")->asInt(); // watt
+#if MODULE_METERS_AVAILABLE()
+    if (meters.get_power(meter_slot_power, &power_at_meter_raw_w) != MeterValueAvailability::Fresh)
+        power_at_meter_raw_w = NAN;
+#else
+    power_at_meter_raw_w = NAN;
 #endif
 
-        low_level_state.get("power_at_meter")->updateFloat(static_cast<float>(raw_power_w)); //TODO Maybe keep as float until here?
+    if (!isnan(power_at_meter_raw_w)) {
+        pm_low_level_state->get("power_at_meter")->updateFloat(power_at_meter_raw_w);
+        int32_t raw_power_w = static_cast<int32_t>(power_at_meter_raw_w);
 
         // Filtered/smoothed values must not be modified anywhere else.
 
@@ -566,16 +657,52 @@ void EnergyManager::update_all_data()
         static_assert(std::is_same<int32_t, decltype(power_at_meter_mavg_values_count)>::value, "power_at_meter_mavg_values_count must be signed");
         power_at_meter_filtered_w = power_at_meter_mavg_total / power_at_meter_mavg_values_count;
 
-        low_level_state.get("power_at_meter_filtered")->updateFloat(static_cast<float>(power_at_meter_filtered_w));
+        pm_low_level_state->get("power_at_meter_filtered")->updateFloat(static_cast<float>(power_at_meter_filtered_w));
     }
 
     if (contactor_installed) {
         if ((all_data.contactor_check_state & 1) == 0) {
             logger.printfln("Contactor check tripped. Check contactor.");
+            if (contactor_check_tripped == false) {
+                automation_trigger |= 1 << 3;
+            }
             contactor_check_tripped = true;
             set_error(ERROR_FLAGS_CONTACTOR_MASK);
         }
+
+#if MODULE_AUTOMATION_AVAILABLE()
+        static bool first_read = true;
+        if (first_read) {
+            task_scheduler.scheduleOnce([this]() {
+                bool contactor_okay = (all_data.contactor_check_state & 1) != 0;
+                automation.trigger_action(AutomationTriggerID::EMContactorMonitoring, &contactor_okay, trigger_action);
+            }, 0);
+            first_read = false;
+        }
+#endif
     }
+
+#if MODULE_AUTOMATION_AVAILABLE()
+    if (automation_trigger & 1) {
+        automation.trigger_action(AutomationTriggerID::EMInputThree, nullptr, trigger_action);
+    }
+    if (automation_trigger & 2) {
+        automation.trigger_action(AutomationTriggerID::EMInputFour, nullptr, trigger_action);
+    }
+    if (automation_trigger & 4) {
+        automation.trigger_action(AutomationTriggerID::EMPhaseSwitch, nullptr, trigger_action);
+    }
+    if (automation_trigger & 8) {
+        bool contactor_okay = (all_data.contactor_check_state & 1) != 0;
+        automation.trigger_action(AutomationTriggerID::EMContactorMonitoring, &contactor_okay, trigger_action);
+    }
+    static bool drawing_power_last = false;
+    bool drawing_power = power_at_meter_raw_w > 0;
+    if (drawing_power != drawing_power_last) {
+        automation.trigger_action(AutomationTriggerID::EMGridPowerDraw, nullptr, trigger_action);
+        drawing_power_last = drawing_power;
+    }
+#endif
 }
 
 void EnergyManager::update_all_data_struct()
@@ -587,8 +714,7 @@ void EnergyManager::update_all_data_struct()
         &all_data.rgb_value_g,
         &all_data.rgb_value_b,
         &all_data.power,
-        &all_data.energy_import,
-        &all_data.energy_export,
+        all_data.current,
         &all_data.energy_meter_type,
         all_data.error_count,
         all_data.input,
@@ -670,25 +796,6 @@ void EnergyManager::check_bricklet_reachable(int rc, const char *context) {
     low_level_state.get("consecutive_bricklet_errors")->updateUint(consecutive_bricklet_errors);
 }
 
-void EnergyManager::update_io()
-{
-    output->update();
-
-    // Oversampling inputs is currently not used because all of the implemented input pin functions require update_energy() to run anyway.
-    //// We "over-sample" the two inputs compared to the other data in the all_data struct
-    //// to make sure that we can always react in a timely manner to input changes
-    //int rc = tf_warp_energy_manager_get_input(&device, all_data.input);
-    //if (rc != TF_E_OK) {
-    //    logger.printfln("get_input error %d", rc);
-    //}
-
-    // Restore values that can be changed by input pins.
-    max_current_limited_ma      = max_current_unlimited_ma;
-
-    input3->update(all_data.input[0]);
-    input4->update(all_data.input[1]);
-}
-
 void EnergyManager::start_network_check_task()
 {
     task_scheduler.scheduleWithFixedDelay([this](){
@@ -730,42 +837,39 @@ void EnergyManager::start_network_check_task()
     }, 0, 5000);
 }
 
-void EnergyManager::start_auto_reset_task()
-{
-#if MODULE_NTP_AVAILABLE()
-    task_scheduler.scheduleOnce([this](){
-        if (ntp.state.get("synced")->asBool())
-            schedule_auto_reset_task();
-        else
-            start_auto_reset_task();
-    }, 30 * 1000);
-#endif
-}
-
-void EnergyManager::schedule_auto_reset_task()
-{
-    time_t delay_ms = ms_until_time(static_cast<int>(auto_reset_hour), static_cast<int>(auto_reset_minute));
-    if (delay_ms < 0) {
-        logger.printfln("energy_manager: Auto reset task delay negative: %li", delay_ms);
-        return;
-    }
-    task_scheduler.scheduleOnce([this](){
-        switch_mode(default_mode);
-        schedule_auto_reset_task();
-    }, static_cast<uint32_t>(delay_ms));
-}
-
 void EnergyManager::limit_max_current(uint32_t limit_ma)
 {
     if (max_current_limited_ma > limit_ma)
         max_current_limited_ma = limit_ma;
 }
 
+void EnergyManager::reset_limit_max_current() {
+    max_current_limited_ma = max_current_unlimited_ma;
+}
+
 void EnergyManager::switch_mode(uint32_t new_mode)
 {
-    api.callCommand("energy_manager/charge_mode_update", Config::ConfUpdateObject{{
+    api.callCommand("power_manager/charge_mode_update", Config::ConfUpdateObject{{
         {"mode", new_mode}
     }});
+}
+
+void EnergyManager::update_charge_mode(const Config &charge_mode_update)
+{
+        uint32_t new_mode = charge_mode_update.get("mode")->asUint();
+
+        if (new_mode == MODE_DO_NOTHING)
+            return;
+
+        auto runtime_mode = pm_charge_mode->get("mode");
+        uint32_t old_mode = runtime_mode->asUint();
+        runtime_mode->updateUint(new_mode);
+        mode = new_mode;
+
+        if (new_mode != old_mode)
+            just_switched_mode = true;
+
+        logger.printfln("energy_manager: Switched mode %u->%u", old_mode, mode);
 }
 
 void EnergyManager::set_available_current(uint32_t current)
@@ -780,7 +884,7 @@ void EnergyManager::set_available_current(uint32_t current)
         logger.printfln("energy_manager: set_available_current failed: %s", err.c_str());
 
     charge_manager_available_current_ma = current;
-    low_level_state.get("charge_manager_available_current")->updateUint(current);
+    pm_low_level_state->get("charge_manager_available_current")->updateUint(current);
 }
 
 void EnergyManager::set_available_phases(uint32_t phases)
@@ -799,7 +903,7 @@ void EnergyManager::update_energy()
     if (switching_state != prev_state) {
         logger.printfln("energy_manager: now in state %i", static_cast<int>(switching_state));
         prev_state = switching_state;
-        low_level_state.get("switching_state")->updateUint(static_cast<uint32_t>(switching_state));
+        pm_low_level_state->get("switching_state")->updateUint(static_cast<uint32_t>(switching_state));
     }
 
     if (!bricklet_reachable) {
@@ -833,9 +937,9 @@ void EnergyManager::update_energy()
         const bool     is_on = is_on_last;
         const uint32_t charge_manager_allocated_power_w = 230 * have_phases * charge_manager_allocated_current_ma / 1000; // watt
 
-        low_level_state.get("charge_manager_allocated_current")->updateUint(charge_manager_allocated_current_ma);
-        low_level_state.get("max_current_limited")->updateUint(max_current_limited_ma);
-        low_level_state.get("charging_blocked")->updateUint(charging_blocked.combined);
+        pm_low_level_state->get("charge_manager_allocated_current")->updateUint(charge_manager_allocated_current_ma);
+        pm_low_level_state->get("max_current_limited")->updateUint(max_current_limited_ma);
+        pm_low_level_state->get("charging_blocked")->updateUint(charging_blocked.combined);
 
         if (charging_blocked.combined) {
             if (is_on) {
@@ -880,7 +984,7 @@ void EnergyManager::update_energy()
 
         switch (mode) {
             case MODE_FAST:
-                power_available_w          = static_cast<int32_t>(230 * 3 * max_current_limited_ma / 1000);
+                power_available_w          = static_cast<int32_t>(230 * max_phases * max_current_limited_ma / 1000);
                 power_available_filtered_w = power_available_w;
                 break;
             case MODE_OFF:
@@ -975,12 +1079,12 @@ void EnergyManager::update_energy()
         // Need to get the time here instead of using deadline_elapsed(), to avoid stopping the charge when the phase switch deadline check fails but the start/stop deadline check succeeds.
         uint32_t time_now = millis();
 
-        low_level_state.get("power_available")->updateInt(power_available_w);
-        low_level_state.get("power_available_filtered")->updateInt(power_available_filtered_w);
-        low_level_state.get("wants_3phase")->updateBool(wants_3phase);
-        low_level_state.get("wants_3phase_last")->updateBool(wants_3phase_last);
-        low_level_state.get("is_on_last")->updateBool(is_on_last);
-        low_level_state.get("wants_on_last")->updateBool(wants_on_last);
+        pm_low_level_state->get("power_available")->updateInt(power_available_w);
+        pm_low_level_state->get("power_available_filtered")->updateInt(power_available_filtered_w);
+        pm_low_level_state->get("wants_3phase")->updateBool(wants_3phase);
+        pm_low_level_state->get("wants_3phase_last")->updateBool(wants_3phase_last);
+        pm_low_level_state->get("is_on_last")->updateBool(is_on_last);
+        pm_low_level_state->get("wants_on_last")->updateBool(wants_on_last);
 
         // Remember last decision change to start hysteresis time.
         if (wants_3phase != wants_3phase_last) {
@@ -991,10 +1095,10 @@ void EnergyManager::update_energy()
 
         bool phase_state_change_is_blocked = a_after_b(phase_state_change_blocked_until, time_now);
         bool on_state_change_is_blocked = a_after_b(on_state_change_blocked_until, time_now);
-        low_level_state.get("phase_state_change_blocked")->updateBool(phase_state_change_is_blocked);
-        low_level_state.get("phase_state_change_delay")->updateUint(phase_state_change_is_blocked ? phase_state_change_blocked_until - time_now : 0);
-        low_level_state.get("on_state_change_blocked")->updateBool(on_state_change_is_blocked);
-        low_level_state.get("on_state_change_delay")->updateUint(on_state_change_is_blocked ? on_state_change_blocked_until - time_now : 0);
+        pm_low_level_state->get("phase_state_change_blocked")->updateBool(phase_state_change_is_blocked);
+        pm_low_level_state->get("phase_state_change_delay")->updateUint(phase_state_change_is_blocked ? phase_state_change_blocked_until - time_now : 0);
+        pm_low_level_state->get("on_state_change_blocked")->updateBool(on_state_change_is_blocked);
+        pm_low_level_state->get("on_state_change_delay")->updateUint(on_state_change_is_blocked ? on_state_change_blocked_until - time_now : 0);
 
         // Check if phase switching is allowed right now.
         bool switch_phases = false;
@@ -1012,7 +1116,7 @@ void EnergyManager::update_energy()
                 switch_phases = true;
                 // Only one immediate switch on/off allowed; mark as used.
                 uptime_past_hysteresis = true;
-                low_level_state.get("uptime_past_hysteresis")->updateBool(uptime_past_hysteresis);
+                pm_low_level_state->get("uptime_past_hysteresis")->updateBool(uptime_past_hysteresis);
             } else if (just_switched_mode) {
                 // Just switched modes. Allow immediate switching.
                 logger.printfln("energy_manager: Immediate phase switch to %s after changing modes. available (filtered)=%i", wants_3phase ? "3 phases" : "1 phase", power_available_filtered_w);
@@ -1046,6 +1150,21 @@ void EnergyManager::update_energy()
         } else {
             // Check against overall minimum power, to avoid wanting to switch off when available power is below 3-phase minimum but switch to 1-phase is possible.
             bool wants_on = power_available_filtered_w >= overall_min_power_w;
+
+#if MODULE_AUTOMATION_AVAILABLE()
+            enum class AutomationWantsOn {
+                Unknown,
+                True,
+                False,
+            };
+
+            static AutomationWantsOn last_automation_wants_on = AutomationWantsOn::Unknown;
+            AutomationWantsOn automation_wants_on = wants_on ? AutomationWantsOn::True : AutomationWantsOn::False;
+            if (automation_wants_on != last_automation_wants_on) {
+                automation.trigger_action(AutomationTriggerID::EMPowerAvailable, &wants_on, trigger_action);
+                last_automation_wants_on = automation_wants_on;
+            }
+#endif
 
             // Remember last decision change to start hysteresis time.
             if (wants_on != wants_on_last) {
@@ -1094,7 +1213,7 @@ void EnergyManager::update_energy()
                     logger.printfln("energy_manager: Immediate switch-%s during start-up period, power available: %i, current available: %u", wants_on ? "on" : "off", power_available_w, current_available_ma);
                     // Only one immediate switch on/off allowed; mark as used.
                     uptime_past_hysteresis = true;
-                    low_level_state.get("uptime_past_hysteresis")->updateBool(uptime_past_hysteresis);
+                    pm_low_level_state->get("uptime_past_hysteresis")->updateBool(uptime_past_hysteresis);
                 } else if (just_switched_mode) {
                     // Just switched modes. Allow immediate switching.
                     logger.printfln("energy_manager: Immediate switch-%s after changing modes, power available: %i, current available: %u", wants_on ? "on" : "off", power_available_w, current_available_ma);
@@ -1212,6 +1331,15 @@ uint16_t EnergyManager::get_energy_meter_detailed_values(float *ret_values)
     check_bricklet_reachable(rc, "get_energy_meter_detailed_values");
 
     return rc == TF_E_OK ? len : 0;
+}
+
+bool EnergyManager::reset_energy_meter_relative_energy()
+{
+    int rc = tf_warp_energy_manager_reset_energy_meter_relative_energy(&device);
+
+    check_bricklet_reachable(rc, "reset_energy_meter_relative_energy");
+
+    return rc == TF_E_OK;
 }
 
 void EnergyManager::set_output(bool output_value)

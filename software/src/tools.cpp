@@ -728,6 +728,9 @@ void set_main_task_handle() {
 }
 
 void led_blink(int8_t led_pin, int interval, int blinks_per_interval, int off_time_ms) {
+    if (led_pin < 0)
+        return;
+
     int t_in_second = millis() % interval;
     if (off_time_ms != 0 && (interval - t_in_second <= off_time_ms)) {
         digitalWrite(led_pin, 1);
@@ -799,6 +802,44 @@ err_t dns_gethostbyname_addrtype_lwip_ctx(const char *hostname, ip_addr_t *addr,
     parameters.dns_addrtype = dns_addrtype;
 
     return esp_netif_tcpip_exec(gethostbyname_addrtype_lwip_ctx, &parameters);
+}
+
+static void gethostbyname_addrtype_lwip_ctx_async(const char */*hostname*/, const ip_addr_t *addr, void *callback_arg)
+{
+    dns_gethostbyname_addrtype_lwip_ctx_async_data *data = static_cast<dns_gethostbyname_addrtype_lwip_ctx_async_data *>(callback_arg);
+
+    data->err = ERR_OK; // ERR_OK because we got a response. Response might be negative and ipaddr a nullptr, though.
+
+    if (addr != nullptr) {
+        data->addr = *addr;
+        data->addr_ptr = &data->addr;
+    }
+    else {
+        data->addr_ptr = nullptr;
+    }
+
+    task_scheduler.scheduleOnce([data]() {
+        data->found_callback(data);
+    }, 0);
+}
+
+void dns_gethostbyname_addrtype_lwip_ctx_async(const char *hostname,
+                                               void (*found_callback)(dns_gethostbyname_addrtype_lwip_ctx_async_data *callback_arg),
+                                               dns_gethostbyname_addrtype_lwip_ctx_async_data *callback_arg,
+                                               u8_t dns_addrtype)
+{
+    callback_arg->found_callback = found_callback;
+    err_t err = dns_gethostbyname_addrtype_lwip_ctx(hostname, &callback_arg->addr, gethostbyname_addrtype_lwip_ctx_async, callback_arg, dns_addrtype);
+
+    // Don't set the callback_arg's err if the result is not available yet.
+    // The callback handler might be executed before dns_gethostbyname_addrtype_lwip_ctx returns.
+    if (err == ERR_INPROGRESS)
+        return;
+
+    callback_arg->err = err;
+    callback_arg->addr_ptr = &callback_arg->addr;
+
+    found_callback(callback_arg);
 }
 
 void trigger_reboot(const char *initiator)
@@ -878,6 +919,23 @@ time_t ms_until_time(int h, int m) {
 		delay = ms_until_datetime(NULL, NULL, &d, &h, &m, &s);
 	}
 	return delay;
+}
+
+size_t snprintf_u(char *buf, size_t len, const char *format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    int res = vsnprintf(buf, len, format, args);
+    va_end(args);
+
+    return res < 0 ? 0 : static_cast<size_t>(res);
+}
+
+size_t vsnprintf_u(char *buf, size_t len, const char *format, va_list args)
+{
+    int res = vsnprintf(buf, len, format, args);
+
+    return res < 0 ? 0 : static_cast<size_t>(res);
 }
 
 bool Ownership::try_acquire(uint32_t owner_id)

@@ -18,11 +18,9 @@
  */
 
 import $ from "../../ts/jq";
-
 import * as util from "../../ts/util";
 import * as API from "../../ts/api";
-
-import { h, render, Fragment, Component, createRef } from "preact";
+import { h, render, Fragment, Component } from "preact";
 import { __ } from "../../ts/translation";
 import { PageHeader } from "../../ts/components/page_header";
 import { FormRow } from "../../ts/components/form_row";
@@ -32,8 +30,8 @@ import { SubPage } from "../../ts/components/sub_page";
 import { OutputTextarea } from "../../ts/components/output_textarea";
 
 interface EventLogState {
-    log: string
-    show_spinner: boolean
+    log: string;
+    show_spinner: boolean;
 }
 
 const TIMESTAMP_LEN = 25;
@@ -50,7 +48,7 @@ export class EventLog extends Component<{}, EventLogState> {
         super();
 
         util.addApiEventListener("event_log/boot_id", (ev) => {
-            this.load_event_log(this.last_boot_id != ev.data.boot_id)
+            this.load_event_log(this.last_boot_id != ev.data.boot_id);
             this.last_boot_id = ev.data.boot_id;
         });
 
@@ -117,7 +115,7 @@ export class EventLog extends Component<{}, EventLogState> {
                     this.set_log(text);
                     return;
                 } else {
-                    first_new_line = new_lines[0]
+                    first_new_line = new_lines[0];
                     first_new_date = this.get_line_date(first_new_line);
                 }
 
@@ -180,7 +178,7 @@ export class EventLog extends Component<{}, EventLogState> {
             const reader = new FileReader();
             reader.onloadend = () => resolve(reader.result as string);
             reader.readAsDataURL(blob);
-        })
+        });
     }
 
     async download_debug_report() {
@@ -248,7 +246,6 @@ export function init() {
 }
 
 export function add_event_listeners(source: API.APIEventTarget) {
-
 }
 
 export function update_sidebar_state(module_init: any) {

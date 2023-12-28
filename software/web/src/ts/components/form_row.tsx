@@ -21,23 +21,55 @@ import { h, Component, createContext, Context, VNode, cloneElement, toChildArray
 import { Collapse } from "react-bootstrap";
 import { HelpCircle } from "react-feather";
 
+import { InputFloat } from "./input_float";
+import { InputIndicator } from "./input_indicator";
+import { InputIP } from "./input_ip";
+import { InputNumber } from "./input_number";
+import { InputPassword } from "./input_password";
+import { InputSelect } from "./input_select";
+import { OutputDatetime } from "./output_datetime";
+import { Switch } from "./switch";
+import { InputDate } from "./input_date";
+import { InputFile } from "./input_file";
+import { InputText } from "./input_text";
+import { InputTime } from "./input_time";
+import { InputMonth } from "./input_month";
+import { OutputFloat } from "./output_float";
+
 export interface FormRowProps {
-    label: ComponentChildren
-    label_muted?: ComponentChildren
+    label: ComponentChildren;
+    label_muted?: ComponentChildren;
     // Don't use ComponentChildren here: We want to pass in the idContext. This only works on VNodes.
-    children: VNode | VNode[]
-    labelColClasses?: string
-    contentColClasses?: string
-    hidden?: boolean
-    label_prefix ?: VNode
-    label_infix ?: VNode
-    label_suffix ?: VNode
-    help?: ComponentChildren
-    error?: ComponentChildren
-    small?: boolean
+    children: VNode | VNode[];
+    labelColClasses?: string;
+    contentColClasses?: string;
+    hidden?: boolean;
+    label_prefix?: VNode;
+    label_infix?: VNode;
+    label_suffix?: VNode;
+    help?: ComponentChildren;
+    error?: ComponentChildren;
+    small?: boolean;
 }
 
 let id_counter = 0;
+
+const components_using_id_context: any = [
+    InputDate,
+    InputFile,
+    InputFloat,
+    InputIndicator,
+    InputIP,
+    InputMonth,
+    InputNumber,
+    InputPassword,
+    InputSelect,
+    InputText,
+    InputTime,
+    OutputDatetime,
+    OutputFloat,
+    Switch,
+];
 
 export class FormRow extends Component<FormRowProps, {help_expanded: boolean}> {
     idContext: Context<string>;
@@ -51,7 +83,9 @@ export class FormRow extends Component<FormRowProps, {help_expanded: boolean}> {
     }
 
     render(props: FormRowProps, state: {help_expanded: boolean}) {
-        let inner = <>{(toChildArray(props.children) as VNode[]).map(c => cloneElement(c, {idContext: this.idContext}))}</>;
+        let use_id_context = !toChildArray(props.children).every(c => typeof(c) == "string" || typeof(c) == "number" || components_using_id_context.indexOf(c.type) == -1)
+
+        let inner = use_id_context ? <>{(toChildArray(props.children) as VNode[]).map(c => cloneElement(c, {idContext: this.idContext}))}</> : props.children;
         if (props.contentColClasses === undefined || props.contentColClasses !== "")
             inner = <div class={props.contentColClasses === undefined ? "col-lg-9" : props.contentColClasses}>
                 {inner}
@@ -71,7 +105,7 @@ export class FormRow extends Component<FormRowProps, {help_expanded: boolean}> {
 
         return (
             <div class="form-group row" hidden={props.hidden == undefined ? false : props.hidden}>
-                <label for={this.id} class={"col-form-label " + (props.small ? "col-form-label-sm " : "") + "pt-0 pt-lg-col-form-label " + (props.labelColClasses === undefined ? "col-lg-3" : props.labelColClasses)}>
+                <label for={use_id_context ? this.id : undefined} class={"col-form-label " + (props.small ? "col-form-label-sm " : "") + "pt-0 pt-lg-col-form-label " + (props.labelColClasses === undefined ? "col-lg-3" : props.labelColClasses)}>
                     <div class="row mx-lg-0">
                         <div class="col px-lg-0">
                     {props.label_prefix ? props.label_prefix : undefined}

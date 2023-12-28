@@ -39,16 +39,12 @@
 // are registered.
 void set_data_storage(uint8_t *buf)
 {
-#if MODULE_EVSE_COMMON_AVAILABLE()
     evse_common.set_data_storage(DATA_STORE_PAGE_CHARGE_TRACKER, buf);
-#endif
 }
 
 void get_data_storage(uint8_t *buf)
 {
-#if MODULE_EVSE_COMMON_AVAILABLE()
     evse_common.get_data_storage(DATA_STORE_PAGE_CHARGE_TRACKER, buf);
-#endif
 }
 
 void zero_user_slot_info()
@@ -60,25 +56,19 @@ void zero_user_slot_info()
 
 uint8_t get_charger_state()
 {
-#if MODULE_EVSE_COMMON_AVAILABLE()
     return evse_common.get_state().get("charger_state")->asUint();
-#endif
-    return 0;
 }
 
 Config *get_user_slot()
 {
-#if MODULE_EVSE_COMMON_AVAILABLE()
     return (Config *)evse_common.get_slots().get(CHARGING_SLOT_USER);
-#endif
-    return nullptr;
 }
 
 float get_energy()
 {
-    bool meter_avail = meter.state.get("state")->asUint() == 2;
-    // If for some reason we decide to use energy_rel here, also update the energy_this_charge calculation in modbus_tcp.cpp
-    return !meter_avail ? NAN : meter.values.get("energy_abs")->asFloat();
+    float energy = NAN;
+    evse_common.get_charger_meter_energy(&energy);
+    return energy;
 }
 
 #define USER_SLOT_INFO_VERSION 1
@@ -181,7 +171,7 @@ void Users::pre_setup()
         {"display_name", Config::Str("", 0, USERNAME_LENGTH)},
         {"username", Config::Str("", 0, USERNAME_LENGTH)},
         {"digest_hash", Config::Str("", 0, 32)},
-    }), [this](Config &add) -> String {
+    }), [this](Config &add, ConfigSource source) -> String {
         if (config.get("next_user_id")->asUint() == 0)
             return "Can't add user. All user IDs in use.";
 
@@ -212,7 +202,7 @@ void Users::pre_setup()
 
     remove = ConfigRoot(Config::Object({
         {"id", Config::Uint8(0)}
-    }), [this](Config &remove) -> String {
+    }), [this](Config &remove, ConfigSource source) -> String {
         if (remove.get("id")->asUint() == 0)
             return "The anonymous user can't be removed.";
 
@@ -227,7 +217,7 @@ void Users::pre_setup()
 
     http_auth_update = ConfigRoot(Config::Object({
         {"enabled", Config::Bool(false)}
-    }), [this](Config &update) -> String {
+    }), [this](Config &update, ConfigSource source) -> String {
         if (!update.get("enabled")->asBool())
             return "";
 
@@ -276,31 +266,8 @@ void Users::setup()
 
     if (charge_start_tracked && !charging) {
         float override_value = get_energy();
-
-        // This can be 0 if the EVSE 2.0 already reports the meter as available,
-        // but has not read any value from it.
-        if (std::isnan(override_value) || override_value == 0.0f)
-        {
-            auto start = millis();
-#if MODULE_EVSE_AVAILABLE() && MODULE_MODBUS_METER_AVAILABLE()
-            while(!deadline_elapsed(start + 10000) && meter.values.get("energy_abs")->asFloat() == 0)
-            {
-                modbus_meter.checkRS485State();
-                modbus_meter.loop();
-                delay(50);
-            }
-            override_value = meter.values.get("energy_abs")->asFloat();
-#elif MODULE_EVSE_V2_AVAILABLE()
-            while(!deadline_elapsed(start + 10000) && evse_v2.energy_meter_values.get("energy_abs")->asFloat() == 0)
-            {
-                evse_v2.update_all_data();
-                delay(250);
-            }
-            override_value = evse_v2.energy_meter_values.get("energy_abs")->asFloat();
-#endif
-        }
-
-        // ChargeTracker::endCharge replaces 0 with NAN.
+        // The energy value can be NaN if the meter is not readable yet.
+        // This will be repaired when starting the next charge.
         this->stop_charging(0, true, override_value);
     }
 
@@ -437,6 +404,14 @@ int Users::get_display_name(uint8_t user_id, char *ret_buf)
     f.seek(user_id * USERNAME_ENTRY_LENGTH + USERNAME_LENGTH, SeekMode::SeekSet);
     f.read((uint8_t *) ret_buf, DISPLAY_NAME_LENGTH);
     return strnlen(ret_buf, 32);
+}
+
+bool Users::is_user_configured(uint8_t user_id) {
+    for (auto &cfg : config.get("users"))
+        if (cfg.get("id")->asUint() == user_id)
+            return true;
+
+    return false;
 }
 
 static void check_waiting_for_start(Config *ignored) {
@@ -610,7 +585,7 @@ void Users::register_urls()
         if (doc["digest_hash"] != nullptr)
             user->get("digest_hash")->updateString(doc["digest_hash"]);
 
-        String err = this->config.validate();
+        String err = this->config.validate(ConfigSource::API);
         if (err != "")
             return err;
 
@@ -658,13 +633,7 @@ void Users::register_urls()
         API::writeConfig("users/config", &config);
 
 #if MODULE_NFC_AVAILABLE()
-        Config *tags = (Config *)nfc.config.get("authorized_tags");
-
-        for(int i = 0; i < tags->count(); ++i) {
-            if(tags->get(i)->get("user_id")->asUint() == remove.get("id")->asUint())
-                tags->get(i)->get("user_id")->updateUint(0);
-        }
-        API::writeConfig("nfc/config", &nfc.config);
+        nfc.remove_user(remove.get("id")->asUint());
 #endif
 
         if (!charge_tracker.is_user_tracked(remove.get("id")->asUint()))

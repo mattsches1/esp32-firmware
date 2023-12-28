@@ -347,10 +347,14 @@ def specialize_template(template_filename, destination_filename, replacements, c
     if check_completeness and replaced != set(replacements.keys()):
         raise Exception('Not all replacements for {0} have been applied. Missing are {1}'.format(template_filename, ', '.join(set(replacements.keys() - replaced))))
 
-    write_file_if_different(destination_filename, "".join(lines))
+    if destination_filename != None:
+        write_file_if_different(destination_filename, "".join(lines))
 
     if remove_template:
         os.remove(template_filename)
+
+    if destination_filename == None:
+        return ''.join(lines)
 
 def file_to_data_url(path):
     with open(path, 'rb') as f:
@@ -368,7 +372,7 @@ def file_to_embedded_ts(path):
     data_url = file_to_data_url(path)
     basename = os.path.basename(path).replace(".", "_")
     path = path.replace(os.path.basename(path), basename)
-    with open(path + ".embedded.ts", 'w') as f:
+    with open(path + ".embedded.ts", 'w', encoding='utf-8') as f:
         f.write('export let {} = "{}";'.format(basename, data_url))
 
 FrontendPlugin = collections.namedtuple('FrontendPlugin', 'module_name import_name interface_names')
@@ -403,7 +407,6 @@ def find_frontend_plugins(host_module_name, plugin_name):
 
             file_path = os.path.join(module_path, file_name)
             interface_names = []
-            #interface_re = re.compile(r'^export\s+(?:interface|type)\s+({0}_{1}_[A-Za-z0-9_]+)[^A-Za-z0-9_]*$'.format(host_module_name.camel, plugin_name.camel))
             interface_re = re.compile(r'^export\s+(?:interface|type)\s+([A-Za-z0-9_]+{0}{1})[^A-Za-z0-9_]*$'.format(host_module_name.camel, plugin_name.camel))
 
             with open(file_path, 'r', encoding='utf-8') as f:

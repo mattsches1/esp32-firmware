@@ -18,12 +18,9 @@
  */
 
 import $ from "../../ts/jq";
-
 import * as API from "../../ts/api";
 import * as util from "../../ts/util";
-
 import { h, render, Fragment } from "preact";
-
 import { ConfigComponent } from "../../ts/components/config_component";
 import { OutputDatetime } from "../../ts/components/output_datetime";
 import { FormRow } from "../../ts/components/form_row";
@@ -36,7 +33,7 @@ type RTCTime = API.getType['rtc/time'];
 type RTCConfig = API.getType['rtc/config'];
 
 interface RtcPageState {
-    state: RTCTime
+    state: RTCTime;
 }
 
 export class Rtc extends ConfigComponent<'rtc/config', {}, RtcPageState> {
@@ -45,36 +42,37 @@ export class Rtc extends ConfigComponent<'rtc/config', {}, RtcPageState> {
               __("rtc.script.save_failed"),
               __("rtc.script.reboot_content_changed"));
 
-        util.addApiEventListener("rtc/time", () =>{
+        util.addApiEventListener("rtc/time", () => {
             let time = API.get("rtc/time");
 
-            if (!this.state.state)
-            {
+            if (!this.state.state) {
                 window.setTimeout(() => {
                     if (API.get("rtc/config").auto_sync && !API.get("ntp/state").synced)
                         this.set_current_time();
                 }, 1000);
             }
 
-            this.setState({state:{ year: time.year,
-                                    month: time.month,
-                                    day: time.day,
-                                    hour: time.hour,
-                                    minute: time.minute,
-                                    second: time.second,
-                                    weekday: time.weekday}});
+            this.setState({
+                state: {
+                    year: time.year,
+                    month: time.month,
+                    day: time.day,
+                    hour: time.hour,
+                    minute: time.minute,
+                    second: time.second,
+                    weekday: time.weekday,
+                },
+            });
         });
     }
 
-    add_leading_zero(i: number)
-    {
+    add_leading_zero(i: number) {
         if (i > 9)
             return i.toString();
         return '0' + i.toString();
     }
 
-    set_current_time()
-    {
+    set_current_time() {
         let date = new Date();
         let time: RTCTime = {
             year: date.getUTCFullYear(),
@@ -83,12 +81,11 @@ export class Rtc extends ConfigComponent<'rtc/config', {}, RtcPageState> {
             hour: date.getUTCHours(),
             minute: date.getUTCMinutes(),
             second: date.getUTCSeconds(),
-            weekday: date.getUTCDay()
+            weekday: date.getUTCDay(),
         };
 
         API.save("rtc/time", time, __("rtc.script.save_failed"));
     }
-
 
     render(props: {}, state: RTCConfig & RtcPageState) {
         if (!util.render_allowed() || !API.hasFeature("rtc"))
@@ -123,13 +120,13 @@ export class Rtc extends ConfigComponent<'rtc/config', {}, RtcPageState> {
         }
 }
 
+export function init() {
+}
 render(<Rtc />, $("#rtc")[0]);
 
 export function add_event_listeners(source: API.APIEventTarget) {
     source.addEventListener('info/features', () => $('#sidebar-rtc').prop('hidden', !API.hasFeature('rtc')));
 }
 
-export function init() {
+export function update_sidebar_state(module_init: any) {
 }
-
-export function update_sidebar_state(module_init: any) {}

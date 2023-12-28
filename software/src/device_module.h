@@ -62,6 +62,17 @@ public:
 
     }
 
+    virtual void pre_setup() override {
+        identity = Config::Object({
+            {"uid", Config::Str("", 0, 8)},
+            {"connected_uid", Config::Str("", 0, 8)},
+            {"position", Config::Str("", 0, 1)},
+            {"hw_version", Config::Str("", 0, 12)},
+            {"fw_version", Config::Str("", 0, 12)},
+            {"device_identifier", Config::Uint16(123)}
+        });
+    }
+
     uint16_t get_device_id()
     {
         return firmware[firmware_len - FIRMWARE_DEVICE_IDENTIFIER_OFFSET] | (firmware[firmware_len - FIRMWARE_DEVICE_IDENTIFIER_OFFSET + 1] << 8);
@@ -112,20 +123,12 @@ public:
             return false;
         }
 
-        identity = Config::Object({
-            {"uid", Config::Str("", 0, 8)},
-            {"connected_uid", Config::Str("", 0, 8)},
-            {"position", Config::Str("", 0, 1)},
-            {"hw_version", Config::Str("", 0, 12)},
-            {"fw_version", Config::Str("", 0, 12)},
-            {"device_identifier", Config::Uint16(123)}
-        });
 
         update_identity(tfp);
         return true;
     }
 
-    void register_urls()
+    void register_urls() override
     {
         api.addCommand(url_prefix + "/reflash", Config::Null(), {}, [this]() {
             uint16_t device_id = get_device_id();
@@ -145,7 +148,7 @@ public:
         api.addState(url_prefix + "/identity", &identity, {}, 1000);
     }
 
-    void loop()
+    void loop() override
     {
         if (device_found && !initialized && deadline_elapsed(last_check + 10000)) {
             last_check = millis();

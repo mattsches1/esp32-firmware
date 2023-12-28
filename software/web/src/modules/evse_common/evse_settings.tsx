@@ -20,16 +20,15 @@
 
 import * as util from "../../ts/util";
 import * as API from "../../ts/api";
-
-import {  h, Fragment } from "preact";
+import { h, Fragment } from "preact";
 import { __ } from "../../ts/translation";
 import { FormRow } from "../../ts/components/form_row";
-import { SubPage } from "src/ts/components/sub_page";
+import { SubPage } from "../../ts/components/sub_page";
 import { EVSE_SLOT_EXTERNAL } from "./api";
-import { ConfigComponent } from "src/ts/components/config_component";
-import { InputSelect } from "src/ts/components/input_select";
-import { ConfigForm } from "src/ts/components/config_form";
-import { Switch } from "src/ts/components/switch";
+import { ConfigComponent } from "../../ts/components/config_component";
+import { InputSelect } from "../../ts/components/input_select";
+import { ConfigForm } from "../../ts/components/config_form";
+import { Switch } from "../../ts/components/switch";
 
 interface EVSESettingsState {
     button_cfg: API.getType['evse/button_configuration']
@@ -40,7 +39,6 @@ interface EVSESettingsState {
     auto_start_charging: API.getType['evse/auto_start_charging'];
     require_meter_enabled: API.getType['require_meter/config'];
     led_configuration: API.getType['evse/led_configuration'];
-    meter_abs: number
     evse_uptime: number
     is_evse_v2: boolean
 }
@@ -76,10 +74,6 @@ export class EVSESettings extends ConfigComponent<"charge_limits/default_limits"
 
         util.addApiEventListener('evse/slots', () => {
             this.setState({slots: API.get('evse/slots')});
-        });
-
-        util.addApiEventListener("meter/values", () => {
-            this.setState({meter_abs: API.get("meter/values").energy_abs});
         });
 
         util.addApiEventListener("evse/low_level_state", () => {

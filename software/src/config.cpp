@@ -117,6 +117,9 @@ Config Config::Object(std::initializer_list<std::pair<String, Config>> obj)
     if (boot_stage < BootStage::PRE_SETUP)
         esp_system_abort("constructing configs before the pre_setup is not allowed!");
 
+    if (boot_stage >= BootStage::LOOP)
+        esp_system_abort("constructing configs in the loop phase is not allowed!");
+
     return Config{ConfObject{obj}};
 }
 
@@ -331,7 +334,7 @@ bool Config::remove(size_t i)
     return true;
 }
 
-ssize_t Config::count() const
+size_t Config::count() const
 {
     ASSERT_MAIN_THREAD();
     if (!this->is<Config::ConfArray>()) {
@@ -614,17 +617,22 @@ template<typename T>
 static void shrinkToFit(typename T::Slot * &buf, size_t &buf_size) {
     ASSERT_MAIN_THREAD();
     size_t highest = 0;
+    int empty = 0;
     for (size_t i = 0; i < buf_size; i++)
         if (!T::slotEmpty(i))
             highest = i;
+        else
+            ++empty;
 
-    auto new_buf = T::allocSlotBuf(highest + SLOT_HEADROOM);
+    auto new_size = highest + 1 + std::max(0, SLOT_HEADROOM - empty);
+    auto new_buf = T::allocSlotBuf(new_size);
 
     for(size_t i = 0; i <= highest; ++i)
         new_buf[i] = std::move(buf[i]);
+
     T::freeSlotBuf(buf);
     buf = new_buf;
-    buf_size = highest + SLOT_HEADROOM;
+    buf_size = new_size;
 }
 
 void config_post_setup() {

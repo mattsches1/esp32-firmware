@@ -29,17 +29,21 @@ let x = {
             "iec_state_d": "D (nicht unterstützt)",
             "iec_state_ef": "E/F (Fehler)",
             "contactor_state": "Schützprüfung",
-            "contactor_names": "vor Schütz, nach Schütz, Zustand",
+            "contactor_names": /*SFN*/(is_evse_v3: boolean) => is_evse_v3 ? "Schütz L1+N, Schütz L2+L3, Zustand" : "vor Schütz, nach Schütz, Zustand"/*NF*/,
             "contactor_not_live": "Stromlos",
             "contactor_live": "Stromführend",
             "contactor_ok": "OK",
-            "contactor_error": "Fehler",
+            "contactor_error": /*SFN*/(contactor_error: number) => {
+                if (contactor_error == 0)
+                    return "Fehler";
+                return "Fehlercode " + contactor_error.toString();
+                }/*NF*/,
             "allowed_charging_current": "Erlaubter Ladestrom",
             "error_state": "Fehlerzustand",
             "error_state_desc": <><a href="{{{manual_url}}}">siehe Betriebsanleitung für Details</a></>,
             "error_ok": "OK",
             "error_switch": "Schalter",
-            "error_contactor": "Schütz",
+            "error_contactor": /*SFN*/(pe_error: boolean, contactor_error: boolean) => (contactor_error == pe_error ? "Schütz/PE" : (pe_error ? "PE" : "Schütz"))/*NF*/,
             "error_communication": "Kommunikation",
             "lock_state": "Kabelverriegelung",
             "lock_init": "Start",
@@ -49,7 +53,6 @@ let x = {
             "lock_opening": "Öffnend",
             "lock_error": "Fehler",
             "time_since_state_change": "Zeit seit Zustandswechsel",
-            "state_change": "Fahrzeugstatus gewechselt auf",
             "uptime": "Laufzeit",
             "configuration": "Hardware-Konfiguration",
             "has_lock_switch": "Kabelverriegelung vorhanden",
@@ -68,14 +71,10 @@ let x = {
             "led_state": "LED-Zustand",
             "led_state_off": "Aus",
             "led_state_on": "An",
-            "led_state_blinking": "Bestätigendes Blinken",
-            "led_state_flickering": "Ablehnendes Blinken",
-            "led_state_breathing": "Auffordendes Blinken",
-            "led_state_error": /*SFN*/(count: number) => {
-                return "Blinken (" + count + "x)";
-            }/*NF*/,
+            "led_state_blinking": "Blinkend",
+            "led_state_flickering": "Flackernd",
+            "led_state_breathing": "Atmend",
             "led_state_api": "API",
-            "led_duration": "Dauer",
             "cp_pwm_dc": "CP-PWM-Tastverhältnis",
             "adc_values": "ADC-Werte",
             "voltages": "Spannungen",
@@ -89,16 +88,11 @@ let x = {
             "debug_stop": "Stop+Download",
             "debug_description": "Ladeprotokoll erstellen",
             "debug_description_muted": "zur Diagnose bei Ladeproblemen",
-            "active_high": "Wenn geöffnet",
-            "active_low": "Wenn geschlossen",
-            "gpio_state": "Status",
             "gpio_out_high": "Hochohmig",
             "gpio_out_low": "Verbunden mit Masse",
             "gpio_out": "Konfigurierbarer Ausgang",
             "gpio_in": "Konfigurierbarer Eingang",
             "gpio_shutdown": "Abschalteingang",
-            "button_pressed": "Drücken des Tasters",
-            "button_released": "Loslassen des Tasters",
             "button_configuration": "Tastereinstellung",
 
             "auto_start_description": "Manuelle Ladefreigabe",
@@ -122,12 +116,8 @@ let x = {
             "meter_monitoring": "Zählerüberwachung",
             "meter_monitoring_desc": "Überwacht den Stromzähler und blockiert Ladevorgänge im Falle eines Defekts.",
 
-            "enable_led_api": "Status-LED Steuerung",
+            "enable_led_api": "Status-LED-Steuerung",
             "enable_led_api_desc": "Erlaubt die externe Steuerung der Status-LED.",
-            "api_must_be_enabled": "Die API muss aktiviert sein, um die Status-LED steuern zu können.",
-            "cron_state_change_trigger": /*FFN*/(state: string) => <>Wenn der Ladecontroller in den Zustand "<b>{state}</b>" wechselt,{" "}</>/*NF*/,
-            "cron_action_text": /*FFN*/(current: number) => <>setze den erlaubten Ladestrom auf <b>{current} A</b>.</>/*NF*/,
-            "cron_led_action_text": /*FFN*/(state: string, duration: number) => (state == "An" || state == "Aus") ? <>schalte die Status-LED für <b>{duration / 1000} Sekunden</b> <b>{state}</b>.</> : <>zeige <b>{state}</b> für <b>{duration / 1000} Sekunden</b> auf der Status-LED.</>/*NF*/,
 
             "slot": /*SFN*/(i: number) => { return {
                 0: "Zuleitung",
@@ -144,7 +134,7 @@ let x = {
                 11: "OCPP",
                 12: "Energie-/Zeitlimit",
                 13: "Zählerüberwachung",
-                14: "Cron"
+                14: "Automatisierung"
             }[i];}/*NF*/,
 
             // EVSE V1 only
@@ -185,7 +175,7 @@ let x = {
             "active_high_suffix": " wenn geöffnet",
 
             "todo": "Ideen bzw. Wünsche? Schreib eine Mail an info@tinkerforge.com",
-            "gpio_in_muted": "Kann als GPIO 16 gelesen werden",
+            "gpio_in_muted": "kann als GPIO 16 gelesen werden",
             "gpio_out_muted": <><a href="https://de.wikipedia.org/wiki/Open-Collector-Ausgang">Open-Collector-Ausgang</a></>,
             "button_configuration_muted": "Aktion, die bei Druck des Tasters ausgeführt wird.",
             "button_configuration_deactivated": "Keine Aktion",
@@ -200,11 +190,13 @@ let x = {
             "dc_fault_current_state": "DC-Fehlerstromzustand",
             "dc_fault_current_state_desc": "",
             "dc_fault_current_ok": "OK",
-            "dc_fault_current_6_ma": "Gleichstromfehler",
+            "dc_fault_current_6_ma": "DC-Fehler",
             "dc_fault_current_system": "Systemfehler",
             "dc_fault_current_unknown": "Unbekannter Fehler",
-            "dc_fault_current_calibration": "Kalibrierungsfehler",
+            "dc_fault_current_calibration": /*SFN*/ (dc_fault_state: number, dc_fault_pins: number) => "Kalibrierungsfehler" + (dc_fault_state != 0 ? (": " + dc_fault_pins.toString()) : "")/*NF*/,
             "dc_fault_current_reset": "Zurücksetzen",
+            "dc_fault_current_20_ma": "AC-Fehler",
+            "dc_fault_current_6_ma_20_ma": "AC- und DC-Fehler",
 
             "reset_dc_fault_title": "Zurücksetzen des DC-Fehlerstromschutzmoduls",
             "reset_dc_fault_content": <>Durch das Zurücksetzen des Moduls kann wieder geladen werden. <b>Es muss sichergestellt sein, dass der Grund für das Auslösen des Moduls behoben wurde!</b> <a href="{{{manual_url}}}">Siehe Betriebsanleitung für Details.</a> Soll das DC-Fehlerstromschutzmodul wirklich zurückgesetzt werden?</>,
@@ -213,18 +205,43 @@ let x = {
             "trigger_dc_fault_test": "DC-Fehlerschutz testen",
             "time_since_dc_fault_check": "Zeit seit dem letzten DC-Fehlerschutztest",
 
-            "cron_sd_trigger_text": /*FFN*/(state: boolean) => <>Wenn der Abschalteingang <b>{state ? "geöffnet" : "geschlossen"}</b> wird,{" "}</>/*NF*/,
-            "cron_gpin_trigger_text": /*FFN*/(state: boolean) => <>Wenn der Konfigurierbare Eingang <b>{state ? "geöffnet" : "geschlossen"}</b> wird,{" "}</>/*NF*/,
-            "cron_button_trigger_text": /*FFN*/(state: boolean) => <>Wenn der Fronttaster <b>{state ? "gedrückt" : "losgelassen"}</b> wird,{" "}</>/*NF*/,
-            "cron_gpout_action_text": /*FFN*/(state: number) => state ? <><b>schalte</b> den Konfigurierbaren Ausgang <b>hochohmig</b>.</> : <><b>verbinde</b> den Konfigurierbaren Ausgang <b>mit Masse</b>.</>/*NF*/,
-
             // EVSE version specific value for common placeholder
             "error_2": /*SFN*/(is_evse_v2: boolean) => is_evse_v2 ? "DC-Fehlerstromschutz" : "Kalibrierung"  /*NF*/,
             "adc_names": /*FFN*/(is_evse_v2: boolean) => is_evse_v2 ? <>CP/PE vor Widerstand (PWM High), CP/PE nach Widerstand (PWM High)<br/>CP/PE vor Widerstand (PWM Low), CP/PE nach Widerstand (PWM Low)<br/>PP/PE, +12V Rail<br/>-12V Rail</> : <>CP/PE, PP/PE</> /*NF*/,
-            "voltage_names": /*FFN*/(is_evse_v2: boolean) => is_evse_v2 ? <>CP/PE vor Widerstand (PWM High), CP/PE nach Widerstand (PWM High)<br/>CP/PE vor Widerstand (PWM Low), CP/PE nach Widerstand (PWM Low)<br/>PP/PE, +12V Rail<br/>-12V Rail</> : <>CP/PE, PP/PE,<br/> CP/PE (high)</> /*NF*/
+            "voltage_names": /*FFN*/(is_evse_v2: boolean) => is_evse_v2 ? <>CP/PE vor Widerstand (PWM High), CP/PE nach Widerstand (PWM High)<br/>CP/PE vor Widerstand (PWM Low), CP/PE nach Widerstand (PWM Low)<br/>PP/PE, +12V Rail<br/>-12V Rail</> : <>CP/PE, PP/PE,<br/> CP/PE (high)</> /*NF*/,
+            "dc_fault_sensor_type": "Version des DC-Fehlerschutzsensors",
+            "dc_fault_pins": "Pins des DC-Fehlerschutzsensors",
+            "temperature": "Temperatur",
+            "phases_current": "Phasen geschaltet",
+            "phases_requested": "Phasen angefordert",
+            "phases_status": "Status der Phasenumschaltung",
+            "switch_to_one_phase": "Umschalten auf einphasig",
+            "switch_to_three_phases": "Umschalten auf dreiphasig"
+        },
+        "automation" : {
+            "external_current_wd": "Watchdog der externen Steuerung",
+            "external_current_wd_trigger": <>Wenn der <b>Watchdog</b> der <b>externen</b> Steuerung auslöst, </>,
+            "api_must_be_enabled": "Die API muss aktiviert sein, um die Status-LED steuern zu können.",
+            "state_change": "Fahrzeugstatus gewechselt",
+            "led_duration": "Dauer",
+            "led_state": "LED-Zustand",
+            "led_state_off": "Aus",
+            "led_state_on": "An",
+            "led_state_blinking": "Bestätigendes Blinken",
+            "led_state_flickering": "Ablehnendes Blinken",
+            "led_state_breathing": "Auffordendes Blinken",
+            "led_state_error": /*SFN*/(count: number) => {
+                return "Blinken (" + count + "x)";
+            }/*NF*/,
+            "from": "Von",
+            "to": "Zu",
+            "any": "Beliebiger Status",
+            "allowed_charging_current": "Erlaubter Ladestrom",
+            "automation_state_change_trigger": /*FFN*/(old_state: string, new_state: string) => <>Wenn der Fahrzeugstatus von "<b>{old_state}</b>" auf "<b>{new_state}</b>" wechselt,{" "}</>/*NF*/,
+            "automation_action_text": /*FFN*/(current: string) => <>setze den erlaubten Ladestrom auf <b>{current} A</b>.</>/*NF*/,
+            "automation_led_action_text": /*FFN*/(state: string, duration: number) => (state == "An" || state == "Aus") ? <>schalte die Status-LED für <b>{duration / 1000} Sekunden</b> <b>{state}</b>.</> : <>zeige <b>{state}</b> für <b>{duration / 1000} Sekunden</b> auf der Status-LED.</>/*NF*/
         },
         "script": {
-            "error_code": "Fehlercode",
             "set_charging_current_failed": "Konnte Ladestrom nicht setzen",
             "start_charging_failed": "Ladestart auslösen fehlgeschlagen",
             "stop_charging_failed": "Ladestop auslösen fehlgeschlagen",
@@ -266,7 +283,7 @@ let x = {
                 11: "OCPP",
                 12: "Energie-/Zeitlimit",
                 13: "Zählerüberwachung",
-                14: "Cron"
+                14: "Automation"
             }[i];}/*NF*/,
 
             "reboot_content_changed": "Ladeeinstellungen",
@@ -279,9 +296,11 @@ let x = {
             "gpio_configuration_failed": "Speichern der GPIO-Konfiguration fehlgeschlagen",
 
             "meter_type_0": "Kein Stromzähler angeschlossen",
-            "meter_type_1": "SDM72",
-            "meter_type_2": "SDM630",
-            "meter_type_3": "SDM72V2",
+            "meter_type_1": "Eastron SDM72",
+            "meter_type_2": "Eastron SDM630",
+            "meter_type_3": "Eastron SDM72V2",
+            "meter_type_6": "Eltako DSZ15DZMOD",
+            "meter_type_7": "YTL DEM4A",
             "meter_type_254": "intern"
         }
     }

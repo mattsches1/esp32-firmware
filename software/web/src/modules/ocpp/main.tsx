@@ -18,24 +18,21 @@
  */
 
 import $ from "../../ts/jq";
-
 import * as API from "../../ts/api";
 import * as util from "../../ts/util";
-
 import { h, render, Component, Fragment } from "preact";
 import { translate_unchecked, __ } from "../../ts/translation";
-
 import { Switch } from "../../ts/components/switch";
 import { FormRow } from "../../ts/components/form_row";
 import { InputText } from "../../ts/components/input_text";
 import { ConfigForm } from "../../ts/components/config_form";
 import { ConfigComponent } from "../../ts/components/config_component";
 import { Button } from "react-bootstrap";
-import { CollapsedSection } from "src/ts/components/collapsed_section";
-import { InputPassword } from "src/ts/components/input_password";
-import { IndicatorGroup } from "src/ts/components/indicator_group";
-import { SubPage } from "src/ts/components/sub_page";
-import { InputSelect } from "src/ts/components/input_select";
+import { CollapsedSection } from "../../ts/components/collapsed_section";
+import { InputPassword } from "../../ts/components/input_password";
+import { IndicatorGroup } from "../../ts/components/indicator_group";
+import { SubPage } from "../../ts/components/sub_page";
+import { InputSelect } from "../../ts/components/input_select";
 
 type OcppConfig = API.getType["ocpp/config"];
 
@@ -124,7 +121,11 @@ export class Ocpp extends ConfigComponent<'ocpp/config', {}, OcppState> {
                     <FormRow label={__("ocpp.content.pass")}>
                         <InputPassword maxLength={64}
                                        value={state.pass}
-                                       onValue={this.set("pass")}/>
+                                       onValue={s => {
+                                           this.setState({pass: s});
+                                           if (s != null && s.length > 0)
+                                               this.setState({enable_auth: true});
+                                       }}/>
                     </FormRow>
                     <FormRow label={__("ocpp.content.reset")} label_muted={__("ocpp.content.reset_muted")}>
                         <Button variant="danger" className="form-control" onClick={async () =>{
@@ -255,11 +256,11 @@ export class Ocpp extends ConfigComponent<'ocpp/config', {}, OcppState> {
     }
 }
 
-render(<Ocpp/>, $('#ocpp')[0])
+render(<Ocpp />, $("#ocpp")[0]);
 
 interface OcppStatusState {
-    state: API.getType['ocpp/state']
-    config: API.getType['ocpp/config'];
+    state: API.getType["ocpp/state"];
+    config: API.getType["ocpp/config"];
 }
 
 export class OcppStatus extends Component<{}, OcppStatusState>
@@ -361,9 +362,11 @@ export class OcppStatus extends Component<{}, OcppStatusState>
 
 render(<OcppStatus />, $("#status-ocpp")[0]);
 
-export function add_event_listeners(source: API.APIEventTarget) {}
+export function init() {
+}
 
-export function init() {}
+export function add_event_listeners(source: API.APIEventTarget) {
+}
 
 export function update_sidebar_state(module_init: any) {
     $("#sidebar-ocpp").prop("hidden", !module_init.ocpp);

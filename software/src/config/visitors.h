@@ -91,11 +91,11 @@ struct default_validator {
 
     String operator()(const Config::ConfObject &x) const
     {
-        for (const std::pair<String, Config> &elem : *x.getVal()) {
-            String err = Config::apply_visitor(default_validator{}, elem.second.value);
+        for (size_t i = 0; i < x.getSlot()->schema->length; ++i) {
+            String err = Config::apply_visitor(default_validator{}, x.getSlot()->values[i].value);
 
             if (err != "")
-                return String("[\"") + elem.first.c_str() + "\"] " + err;
+                return String("[\"") + x.getSlot()->schema->keys[i] + "\"] " + err;
         }
 
         return "";
@@ -155,14 +155,14 @@ struct to_json {
     }
     void operator()(const Config::ConfObject &x)
     {
-        const auto *val = x.getVal();
-        const auto size = val->size();
+        const auto *slot = x.getSlot();
+        const auto *schema = slot->schema;
+        const auto size = schema->length;
 
         JsonObject obj = insertHere.as<JsonObject>();
         for (size_t i = 0; i < size; ++i) {
-            const auto &val_pair = (*val)[i];
-            const char *key = val_pair.first.c_str();
-            const Config &child = val_pair.second;
+            const char *key = schema->keys[i];
+            const Config &child = slot->values[i];
 
             if (child.is<Config::ConfObject>()) {
                 obj.createNestedObject(key);
@@ -202,6 +202,36 @@ struct to_json {
     const std::vector<String> &keys_to_censor;
 };
 
+static const uint8_t leading_zeros_to_char_count[33] = {10,10,10,9,9,9,8,8,8,7,7,7,7,6,6,6,5,5,5,4,4,4,4,3,3,3,2,2,2,1,1,1,1};
+
+// Never underestimates length. Overestimates by 0.12 chars on average.
+// Tested against the returned length of snprintf([...],"%u") for every 32 bit number.
+static size_t estimate_chars_per_uint(uint32_t v) {
+#if !defined(__XTENSA_EL__) || __XTENSA_EL__ != 1
+    // __builtin_clz(v) is undefined for v == 0. Set the lowest bit to work around that.
+    // The workaround is not neccessary on Xtensa, which uses the NSAU instruction that handles 0 correctly.
+	v |= 1;
+#endif
+
+	return leading_zeros_to_char_count[__builtin_clz(v)];
+}
+
+// Never underestimates length. Overestimates by 0.23 chars on average.
+// Tested against the returned length of snprintf([...],"%d") for every 32 bit number.
+static size_t estimate_chars_per_int(int32_t v) {
+	uint32_t sign = (static_cast<uint32_t>(v)) >> 31;
+
+	v = v ^ (v >> 31); // Approximate abs(v). Negative values are off by 1, which doesn't matter for the estimation.
+
+#if !defined(__XTENSA_EL__) || __XTENSA_EL__ != 1
+    // __builtin_clz(v) is undefined for v == 0. Set the lowest bit to work around that.
+    // The workaround is not neccessary on Xtensa, which uses the NSAU instruction that handles 0 correctly.
+	v |= 1;
+#endif
+
+	return leading_zeros_to_char_count[__builtin_clz(static_cast<uint32_t>(v))] + sign;
+}
+
 struct max_string_length_visitor {
     size_t operator()(const Config::ConfString &x)
     {
@@ -214,11 +244,12 @@ struct max_string_length_visitor {
     }
     size_t operator()(const Config::ConfInt &x)
     {
-        return 11;
+        return max(estimate_chars_per_int(x.getSlot()->max),
+                   estimate_chars_per_int(x.getSlot()->min));
     }
     size_t operator()(const Config::ConfUint &x)
     {
-        return 10;
+        return estimate_chars_per_uint(x.getSlot()->max);
     }
     size_t operator()(const Config::ConfBool &x)
     {
@@ -237,14 +268,14 @@ struct max_string_length_visitor {
     }
     size_t operator()(const Config::ConfObject &x)
     {
-        const auto *val = x.getVal();
-        const auto size = val->size();
+        const auto *slot = x.getSlot();
+        const auto *schema = slot->schema;
+        const auto size = schema->length;
 
         size_t sum = 2; // { and }
         for (size_t i = 0; i < size; ++i) {
-            const auto &val_pair = (*val)[i];
-            sum += val_pair.first.length() + 3; // "":
-            sum += Config::apply_visitor(max_string_length_visitor{}, val_pair.second.value);
+            sum += schema->key_lengths[i] + 3; // "":
+            sum += Config::apply_visitor(max_string_length_visitor{}, slot->values[i].value);
         }
         sum += size - 1; // ,
         return sum;
@@ -254,10 +285,13 @@ struct max_string_length_visitor {
         const auto *slot = x.getSlot();
 
         size_t max_len = Config::apply_visitor(max_string_length_visitor{}, x.getVal()->value);
+        uint8_t max_tag = 0;
         for (size_t i = 0; i < slot->prototypes_len; ++i) {
             max_len = std::max(max_len, Config::apply_visitor(max_string_length_visitor{}, slot->prototypes[i].config.value));
+            max_tag = std::max(max_tag, slot->prototypes[i].tag);
         }
-        return max_len + 6; // [255,]
+        max_len += estimate_chars_per_uint(max_tag); // tag
+        return max_len + 3; // [,]
     }
 };
 
@@ -269,20 +303,22 @@ struct string_length_visitor {
     }
     size_t operator()(const Config::ConfFloat &x)
     {
-        // Educated guess, FLT_MAX is ~3*10^38 however it is unlikely that a user will send enough float values longer than 20.
-        return 20;
+        // ArduinoJson will switch to scientific notation >= 1e9.
+        // The max length then is -1.123456789e-12 (max. 9 decimal places,
+        // exponents max 12 chars because of FLT_MAX)
+        return 16;
     }
     size_t operator()(const Config::ConfInt &x)
     {
-        return 11; // -2^31
+        return estimate_chars_per_int(*x.getVal());
     }
     size_t operator()(const Config::ConfUint &x)
     {
-        return 10; //2^32-1
+        return estimate_chars_per_uint(*x.getVal());
     }
     size_t operator()(const Config::ConfBool &x)
     {
-        return 5; //false
+        return (*x.getVal()) ? 4 : 5;
     }
     size_t operator()(const Config::ConfVariant::Empty &x)
     {
@@ -302,20 +338,20 @@ struct string_length_visitor {
     }
     size_t operator()(const Config::ConfObject &x)
     {
-        const auto *val = x.getVal();
-        const auto size = val->size();
+        const auto *slot = x.getSlot();
+        const auto *schema = slot->schema;
+        const auto size = schema->length;
 
         size_t sum = 2; // { and }
         for (size_t i = 0; i < size; ++i) {
-            const auto &val_pair = (*val)[i];
-            sum += val_pair.first.length() + 3; // "":
-            sum += Config::apply_visitor(string_length_visitor{}, val_pair.second.value);
+            sum += schema->key_lengths[i] + 3; // "":
+            sum += Config::apply_visitor(string_length_visitor{}, slot->values[i].value);
         }
         return sum;
     }
 
     size_t operator()(const Config::ConfUnion &x) {
-        return Config::apply_visitor(string_length_visitor{}, x.getVal()->value) + 6; // [255,]
+        return Config::apply_visitor(string_length_visitor{}, x.getVal()->value) + estimate_chars_per_uint(x.getTag()) + 3; // [,]
     }
 };
 
@@ -352,16 +388,16 @@ struct json_length_visitor {
     }
     size_t operator()(const Config::ConfObject &x)
     {
-        const auto *val = x.getVal();
-        const auto size = val->size();
+        const auto *slot = x.getSlot();
+        const auto *schema = slot->schema;
+        const auto size = schema->length;
 
         size_t sum = 0;
         for (size_t i = 0; i < size; ++i) {
-            const auto &val_pair = (*val)[i];
             if (!zero_copy)
-                sum += val_pair.first.length() + 1;
+                sum += schema->key_lengths[i] + 1;
 
-            sum += Config::apply_visitor(json_length_visitor{zero_copy}, val_pair.second.value);
+            sum += Config::apply_visitor(json_length_visitor{zero_copy}, slot->values[i].value);
         }
         return sum + JSON_OBJECT_SIZE(size);
     }
@@ -489,19 +525,19 @@ struct from_json {
         if (json_node.isNull())
             return permit_null_updates ? "" : "Null updates not permitted.";
 
-        const auto size = x.getVal()->size();
+        const auto size = x.getSlot()->schema->length;
 
         {
-            auto &val_pair = (*x.getVal())[0];
-
+            const auto *slot = x.getSlot();
+            const auto *schema = slot->schema;
             // If a user passes a non-object to an API that expects an object with exactly one member
             // Try to use the non-object as value for the single member.
             // This allows calling for example evse/external_current_update with the payload 8000 instead of {"current": 8000}
             // Only allow this if the omitted key is not the confirm key.
-            if (!json_node.is<JsonObject>() && is_root && size == 1 && val_pair.first != Config::ConfirmKey()) {
-                String inner_error = Config::apply_visitor(from_json{json_node, force_same_keys, permit_null_updates, false}, val_pair.second.value);
+            if (!json_node.is<JsonObject>() && is_root && size == 1 && Config::ConfirmKey() != schema->keys[0]) {
+                String inner_error = Config::apply_visitor(from_json{json_node, force_same_keys, permit_null_updates, false}, x.getSlot()->values[0].value);
                 if (inner_error != "")
-                    return String("(inferred) [\"") + val_pair.first + "\"] " + inner_error + "\n";
+                    return String("(inferred) [\"") + schema->keys[0] + "\"] " + inner_error + "\n";
                 else
                     return inner_error;
             }
@@ -516,26 +552,28 @@ struct from_json {
         bool more_errors = false;
 
         for (size_t i = 0; i < size; ++i) {
-            // Don't cache x.getVal(): The recursive visitor can reallocate slot buffers which invalidates the returned pointer!
-            auto &val_pair = (*x.getVal())[i];
-            if (!obj.containsKey(val_pair.first))
+            // Don't cache x.getSlot(): The recursive visitor can reallocate slot buffers which invalidates the returned pointer!
+            const auto *slot = x.getSlot();
+            const auto *key = slot->schema->keys[i];
+
+            if (!obj.containsKey(key))
             {
                 if (!force_same_keys)
                     continue;
 
                 if (return_str.length() < 1000)
-                    return_str += String("JSON object is missing key '") + val_pair.first + "'\n";
+                    return_str += String("JSON object is missing key '") + key + "'\n";
                 else
                     more_errors = true;
             }
 
-            String inner_error = Config::apply_visitor(from_json{obj[val_pair.first], force_same_keys, permit_null_updates, false}, val_pair.second.value);
+            String inner_error = Config::apply_visitor(from_json{obj[key], force_same_keys, permit_null_updates, false}, slot->values[i].value);
             if(obj.size() > 0)
-                obj.remove(val_pair.first);
+                obj.remove(key);
             if (inner_error != "")
             {
                 if (return_str.length() < 1000)
-                    return_str += String("[\"") + val_pair.first + "\"] " + inner_error + "\n";
+                    return_str += String("[\"") + key + "\"] " + inner_error + "\n";
                 else
                     more_errors = true;
             }
@@ -726,7 +764,7 @@ struct from_update {
             return "ConfUpdate node was not an object.";
         }
 
-        const auto size = x.getVal()->size();
+        const auto size = x.getSlot()->schema->length;
 
         const auto &obj_elements = obj->elements;
         const auto obj_size = obj_elements.size();
@@ -735,20 +773,21 @@ struct from_update {
 
         for (size_t i = 0; i < size; ++i) {
             size_t obj_idx = 0xFFFFFFFF;
-            // Don't cache x.getVal(): The recursive visitor can reallocate slot buffers which invalidates the returned pointer!
-            auto &val_pair = (*x.getVal())[i];
+            // Don't cache x.getSlot(): The recursive visitor can reallocate slot buffers which invalidates the returned pointer!
+            const char *key = x.getSlot()->schema->keys[i];
+            Config &value = x.getSlot()->values[i];
             for (size_t j = 0; j < size; ++j) {
-                if (obj_elements[j].first != val_pair.first)
+                if (obj_elements[j].first != key)
                     continue;
                 obj_idx = j;
                 break;
             }
             if (obj_idx == 0xFFFFFFFF)
-                return String("Key ") + val_pair.first + String("not found in ConfUpdate object");
+                return String("Key ") + key + String("not found in ConfUpdate object");
 
-            String inner_error = Config::apply_visitor(from_update{&obj_elements[obj_idx].second}, val_pair.second.value);
+            String inner_error = Config::apply_visitor(from_update{&obj_elements[obj_idx].second}, value.value);
             if (inner_error != "")
-                return String("[\"") + val_pair.first + "\"] " + inner_error;
+                return String("[\"") + key + "\"] " + inner_error;
         }
 
         return "";
@@ -810,10 +849,13 @@ struct is_updated {
     }
     uint8_t operator()(const Config::ConfObject &x) const
     {
+        const auto *slot = x.getSlot();
+        const auto size = slot->schema->length;
+
         uint8_t result = 0;
-        for (const std::pair<String, Config> &c : *x.getVal()) {
-            result |= c.second.value.updated & api_backend_flag;
-            result |= Config::apply_visitor(is_updated{api_backend_flag}, c.second.value);
+        for (size_t i = 0; i < size; ++i) {
+            result |= slot->values[i].value.updated & api_backend_flag;
+            result |= Config::apply_visitor(is_updated{api_backend_flag}, slot->values[i].value);
         }
         return result;
     }
@@ -854,9 +896,12 @@ struct set_updated_false {
     }
     void operator()(Config::ConfObject &x)
     {
-        for (std::pair<String, Config> &c : *x.getVal()) {
-            c.second.value.updated &= ~api_backend_flag;
-            Config::apply_visitor(set_updated_false{api_backend_flag}, c.second.value);
+        const auto *slot = x.getSlot();
+        const auto size = slot->schema->length;
+
+        for (size_t i = 0; i < size; ++i) {
+            slot->values[i].value.updated &= ~api_backend_flag;
+            Config::apply_visitor(set_updated_false{api_backend_flag}, slot->values[i].value);
         }
     }
     void operator()(Config::ConfUnion &x)
@@ -907,8 +952,12 @@ struct to_owned {
     {
         std::vector<std::pair<String, OwnedConfig>> result;
 
-        for (const std::pair<String, Config> &c : *x.getVal()) {
-            result.push_back({c.first, Config::apply_visitor(to_owned{}, c.second.value)});
+        const auto *slot = x.getSlot();
+        const auto *schema = slot->schema;
+        const auto size = schema->length;
+
+        for (size_t i = 0; i < size; ++i) {
+            result.push_back({String(schema->keys[i], schema->key_lengths[i]), Config::apply_visitor(to_owned{}, slot->values[i].value)});
         }
 
         return OwnedConfig{OwnedConfig::OwnedConfigObject{result}};

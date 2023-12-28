@@ -22,6 +22,7 @@
 
 #include <WiFi.h>
 #include <esp_wifi.h>
+#include <esp_wpa2.h>
 
 #include "task_scheduler.h"
 #include "tools.h"
@@ -47,7 +48,7 @@ void Wifi::pre_setup()
         {"ip", Config::Str("10.0.0.1", 7, 15)},
         {"gateway", Config::Str("10.0.0.1", 7, 15)},
         {"subnet", Config::Str("255.255.255.0", 7, 15)}
-    }), [](Config &cfg) -> String {
+    }), [](Config &cfg, ConfigSource source) -> String {
         IPAddress ip_addr, subnet_mask, gateway_addr;
         if (!ip_addr.fromString(cfg.get("ip")->asEphemeralCStr()))
             return "Failed to parse \"ip\": Expected format is dotted decimal, i.e. 10.0.0.1";
@@ -61,6 +62,10 @@ void Wifi::pre_setup()
         if (!is_valid_subnet_mask(subnet_mask))
             return "Invalid subnet mask passed: Expected format is 255.255.255.0";
 
+        uint8_t cidr = WiFiGenericClass::calculateSubnetCIDR(subnet_mask);
+        if (cidr < 24 || cidr > 30)
+            return "Invalid subnet mask passed: Subnet mask must be at least /30 and not bigger than /24.";
+
         if (ip_addr != IPAddress(0,0,0,0) && is_in_subnet(ip_addr, subnet_mask, IPAddress(127,0,0,1)))
             return "Invalid IP or subnet mask passed: This configuration would route localhost (127.0.0.1) to the WiFi AP.";
 
@@ -69,6 +74,42 @@ void Wifi::pre_setup()
 
         return "";
     });
+    state = Config::Object({
+        {"connection_state", Config::Int((int32_t)WifiState::NOT_CONFIGURED)},
+        {"connection_start", Config::Uint32(0)},
+        {"connection_end", Config::Uint32(0)},
+        {"ap_state", Config::Int(0)},
+        {"ap_bssid", Config::Str("", 0, 20)},
+        {"sta_ip", Config::Str("0.0.0.0", 7, 15)},
+        {"sta_subnet", Config::Str("0.0.0.0", 7, 15)},
+        {"sta_rssi", Config::Int8(0)},
+        {"sta_bssid", Config::Str("", 0, 20)}
+    });
+
+    eap_config_prototypes.push_back({EapConfigID::None, *Config::Null()});
+
+    // Max len of identity is currently limited by arduino.
+    eap_config_prototypes.push_back({EapConfigID::TLS, Config::Object({
+        {"ca_cert_id", Config::Int(-1, -1, MAX_CERTS)},
+        {"identity", Config::Str("", 0, 64)},
+        {"client_cert_id", Config::Int(0, 0, MAX_CERTS)},
+        {"client_key_id", Config::Int(0, 0, MAX_CERTS)}
+    })});
+
+    eap_config_prototypes.push_back({EapConfigID::PEAP_TTLS, Config::Object({
+        {"ca_cert_id", Config::Int(-1, -1, MAX_CERTS)},
+        {"identity", Config::Str("", 0, 64)},
+        {"username", Config::Str("", 0, 64)},
+        {"password", Config::Str("", 0, 64)},
+        {"client_cert_id", Config::Int(-1, -1, MAX_CERTS)},
+        {"client_key_id", Config::Int(-1, -1, MAX_CERTS)}
+    })});
+
+    Config eap_proto = Config::Union<EapConfigID>(
+        *Config::Null(),
+        EapConfigID::None,
+        eap_config_prototypes.data(),
+        eap_config_prototypes.size());
 
     sta_config = ConfigRoot(Config::Object({
         {"enable_sta", Config::Bool(false)},
@@ -94,7 +135,8 @@ void Wifi::pre_setup()
         {"subnet", Config::Str("0.0.0.0", 7, 15)},
         {"dns", Config::Str("0.0.0.0", 7, 15)},
         {"dns2", Config::Str("0.0.0.0", 7, 15)},
-    }), [](Config &cfg) -> String {
+        {"wpa_eap_config", eap_proto}
+    }), [](Config &cfg, ConfigSource source) -> String {
         const String &phrase = cfg.get("passphrase")->asString();
         if (phrase.length() > 0 && phrase.length() < 8)
             return "Passphrase too short. Must be at least 8 characters, or zero if open network.";
@@ -127,18 +169,6 @@ void Wifi::pre_setup()
             return "Failed to parse \"dns2\": Expected format is dotted decimal, i.e. 10.0.0.1";
 
         return "";
-    });
-
-    state = Config::Object({
-        {"connection_state", Config::Int((int32_t)WifiState::NOT_CONFIGURED)},
-        {"connection_start", Config::Uint32(0)},
-        {"connection_end", Config::Uint32(0)},
-        {"ap_state", Config::Int(0)},
-        {"ap_bssid", Config::Str("", 0, 20)},
-        {"sta_ip", Config::Str("0.0.0.0", 7, 15)},
-        {"sta_subnet", Config::Str("0.0.0.0", 7, 15)},
-        {"sta_rssi", Config::Int8(0)},
-        {"sta_bssid", Config::Str("", 0, 20)}
     });
 }
 
@@ -296,8 +326,59 @@ bool Wifi::apply_sta_config_and_connect(WifiState current_state)
     }
 
     logger.printfln("Wifi connecting to %s", ssid);
+    EapConfigID eap_config_id = static_cast<EapConfigID>(sta_config_in_use.get("wpa_eap_config")->as<OwnedConfig::OwnedConfigUnion>()->tag);
+    switch (eap_config_id) {
+        case EapConfigID::None:
+            WiFi.begin(ssid, passphrase, 0, bssid_lock ? bssid : nullptr, true, (uint8_t)3);
+            break;
 
-    WiFi.begin(ssid, passphrase, 0, bssid_lock ? bssid : nullptr, true);
+            case EapConfigID::TLS:
+                {
+                    WiFi.begin(ssid,
+                            wpa2_auth_method_t::WPA2_AUTH_TLS,
+                            eap_identity.c_str(),
+                            nullptr,
+                            nullptr,
+                            (char *)ca_cert.get(),
+                            ca_cert_len,
+                            (char *)client_cert.get(),
+                            client_cert_len,
+                            (char *)client_key.get(),
+                            client_key_len,
+                            "",
+                            0,
+                            bssid_lock ? bssid : nullptr,
+                            true,
+                            3);
+                }
+                break;
+        /**
+         * The auth method can be hardcoded here because arduino is not controlling the actual method and we need to
+         * set the username and password.
+         * The user cert and key are unused because using them breaks it atm.
+        */
+        case EapConfigID::PEAP_TTLS:
+            WiFi.begin(ssid,
+                    wpa2_auth_method_t::WPA2_AUTH_PEAP,
+                    eap_identity.c_str(),
+                    eap_username.c_str(),
+                    eap_password.c_str(),
+                    (char *)ca_cert.get(),
+                    ca_cert_len,
+                    nullptr,
+                    0,
+                    nullptr,
+                    0,
+                    nullptr,
+                    0,
+                    bssid_lock ? bssid : nullptr,
+                    true,
+                    3);
+            break;
+
+        default:
+            break;
+    }
     WiFi.setSleep(false);
     return true;
 }
@@ -396,15 +477,9 @@ void Wifi::setup()
 
     WiFi.onEvent([this](arduino_event_id_t event, arduino_event_info_t info) {
             uint8_t reason_code = info.wifi_sta_disconnected.reason;
-            static bool first = true;
             const char *reason = reason2str(reason_code);
             if (!this->was_connected) {
                 logger.printfln("Wifi failed to connect to %s: %s (%u)", sta_config_in_use.get("ssid")->asEphemeralCStr(), reason, reason_code);
-                if (first)
-                {
-                    first = false;
-                    this->apply_sta_config_and_connect();
-                }
             } else {
                 uint32_t now = millis();
                 uint32_t connected_for = now - last_connected_ms;
@@ -518,16 +593,15 @@ void Wifi::setup()
     esp_wifi_set_ps(WIFI_PS_NONE);
 
     // We don't need the additional speed of HT40 and it only causes more errors.
-    if (enable_sta) {
-        esp_err_t err = esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT20);
-        if (err != ESP_OK)
-            logger.printfln("WiFi: Setting HT20 for station failed: %i", err);
-    }
-    if (enable_ap) {
-        esp_err_t err = esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT20);
-        if (err != ESP_OK)
-            logger.printfln("WiFi: Setting HT20 for AP failed: %i", err);
-    }
+    // Always disable on both interfaces but only print warnings for interfaces we care about.
+    esp_err_t err;
+    err = esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT20);
+    if (enable_sta && err != ESP_OK)
+        logger.printfln("WiFi: Setting HT20 for station failed: %i", err);
+
+    err = esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT20);
+    if (enable_ap && err != ESP_OK)
+        logger.printfln("WiFi: Setting HT20 for AP failed: %i", err);
 
     WiFi.setTxPower(WIFI_POWER_19_5dBm);
 
@@ -553,31 +627,39 @@ void Wifi::setup()
             state.get("sta_rssi")->updateInt(WiFi.RSSI());
 
             static int tries = 0;
-            if (tries < 10 || (tries - 10) % 8 == 0)
+            if (tries < 3 || tries % 3 == 2)
                 if (!apply_sta_config_and_connect(connection_state))
                     tries = 0;
             tries++;
-        }, 0, 5000);
+        }, 0, 10000);
     }
 
     if (ap_fallback_only) {
         task_scheduler.scheduleWithFixedDelay([this]() {
-            bool connected = false;
+            bool connected = (WifiState)state.get("connection_state")->asInt() == WifiState::CONNECTED;
 
 #if MODULE_ETHERNET_AVAILABLE()
-            connected = ethernet.get_connection_state() == EthernetState::CONNECTED;
+            connected = connected || ethernet.get_connection_state() == EthernetState::CONNECTED;
 #endif
-            if (!connected)
-                connected = (WifiState)state.get("connection_state")->asInt() == WifiState::CONNECTED;
 
-            if (connected == soft_ap_running) {
-                if (connected) {
+            static int stop_soft_ap_runs = 0;
+
+            if (!connected)
+                stop_soft_ap_runs = 0;
+
+            // Start softAP immediately, but stop it only if
+            // we got a connection in the first 30 seconds after start-up
+            // or we had a connection for 5 minutes.
+
+            if (connected && soft_ap_running) {
+                ++stop_soft_ap_runs;
+                if (now_us() < 30_usec * 1000_usec * 1000_usec || stop_soft_ap_runs > 5 * 6) {
                     logger.printfln("Network connected. Stopping soft AP");
                     WiFi.softAPdisconnect(true);
                     soft_ap_running = false;
-                } else {
-                    apply_soft_ap_config_and_start();
                 }
+            } else if (!connected && !soft_ap_running) {
+                apply_soft_ap_config_and_start();
             }
         },
         enable_sta
@@ -585,6 +667,43 @@ void Wifi::setup()
         || (ethernet.is_enabled() && ethernet.get_connection_state() != EthernetState::NOT_CONNECTED)
 #endif
         ? 30 * 1000 : 1000, 10 * 1000);
+    }
+
+    EapConfigID eap_config_id = static_cast<EapConfigID>(sta_config_in_use.get("wpa_eap_config")->as<OwnedConfig::OwnedConfigUnion>()->tag);
+    if (eap_config_id != EapConfigID::None) {
+        const OwnedConfig::OwnedConfigWrap &eap_config = sta_config_in_use.get("wpa_eap_config")->get();
+        int ca_id = eap_config->get("ca_cert_id")->asInt();
+        eap_identity = eap_config->get("identity")->asString();
+        if (ca_id != -1) {
+            ca_cert = certs.get_cert(ca_id, &ca_cert_len);
+        }
+        switch (eap_config_id) {
+            case EapConfigID::TLS:
+            {
+                client_cert = certs.get_cert(eap_config->get("client_cert_id")->asInt(), &client_cert_len);
+                client_key = certs.get_cert(eap_config->get("client_key_id")->asInt(), &client_key_len);
+
+                const CoolString &tmp_identity = eap_config->get("identity")->asString();
+                if (tmp_identity.length() > 0) {
+                    eap_identity = tmp_identity;
+                } else {
+                    eap_identity = "anonymous";
+                }
+            }
+                break;
+
+            case EapConfigID::PEAP_TTLS:
+                eap_username = eap_config->get("username")->asString();
+                eap_password = eap_config->get("password")->asString();
+
+                client_cert = certs.get_cert(eap_config->get("client_cert_id")->asInt(), &client_cert_len);
+                client_key = certs.get_cert(eap_config->get("client_key_id")->asInt(), &client_key_len);
+
+                break;
+
+            default:
+                break;
+        }
     }
 
     initialized = true;
@@ -711,7 +830,7 @@ void Wifi::register_urls()
         return request.send(200, "application/json; charset=utf-8", result.c_str());
     });
 
-    api.addPersistentConfig("wifi/sta_config", &sta_config, {"passphrase"});
+    api.addPersistentConfig("wifi/sta_config", &sta_config, {"passphrase", "password"});
     api.addPersistentConfig("wifi/ap_config", &ap_config, {"passphrase"});
 }
 

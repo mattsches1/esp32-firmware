@@ -18,13 +18,10 @@
  */
 
 import $ from "../../ts/jq";
-
 import * as util from "../../ts/util";
 import * as API from "../../ts/api";
-
 import { h, render, Fragment, Component } from "preact";
 import { __ } from "../../ts/translation";
-
 import { Switch } from "../../ts/components/switch";
 import { ConfigComponent } from "../../ts/components/config_component";
 import { ConfigForm } from "../../ts/components/config_form";
@@ -141,11 +138,11 @@ export class NTP extends ConfigComponent<'ntp/config'> {
     }
 }
 
-render(<NTP/>, $('#ntp')[0])
+render(<NTP />, $("#ntp")[0]);
 
 interface NTPStatusState {
-    state: API.getType['ntp/state']
-    config: API.getType['ntp/config'];
+    state: API.getType["ntp/state"];
+    config: API.getType["ntp/config"];
 }
 
 export class NTPStatus extends Component<{}, NTPStatusState>
@@ -169,7 +166,7 @@ export class NTPStatus extends Component<{}, NTPStatusState>
             return <></>;
 
         return <>
-                <FormRow label={__("ntp.status.ntp")} label_muted={util.timestamp_min_to_date(state.state.time)} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4">
+                <FormRow label={__("ntp.status.ntp")} label_muted={util.timestamp_min_to_date(state.state.time, "")} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4">
                     <IndicatorGroup
                         style="width: 100%"
                         class="flex-wrap"
@@ -187,10 +184,10 @@ export class NTPStatus extends Component<{}, NTPStatusState>
 render(<NTPStatus />, $("#status-ntp")[0]);
 
 export function init() {
-
 }
 
-export function add_event_listeners(source: API.APIEventTarget) {}
+export function add_event_listeners(source: API.APIEventTarget) {
+}
 
 export function update_sidebar_state(module_init: any) {
     $("#sidebar-ntp").prop("hidden", !module_init.ntp);

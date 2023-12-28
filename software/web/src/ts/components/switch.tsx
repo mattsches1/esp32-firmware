@@ -18,17 +18,16 @@
  */
 
 import { h, JSX, Context, ComponentChildren } from "preact";
-import { useContext, useState } from "preact/hooks";
-
+import { useContext } from "preact/hooks";
 import * as util from "../../ts/util";
 
 export interface SwitchProps {
-    idContext?: Context<string>
-    checked: boolean
-    desc?: ComponentChildren
-    onClick: JSX.MouseEventHandler<HTMLInputElement>
-    disabled?: boolean
-    className?: string
+    idContext?: Context<string>;
+    checked: boolean;
+    desc?: ComponentChildren;
+    onClick: JSX.MouseEventHandler<HTMLInputElement>;
+    disabled?: boolean;
+    className?: string;
 }
 
 export function Switch(props: SwitchProps) {

@@ -71,6 +71,12 @@ public:
     virtual void addResponse(size_t responseIdx, const ResponseRegistration &reg) = 0;
     virtual bool pushStateUpdate(size_t stateIdx, const String &payload, const String &path) = 0;
     virtual bool pushRawStateUpdate(const String &payload, const String &path) = 0;
+    enum class WantsStateUpdate {
+        No,
+        AsConfig,
+        AsString
+    };
+    virtual WantsStateUpdate wantsStateUpdate(size_t stateIdx);
 };
 
 class API
@@ -104,12 +110,12 @@ public:
     void addResponse(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor_in_debug_report, std::function<void(IChunkedResponse *, Ownership *, uint32_t)> callback);
 
     template<typename T>
-    //_ATTRIBUTE((deprecated("Pass bool low_latecy instead of interval_ms. Use 'false' or nothing for 1000ms interval or 'true' for 250ms interval.")))
+    //[[gnu::deprecated("Pass bool low_latecy instead of interval_ms. Use 'false' or nothing for 1000ms interval or 'true' for 250ms interval.")]]
     void addState(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor, T interval_ms) {
         addState(path, config, keys_to_censor, interval_ms < 1000);
     }
     template<typename T>
-    //_ATTRIBUTE((deprecated("Please remove interval_ms parameter.")))
+    //[[gnu::deprecated("Please remove interval_ms parameter.")]]
     bool addPersistentConfig(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor, T interval_ms) {
         (void)interval_ms;
         return addPersistentConfig(path, config, keys_to_censor);
@@ -117,7 +123,7 @@ public:
 
     bool hasFeature(const char *name);
 
-    static void writeConfig(const String &path, ConfigRoot *config);
+    static void writeConfig(const String &path, Config *config);
     static void removeConfig(const String &path);
     static void removeAllConfig();
 

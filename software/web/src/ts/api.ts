@@ -21,19 +21,22 @@ import {ConfigMap, api_cache, Modules, ConfigModified, ConfigModifiedKey} from '
 
 import * as util from "./util";
 
-export {type ConfigMap as getType, type Modules};
+export { type ConfigMap as getType, type Modules };
 
 export type EventMap = {
     [key in keyof ConfigMap]: MessageEvent<Readonly<ConfigMap[key]>>;
-}
+};
 
 function update_cache_item(left: any, right: any) {
+    if (Array.isArray(left)) {
+        let right_length = Object.keys(right).length;
+        if (left.length > right_length)
+            left.splice(right_length, left.length - right_length)
+    }
+
     for (let key in left) {
-        if (!(key in right)) {
-            if (Array.isArray(left))
-                left.splice(parseInt(key), 1)
-            else
-                delete left[key];
+        if (!Array.isArray(left) && !(key in right)) {
+            delete left[key];
             continue;
         }
 

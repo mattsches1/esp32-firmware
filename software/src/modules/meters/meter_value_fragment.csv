@@ -1,0 +1,56 @@
+fragment,display_name_en,display_name_de
+Voltage,Voltage,Spannung
+Current,Current,Strom
+Power,Power,Leistung
+Energy,Energy,Energie
+Power Factor,Power factor,Leistungsfaktor
+Frequency,Frequency,Frequenz
+Phase Angle,Phase angle,Phasenwinkel
+Voltage THD,Voltage THD,THD der Spannung
+Current THD,Current THD,THD des Stroms
+Temperature,Temperature,Temperatur
+Fan Speed,Fan speed,Lüfterdrehzahl
+State Of Charge,State of charge,Batterieladestand
+Electric Charge,Transported electric charge,Transportierte elektrische Ladung
+Active,Active,Wirk
+Reactive,Reactive,Blind
+Apparent,Apparent,Schein
+L1 N,L1-N,L1-N
+L2 N,L2-N,L2-N
+L3 N,L3-N,L3-N
+L1 L2,L1-L2,L1-L2
+L2 L3,L2-L3,L2-L3
+L3 L1,L3-L1,L3-L1
+L N Avg,"Average over L1-N, L2-N, L3-N","Durchschnitt über L1-N, L2-N, L3-N"
+L L Avg,"Average over L1-L2, L2-L3, L3-L1","Durchschnitt über L1-L2, L2-L3, L3-L1"
+N PE,Neutral voltage,Neutralleiterspannung
+DC,DC,DC
+L1,L1,L1
+L2,L2,L2
+L3,L3,L3
+N,Neutral,Neutralleiter
+L Avg,"Average over L1, L2, L3","Durchschnitt über L1, L2, L3"
+L Sum,"Sum over L1, L2, L3","Summe über L1, L2, L3"
+Import,Draw,Bezug
+Export,Feed,Einspeisung
+Im Ex Sum,Draw plus feed,Bezug plus Einspeisung
+Im Ex Diff,Draw minus feed,Bezug minus Einspeisung
+Inductive,Inductive,Induktiv
+Capacitive,Capacitive,Kapazitiv
+Ind Cap Sum,Inductive plus capacitive,Induktiv plus kapazitiv
+Ind Cap Diff,Inductive minus capacitive,Induktiv minus kapazitiv
+Q1,Quadrant 1,Quadrant 1
+Q2,Quadrant 2,Quadrant 2
+Q3,Quadrant 3,Quadrant 3
+Q4,Quadrant 4,Quadrant 4
+Now,Now,Momentan
+Absolute,Since manufacturing,Seit Herstellung
+Resettable,Since last reset,Seit letztem Zurücksetzen
+Directional,Directional; -1 to +1; sign indicates the direction of the current flow,Gerichtet; -1 bis +1; Vorzeichen gibt Richtung des Stromflusses an
+Non Directional,Non Directional; 0 to 1,Ungerichtet; 0 bis 1
+Virtual,Virtual,Virtuell
+Other,Other,Sonstige
+Ambient,Ambient,Umgebung
+Cabinet,Cabinet,Gehäuse
+Heat Sink,Heat sink,Kühlkörper
+Transformer,Transformer,Transformator

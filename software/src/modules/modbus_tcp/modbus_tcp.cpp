@@ -41,7 +41,7 @@ extern uint32_t local_uid_num;
 template<typename T>
 static void calloc_struct(T **out)
 {
-    *out = (T *)calloc(1, sizeof(T));
+    *out = (T *)heap_caps_calloc_prefer(1, sizeof(T), 2, MALLOC_CAP_SPIRAM, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
 }
 
 // We can't implicit convert from an uint32_t to this, as the conversion is done by a constructor.
@@ -145,7 +145,7 @@ struct meter_holding_regs_t {
     uint32swapped_t trigger_reset;
 };
 
-struct bender_general_s {
+struct [[gnu::packed]] bender_general_s {
     static const mb_param_type_t TYPE = MB_PARAM_HOLDING;
     static const uint16_t OFFSET = 100;
     char firmware_version[4];
@@ -171,9 +171,9 @@ struct bender_general_s {
     uint16_t device_id;
     uint32swapped_t charger_model[5];
     uint16_t pluglock_detected;
-} __attribute__((packed));
+};
 
-struct bender_phases_s {
+struct [[gnu::packed]] bender_phases_s {
     static const mb_param_type_t TYPE = MB_PARAM_HOLDING;
     static const uint16_t OFFSET = 200;
     uint32swapped_t energy[3];
@@ -182,9 +182,9 @@ struct bender_phases_s {
     uint32swapped_t total_energy;
     uint32swapped_t total_power;
     uint32swapped_t voltage[3];
-} __attribute__((packed));
+};
 
-struct bender_dlm_s {
+struct [[gnu::packed]] bender_dlm_s {
     static const mb_param_type_t TYPE = MB_PARAM_HOLDING;
     static const uint32_t OFFSET = 600;
     uint16_t dlm_mode;
@@ -197,9 +197,9 @@ struct bender_dlm_s {
     uint16_t padding3[8];
     uint16_t overall_current_applied[3];
     uint16_t overall_current_available[3];
-} __attribute__((packed));
+};
 
-struct bender_charge_s {
+struct [[gnu::packed]] bender_charge_s {
     static const mb_param_type_t TYPE = MB_PARAM_HOLDING;
     static const uint32_t OFFSET = 700;
     uint16_t padding[5];
@@ -216,22 +216,22 @@ struct bender_charge_s {
     uint32swapped_t user_id[5];
     uint16_t padding3[10];
     uint32swapped_t evccid[3];
-} __attribute__((packed));
+};
 
-struct bender_hems_s {
+struct [[gnu::packed]] bender_hems_s {
     static const mb_param_type_t TYPE = MB_PARAM_HOLDING;
     static const uint32_t OFFSET = 1000;
     uint16_t hems_limit;
-} __attribute__((packed));
+};
 
-struct bender_write_uid_s {
+struct [[gnu::packed]] bender_write_uid_s {
     static const mb_param_type_t TYPE = MB_PARAM_HOLDING;
     static const uint32_t OFFSET = 1110;
     uint32swapped_t user_id[5];
-} __attribute__((packed));
+};
 
 
-struct keba_read_general_s {
+struct [[gnu::packed]] keba_read_general_s {
     static const mb_param_type_t TYPE = MB_PARAM_HOLDING;
     static const uint32_t OFFSET = 1000;
     uint32swapped_t charging_state;
@@ -248,24 +248,24 @@ struct keba_read_general_s {
     uint32swapped_t padding3;
     uint32swapped_t voltages[3];
     uint32swapped_t power_factor;
-} __attribute__((packed));
+};
 
-struct keba_read_max_s {
+struct [[gnu::packed]] keba_read_max_s {
     static const mb_param_type_t TYPE = MB_PARAM_HOLDING;
     static const uint32_t OFFSET = 1100;
     uint32swapped_t max_current;
     uint16_t padding[8];
     uint32swapped_t max_hardware_current;
-} __attribute__((packed));
+};
 
-struct keba_read_charge_s {
+struct [[gnu::packed]] keba_read_charge_s {
     static const mb_param_type_t TYPE = MB_PARAM_HOLDING;
     static const uint32_t OFFSET = 1500;
     uint32swapped_t rfid_tag;
     uint32swapped_t charged_energy;
-} __attribute__((packed));
+};
 
-struct keba_write_s {
+struct [[gnu::packed]] keba_write_s {
     static const mb_param_type_t TYPE = MB_PARAM_HOLDING;
     static const uint32_t OFFSET = 5004;
     uint16_t set_charging_current;
@@ -281,7 +281,7 @@ struct keba_write_s {
     uint16_t failsafe_timeout;
     uint16_t padding6;
     uint16_t failsafe_persist;
-} __attribute__((packed));
+};
 
 //-------------------
 // Discrete Inputs
@@ -417,26 +417,29 @@ void ModbusTcp::setup()
 {
     api.restorePersistentConfig("modbus_tcp/config", &config);
 
-    if (config.get("enable")->asBool())
-    {
-        void *modbus_handle = NULL;
-        esp_err_t err = mbc_slave_init_tcp(&modbus_handle);
-        if (err != ESP_OK || modbus_handle == NULL)
-            printf("Modbus init failed with code %i", err);
+    if (!config.get("enable")->asBool()) {
+        initialized = true;
+        return;
+    }
 
-        mb_communication_info_t comm_info;
-        comm_info.ip_addr = NULL;
-        comm_info.mode = MB_MODE_TCP;
-        comm_info.ip_addr_type = MB_IPV4;
-        comm_info.ip_port = config.get("port")->asUint();
-        // For some reason, mbc_slave_setup asserts that comm_info.ip_netif_ptr is not null,
-        // but the ip_netif_ptr is never used.
-        // Fortunately this means that we can just pass anything to circumvent the assertion
-        // and the modbus_tcp server will listen on any network interface.
-        comm_info.ip_netif_ptr = (void *) 0x12345678;
-        ESP_ERROR_CHECK(mbc_slave_setup((void *)&comm_info));
+    void *modbus_handle = NULL;
+    esp_err_t err = mbc_slave_init_tcp(&modbus_handle);
+    if (err != ESP_OK || modbus_handle == NULL)
+        printf("Modbus init failed with code %i", err);
 
-        mb_register_area_descriptor_t reg_area;
+    mb_communication_info_t comm_info;
+    comm_info.ip_addr = NULL;
+    comm_info.mode = MB_MODE_TCP;
+    comm_info.ip_addr_type = MB_IPV4;
+    comm_info.ip_port = config.get("port")->asUint();
+    // For some reason, mbc_slave_setup asserts that comm_info.ip_netif_ptr is not null,
+    // but the ip_netif_ptr is never used.
+    // Fortunately this means that we can just pass anything to circumvent the assertion
+    // and the modbus_tcp server will listen on any network interface.
+    comm_info.ip_netif_ptr = (void *) 0x00000004;
+    ESP_ERROR_CHECK(mbc_slave_setup((void *)&comm_info));
+
+    mb_register_area_descriptor_t reg_area;
 
 #define REGISTER_DESCRIPTOR(x) do { \
     reg_area.type = x->TYPE; \
@@ -446,47 +449,46 @@ void ModbusTcp::setup()
     ESP_ERROR_CHECK(mbc_slave_set_descriptor(reg_area)); \
 } while (0)
 
-        if (config.get("table")->asUint() == 0)
-        {
-            allocate_table();
+    if (config.get("table")->asUint() == 0)
+    {
+        allocate_table();
 
-            REGISTER_DESCRIPTOR(evse_input_regs);
-            REGISTER_DESCRIPTOR(meter_input_regs);
-            REGISTER_DESCRIPTOR(meter_all_values_input_regs);
-            REGISTER_DESCRIPTOR(input_regs);
-            REGISTER_DESCRIPTOR(holding_regs);
-            REGISTER_DESCRIPTOR(evse_holding_regs);
-            REGISTER_DESCRIPTOR(meter_holding_regs);
-            REGISTER_DESCRIPTOR(discrete_inputs);
-            REGISTER_DESCRIPTOR(meter_discrete_inputs);
-            REGISTER_DESCRIPTOR(evse_coils);
-            REGISTER_DESCRIPTOR(nfc_input_regs);
+        REGISTER_DESCRIPTOR(evse_input_regs);
+        REGISTER_DESCRIPTOR(meter_input_regs);
+        REGISTER_DESCRIPTOR(meter_all_values_input_regs);
+        REGISTER_DESCRIPTOR(input_regs);
+        REGISTER_DESCRIPTOR(holding_regs);
+        REGISTER_DESCRIPTOR(evse_holding_regs);
+        REGISTER_DESCRIPTOR(meter_holding_regs);
+        REGISTER_DESCRIPTOR(discrete_inputs);
+        REGISTER_DESCRIPTOR(meter_discrete_inputs);
+        REGISTER_DESCRIPTOR(evse_coils);
+        REGISTER_DESCRIPTOR(nfc_input_regs);
 
-            evse_holding_regs->led_blink_state = fromUint(-2);
-        }
-        else if (config.get("table")->asUint() == 1)
-        {
-            allocate_bender_table();
-
-            REGISTER_DESCRIPTOR(bender_general);
-            REGISTER_DESCRIPTOR(bender_phases);
-            REGISTER_DESCRIPTOR(bender_dlm);
-            REGISTER_DESCRIPTOR(bender_charge);
-            REGISTER_DESCRIPTOR(bender_hems);
-            REGISTER_DESCRIPTOR(bender_write_uid);
-        }
-        else if (config.get("table")->asUint() == 2)
-        {
-            allocate_keba_table();
-
-            REGISTER_DESCRIPTOR(keba_read_charge);
-            REGISTER_DESCRIPTOR(keba_read_general);
-            REGISTER_DESCRIPTOR(keba_read_max);
-            REGISTER_DESCRIPTOR(keba_write);
-        }
-
-        ESP_ERROR_CHECK(mbc_slave_start());
+        evse_holding_regs->led_blink_state = fromUint(-2);
     }
+    else if (config.get("table")->asUint() == 1)
+    {
+        allocate_bender_table();
+
+        REGISTER_DESCRIPTOR(bender_general);
+        REGISTER_DESCRIPTOR(bender_phases);
+        REGISTER_DESCRIPTOR(bender_dlm);
+        REGISTER_DESCRIPTOR(bender_charge);
+        REGISTER_DESCRIPTOR(bender_hems);
+        REGISTER_DESCRIPTOR(bender_write_uid);
+    }
+    else if (config.get("table")->asUint() == 2)
+    {
+        allocate_keba_table();
+
+        REGISTER_DESCRIPTOR(keba_read_charge);
+        REGISTER_DESCRIPTOR(keba_read_general);
+        REGISTER_DESCRIPTOR(keba_read_max);
+        REGISTER_DESCRIPTOR(keba_write);
+    }
+
+    ESP_ERROR_CHECK(mbc_slave_start());
 
     initialized = true;
 }
@@ -579,7 +581,7 @@ void ModbusTcp::update_bender_regs()
 #endif
     }
 
-#if MODULE_METER_AVAILABLE()
+#if MODULE_METERS_LEGACY_API_AVAILABLE()
     if (api.hasFeature("meter"))
     {
         if (api.hasFeature("meter_all_values"))
@@ -779,7 +781,7 @@ void ModbusTcp::update_regs()
 #endif
     }
 
-#if MODULE_METER_AVAILABLE()
+#if MODULE_METERS_LEGACY_API_AVAILABLE()
     if (api.hasFeature("meter"))
     {
         discrete_inputs_copy->meter = true;
@@ -953,7 +955,7 @@ void ModbusTcp::update_keba_regs()
         keba_read_max_cpy->max_hardware_current = fromUint(api.getState("evse/slots")->get(CHARGING_SLOT_INCOMING_CABLE)->get("max_current")->asUint());
     }
 
-#if MODULE_METER_AVAILABLE()
+#if MODULE_METERS_LEGACY_API_AVAILABLE()
     if (api.hasFeature("meter"))
     {
 #if MODULE_CHARGE_TRACKER_AVAILABLE()
@@ -968,14 +970,21 @@ void ModbusTcp::update_keba_regs()
             keba_read_charge->charged_energy = fromUint(0);
         else
             keba_read_charge->charged_energy = fromUint((uint32_t)((meter_absolute - meter_start) * 1000));
-
-        if (api.getState("charge_tracker/current_charge")->get("authorization_type")->asUint() == 2)
-        {
-            const auto &tag_id = api.getState("charge_tracker/current_charge")->get("authorization_info")->get("tag_id")->asString();
-            keba_read_charge_cpy->rfid_tag = fromUint(export_tag_id_as_uint32(tag_id));
-        }
+    }
+#endif
 #endif
 
+#if MODULE_CHARGE_TRACKER_AVAILABLE()
+    if (api.getState("charge_tracker/current_charge")->get("authorization_type")->asUint() == 2)
+    {
+        const auto &tag_id = api.getState("charge_tracker/current_charge")->get("authorization_info")->get("tag_id")->asString();
+        keba_read_charge_cpy->rfid_tag = fromUint(export_tag_id_as_uint32(tag_id));
+    }
+#endif
+
+#if MODULE_METERS_LEGACY_API_AVAILABLE()
+    if (api.hasFeature("meter"))
+    {
         if (api.hasFeature("meter_all_values"))
         {
             auto meter_all_values = api.getState("meter/all_values");

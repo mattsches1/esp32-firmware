@@ -18,7 +18,7 @@
  */
 
 import { h, Context, Fragment } from "preact";
-import { useContext, useState } from "preact/hooks";
+import { useContext } from "preact/hooks";
 import { JSXInternal } from "preact/src/jsx";
 
 import * as util from "../../ts/util";
@@ -26,11 +26,11 @@ import * as util from "../../ts/util";
 export interface InputSelectProps extends Omit<JSXInternal.HTMLAttributes<HTMLSelectElement>, "id" | "type" | "onInput"> {
     idContext?: Context<string>
     items: [string, string][];
-    onValue?: (value: string) => void
-    placeholder?: string
-    className?: string
-    style?: string
-    invalidFeedback?: string
+    onValue?: (value: string) => void;
+    placeholder?: string;
+    className?: string;
+    style?: string;
+    invalidFeedback?: string;
 }
 
 export function InputSelect(props: InputSelectProps) {

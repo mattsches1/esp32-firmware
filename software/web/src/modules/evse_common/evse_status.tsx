@@ -20,22 +20,20 @@
 
 import * as util from "../../ts/util";
 import * as API from "../../ts/api";
-
 import { __ } from "../../ts/translation";
-
-import {  h, Fragment, Component } from "preact";
+import { h, Fragment, Component } from "preact";
 import { Button } from "react-bootstrap";
-import { FormRow } from "src/ts/components/form_row";
-import { IndicatorGroup } from "src/ts/components/indicator_group";
-import { InputFloat } from "src/ts/components/input_float";
-import { InputText } from "src/ts/components/input_text";
+import { FormRow } from "../../ts/components/form_row";
+import { IndicatorGroup } from "../../ts/components/indicator_group";
+import { InputFloat } from "../../ts/components/input_float";
+import { InputText } from "../../ts/components/input_text";
 
 interface EVSEStatusState {
-    state: API.getType['evse/state']
-    auto_start: API.getType['evse/auto_start_charging']
-    slots: Readonly<API.getType['evse/slots']>
-    configured_current: number
-    is_evse_v2: boolean
+    state: API.getType["evse/state"];
+    auto_start: API.getType["evse/auto_start_charging"];
+    slots: Readonly<API.getType["evse/slots"]>;
+    configured_current: number;
+    is_evse_v2: boolean;
 }
 
 export class EVSEStatus extends Component<{}, EVSEStatusState>
@@ -69,7 +67,7 @@ export class EVSEStatus extends Component<{}, EVSEStatusState>
         let slots = this.state.slots;
 
         let real_maximum = 32000;
-        for(let i = 0; i < slots.length; ++i) {
+        for (let i = 0; i < slots.length; ++i) {
             let s = slots[i];
             if (s.active)
                 real_maximum = Math.min(real_maximum, s.max_current);
@@ -83,7 +81,7 @@ export class EVSEStatus extends Component<{}, EVSEStatusState>
         let status_string = rm_string + " " + __("evse.script.by") + " ";
 
         let status_list = [];
-        for(let i = 0; i < slots.length; ++i) {
+        for (let i = 0; i < slots.length; ++i) {
             let s = slots[i];
             if (!s.active || s.max_current != real_maximum)
                 continue;
@@ -95,7 +93,6 @@ export class EVSEStatus extends Component<{}, EVSEStatusState>
 
         return status_string;
     }
-
 
     timeoutSave(current: number, theoretical_max: number)
     {
@@ -127,7 +124,8 @@ export class EVSEStatus extends Component<{}, EVSEStatusState>
                             ["info",    __("evse.status.ready_to_charge")],
                             ["success", __("evse.status.charging")],
                             ["danger",  __("evse.status.error")]
-                        ]}/>
+                        ]}
+                    />
                 </FormRow>
 
                 <FormRow label={__("evse.status.charge_control")} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4">
@@ -144,7 +142,7 @@ export class EVSEStatus extends Component<{}, EVSEStatusState>
                             onClick={() => API.call('evse/stop_charging', {}, __("evse.script.stop_charging_failed"))}>
                             {__("evse.status.stop_charging")}
                         </Button>
-                        </div>
+                    </div>
                 </FormRow>
                 <FormRow label={__("evse.status.configured_charging_current")} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4 input-group">
                         <InputFloat min={6000} max={theoretical_max} digits={3} unit="A"

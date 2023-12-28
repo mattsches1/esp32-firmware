@@ -28,64 +28,11 @@
 
 #include "device_module.h"
 #include "em_rgb_led.h"
-#include "input_pin.h"
-#include "output_relay.h"
 #include "structs.h"
 #include "warp_energy_manager_bricklet_firmware_bin.embedded.h"
 
 #define EM_TASK_DELAY_MS                    250
 #define CURRENT_POWER_SMOOTHING_SAMPLES     4
-
-#define MODE_FAST                           0
-#define MODE_OFF                            1
-#define MODE_PV                             2
-#define MODE_MIN_PV                         3
-#define MODE_DO_NOTHING                     255
-
-#define CLOUD_FILTER_OFF                    0
-#define CLOUD_FILTER_LIGHT                  1
-#define CLOUD_FILTER_MEDIUM                 2
-#define CLOUD_FILTER_STRONG                 3
-
-#define PHASE_SWITCHING_MIN                 0
-#define PHASE_SWITCHING_AUTOMATIC           0
-#define PHASE_SWITCHING_ALWAYS_1PHASE       1
-#define PHASE_SWITCHING_ALWAYS_3PHASE       2
-#define PHASE_SWITCHING_EXTERNAL_CONTROL    3
-#define PHASE_SWITCHING_PV1P_FAST3P         4
-#define PHASE_SWITCHING_MAX                 4
-
-#define RELAY_CONFIG_MANUAL                 0
-#define RELAY_CONFIG_RULE_BASED             1
-
-#define RELAY_CONFIG_WHEN_INPUT3            0
-#define RELAY_CONFIG_WHEN_INPUT4            1
-#define RELAY_CONFIG_WHEN_PHASE_SWITCHING   2
-#define RELAY_CONFIG_WHEN_CONTACTOR_CHECK   3
-#define RELAY_CONFIG_WHEN_POWER_AVAILABLE   4
-#define RELAY_CONFIG_WHEN_GRID_DRAW         5
-
-#define RELAY_RULE_IS_HIGH                  0
-#define RELAY_RULE_IS_LOW                   1
-#define RELAY_RULE_IS_1PHASE                2
-#define RELAY_RULE_IS_3PHASE                3
-#define RELAY_RULE_IS_CONTACTOR_FAIL        4
-#define RELAY_RULE_IS_CONTACTOR_OK          5
-#define RELAY_RULE_IS_POWER_SUFFIC          6
-#define RELAY_RULE_IS_POWER_INSUFFIC        7
-#define RELAY_RULE_IS_GT0                   8
-#define RELAY_RULE_IS_LE0                   9
-
-#define INPUT_CONFIG_DISABLED               0
-#define INPUT_CONFIG_CONTACTOR_CHECK        1
-#define INPUT_CONFIG_BLOCK_CHARGING         2
-#define INPUT_CONFIG_LIMIT_MAX_CURRENT      3
-#define INPUT_CONFIG_SWITCH_MODE            4
-
-#define INPUT_CONFIG_WHEN_HIGH              0
-#define INPUT_CONFIG_WHEN_LOW               1
-
-#define HYSTERESIS_MIN_TIME_MINUTES         5
 
 #define ERROR_FLAGS_BAD_CONFIG_BIT_POS      31
 #define ERROR_FLAGS_BAD_CONFIG_MASK         (1u<< ERROR_FLAGS_BAD_CONFIG_BIT_POS)
@@ -102,8 +49,6 @@
 #define ERROR_FLAGS_ALL_ERRORS_MASK         (0x7FFF0000)
 #define ERROR_FLAGS_ALL_WARNINGS_MASK       (0x0000FFFF)
 
-#define CONFIG_ERROR_FLAGS_NO_CM_BIT_POS            4
-#define CONFIG_ERROR_FLAGS_NO_CM_MASK               (1 << CONFIG_ERROR_FLAGS_NO_CM_BIT_POS)
 #define CONFIG_ERROR_FLAGS_EXCESS_NO_METER_BIT_POS  3
 #define CONFIG_ERROR_FLAGS_EXCESS_NO_METER_MASK     (1 << CONFIG_ERROR_FLAGS_EXCESS_NO_METER_BIT_POS)
 #define CONFIG_ERROR_FLAGS_NO_CHARGERS_BIT_POS      2
@@ -143,11 +88,15 @@ public:
     void register_events() override;
     void loop() override;
 
+    [[gnu::const]] const Config * get_config();
+
     // Called in energy_manager_meter setup
     void update_all_data();
 
     void limit_max_current(uint32_t limit_ma);
+    void reset_limit_max_current();
     void switch_mode(uint32_t new_mode);
+    void update_charge_mode(const Config &charge_mode_update);
 
     void setup_energy_manager();
     String get_energy_manager_debug_header();
@@ -156,6 +105,7 @@ public:
     bool get_sdcard_info(struct sdcard_info *data);
     bool format_sdcard();
     uint16_t get_energy_meter_detailed_values(float *ret_values);
+    bool reset_energy_meter_relative_energy();
     void set_output(bool output);
     void set_rgb_led(uint8_t pattern, uint16_t hue);
 
@@ -164,33 +114,7 @@ public:
 
     bool disallow_fw_update_with_vehicle_connected();
 
-    bool debug = false;
-
-    ConfigRoot state;
-    ConfigRoot low_level_state;
-    ConfigRoot meter_state;
-    ConfigRoot config;
-    ConfigRoot config_in_use;
-    ConfigRoot debug_config;
-    ConfigRoot debug_config_in_use;
-    ConfigRoot charge_mode;
-    ConfigRoot charge_mode_update;
-    ConfigRoot external_control;
-    ConfigRoot external_control_update;
-
-    EnergyManagerAllData all_data;
-
-    union {
-        uint32_t combined;
-        uint8_t  pin[4];
-    } charging_blocked               = {0};
-
-    uint32_t error_flags             = 0;
-    uint32_t config_error_flags      = 0;
-    bool     contactor_check_tripped = false;
-    bool     is_3phase               = false;
-    bool     wants_on_last           = false;
-    float    power_at_meter_raw_w    = NAN;
+    bool action_triggered(Config *config, void *data);
 
 private:
     void update_status_led();
@@ -200,37 +124,50 @@ private:
     void set_config_error(uint32_t config_error_mask);
     void check_bricklet_reachable(int rc, const char *context);
     void update_all_data_struct();
-    void update_io();
     void update_energy();
 
     void start_network_check_task();
-    void start_auto_reset_task();
-    void schedule_auto_reset_task();
     void set_available_current(uint32_t current);
     void set_available_phases(uint32_t phases);
 
     void check_debug();
     String prepare_fmtstr();
 
+    ConfigRoot state;
+    ConfigRoot low_level_state;
+    ConfigRoot config;
+    ConfigRoot external_control;
+    ConfigRoot external_control_update;
+
+    Config *pm_low_level_state;
+    const Config *pm_config;
+    Config *pm_charge_mode;
+
+    EnergyManagerAllData all_data;
+
     EmRgbLed rgb_led;
-    OutputRelay *output;
-    InputPin *input3;
-    InputPin *input4;
+
+    uint32_t error_flags        = 0;
+    uint32_t config_error_flags = 0;
 
     uint32_t last_debug_keep_alive               = 0;
+    bool     debug                               = false;
     bool     printed_not_seen_all_chargers       = false;
     bool     printed_seen_all_chargers           = false;
     bool     printed_skipping_energy_update      = false;
     bool     uptime_past_hysteresis              = false;
-    uint32_t consecutive_bricklet_errors         = 0;
+    bool     contactor_check_tripped             = false;
     bool     bricklet_reachable                  = true;
+    uint32_t consecutive_bricklet_errors         = 0;
     SwitchingState switching_state               = SwitchingState::Monitoring;
     uint32_t switching_start                     = 0;
     uint32_t mode                                = 0;
     uint32_t have_phases                         = 0;
+    bool     is_3phase                           = false;
     bool     wants_3phase                        = false;
     bool     wants_3phase_last                   = false;
     bool     is_on_last                          = false;
+    bool     wants_on_last                       = false;
     bool     just_switched_phases                = false;
     bool     just_switched_mode                  = false;
     uint32_t phase_state_change_blocked_until    = 0;
@@ -239,8 +176,15 @@ private:
     uint32_t charge_manager_allocated_current_ma = 0;
     uint32_t max_current_limited_ma              = 0;
 
+    union {
+        uint32_t combined;
+        uint8_t  pin[4];
+    } charging_blocked               = {0};
+
     int32_t  power_available_w                   = 0;
     int32_t  power_available_filtered_w          = 0;
+
+    float    power_at_meter_raw_w                = NAN;
 
     int32_t  power_at_meter_smooth_w             = INT32_MAX;
     int32_t  power_at_meter_smooth_values_w[CURRENT_POWER_SMOOTHING_SAMPLES];
@@ -255,9 +199,8 @@ private:
 
     // Config cache
     uint32_t default_mode             = 0;
-    uint32_t auto_reset_hour          = 0;
-    uint32_t auto_reset_minute        = 0;
     bool     excess_charging_enable   = false;
+    uint32_t meter_slot_power         = UINT32_MAX;
     int32_t  target_power_from_grid_w = 0;
     uint32_t guaranteed_power_w       = 0;
     bool     contactor_installed      = false;
@@ -272,34 +215,37 @@ private:
     int32_t  overall_min_power_w = 0;
     int32_t  threshold_3to1_w    = 0;
     int32_t  threshold_1to3_w    = 0;
+    uint32_t max_phases          = 0;
 
-    void update_history_meter_power(float power);
+    void update_history_meter_power(uint32_t slot, float power /* W */);
     void collect_data_points();
     void set_pending_data_points();
     bool load_persistent_data();
+    void load_persistent_data_v1(uint8_t *buf);
+    void load_persistent_data_v2(uint8_t *buf);
     void save_persistent_data();
     void history_wallbox_5min_response(IChunkedResponse *response, Ownership *response_ownership, uint32_t response_owner_id);
     void history_wallbox_daily_response(IChunkedResponse *response, Ownership *response_ownership, uint32_t response_owner_id);
     void history_energy_manager_5min_response(IChunkedResponse *response, Ownership *response_ownership, uint32_t response_owner_id);
     void history_energy_manager_daily_response(IChunkedResponse *response, Ownership *response_ownership, uint32_t response_owner_id);
     bool set_wallbox_5min_data_point(const struct tm *utc, const struct tm *local, uint32_t uid, uint8_t flags, uint16_t power /* W */);
-    bool set_wallbox_daily_data_point(const struct tm *local, uint32_t uid, uint32_t energy /* dWh */);
-    bool set_energy_manager_5min_data_point(const struct tm *utc, const struct tm *local, uint8_t flags, int32_t power_grid /* W */, const int32_t power_general[6] /* W */);
-    bool set_energy_manager_daily_data_point(const struct tm *local, uint32_t energy_grid_in /* dWh */, uint32_t energy_grid_out /* dWh */,
-                                             const uint32_t energy_general_in[6] /* dWh */, const uint32_t energy_general_out[6] /* dWh */);
+    bool set_wallbox_daily_data_point(const struct tm *local, uint32_t uid, uint32_t energy /* daWh */);
+    bool set_energy_manager_5min_data_point(const struct tm *utc, const struct tm *local, uint8_t flags, const int32_t power[7] /* W */);
+    bool set_energy_manager_daily_data_point(const struct tm *local, const uint32_t energy_import[7] /* daWh */, const uint32_t energy_export[7] /* daWh */);
 
     std::list<std::function<bool(void)>> pending_data_points;
     bool persistent_data_loaded = false;
+    bool show_blank_value_id_update_warnings = false;
     uint32_t last_history_5min_slot = 0;
     ConfigRoot history_wallbox_5min;
     ConfigRoot history_wallbox_daily;
     ConfigRoot history_energy_manager_5min;
     ConfigRoot history_energy_manager_daily;
-    bool history_meter_available = false;
-    float history_meter_power_value = NAN; // W
-    uint32_t history_meter_power_timestamp;
-    double history_meter_power_sum = 0; // watt seconds
-    double history_meter_power_duration = 0; // seconds
-    double history_meter_energy_import = 0; // dWh
-    double history_meter_energy_export = 0; // dWh
+    bool history_meter_setup_done[METERS_SLOTS];
+    float history_meter_power_value[METERS_SLOTS]; // W
+    uint32_t history_meter_power_timestamp[METERS_SLOTS];
+    double history_meter_power_sum[METERS_SLOTS] = {0}; // watt seconds
+    double history_meter_power_duration[METERS_SLOTS] = {0}; // seconds
+    double history_meter_energy_import[METERS_SLOTS] = {0}; // daWh
+    double history_meter_energy_export[METERS_SLOTS] = {0}; // daWh
 };

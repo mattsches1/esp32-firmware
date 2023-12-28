@@ -75,14 +75,18 @@ let x = {
 
             "managed_boxes": "Kontrollierte Wallboxen",
 
-            "host_exists": "Host existiert bereits",
-
+            "host_exists": "Host existiert bereits"
+        },
+        "automation": {
+            "charge_manager_wd": "Lastmanagement-Watchdog",
+            "automation_trigger_text": <>Wenn der <b>Watchdog</b> des <b>Lastmanagements</b> auslöst, </>,
             "set_charge_manager": "Lastmanagement",
-            "cron_action_text": /*FFN*/(current: number) => <>setze den maximalen Gesamtstrom auf <b>{current / 1000} A</b>.</> /*NF*/
+            "automation_action_text": /*FFN*/(current: string) => <>setze den für das <b>Lastmanagement</b> verfügbaren Strom auf <b>{current} A</b>.</> /*NF*/,
+            "max_current": "Maximaler Strom"
         },
         "script": {
             "charge_state_0": "Kein Fahrzeug angeschlossen",
-            "charge_state_1": "Warte auf Benutzer-/NFC-Freigabe",
+            "charge_state_1": "Warte auf lokale Freigabe",
             "charge_state_2": "Warte auf Manager-Freigabe",
             "charge_state_3": "Laden freigegeben",
             "charge_state_4": "Lädt",

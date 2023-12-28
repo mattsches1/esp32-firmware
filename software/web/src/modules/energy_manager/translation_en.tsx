@@ -28,7 +28,6 @@ let x = {
             "config_error_no_max_current": "No maximum current configured for chargers",
             "config_error_no_chargers": "No chargers configured",
             "config_error_excess_no_meter": "Excess charging enabled but no meter configured",
-            "config_error_no_cm": "Charge Management not available",
 
             "no_bricklet": "Internal error, bricklet not found"
         },
@@ -61,8 +60,12 @@ let x = {
             "default_mode": "Default charging mode",
             "default_mode_muted": "will be used after energy manager reboot",
             "auto_reset_charging_mode": "Daily reset",
+            "auto_reset_charging_mode_disabled": "Found different Automation rule for setting the charging mode, please check the Automation settings.",
             "auto_reset_charging_mode_desc": "Automatically sets the charging mode back to the default.",
-            "auto_reset_time": "Reset at",
+            "meter_slot_grid_power": "Power meter",
+            "meter_slot_grid_power_muted": "for excess charging",
+            "meter_slot_grid_power_select": "Select...",
+            "meter_slot_grid_power_none": "No power meter configured",
             "guaranteed_power": "Min + PV: Minimum charging power",
             "guaranteed_power_muted": "Charging power that is allowed to be drawn from the grid to charge vehicles.",
             "target_power_from_grid": "Target grid power draw",
@@ -86,15 +89,6 @@ let x = {
             "relay": "Relay",
             "single_phase": "Single-phase",
             "three_phase": "Three-phase",
-            "input3_rule_then": "Mode",
-            "input4_rule_then": "Mode",
-            "relay_config": "Mode",
-            "relay_manual": "Manually controlled or unused",
-            "relay_rules": "Rule-based",
-            "relay_rule_when": "When",
-            "relay_rule_is": "Is",
-            "relay_config_then": "Then",
-            "relay_config_close": "Close relay",
             "low": "Open",
             "high": "Closed",
             "contactor_fail": "Tripped, contactor failed",
@@ -128,10 +122,135 @@ let x = {
             "hysteresis_time": "Hysteresis time",
             "hysteresis_time_muted": "Minimum delay before phase switches or starting or stopping a charge, to avoid excessive wear on the vehicle's charge electronics by switching too often."
         },
+        "automation": {
+            "slot": "Blocking slot",
+            "block_charge": "Block charging",
+            "unblock_charge": "Unblock charging",
+            "block_mode": "Mode",
+            "automation_block_charge_action_text": /*FFN*/(slot: number, block: boolean) => {
+                if (block) {
+                    return <><b>block</b> charging with slot <b>{slot}</b>.</>
+                }
+                return <><b>unblock</b> charging with slot <b>{slot}</b>.</>
+            }/*NF*/,
+            "limit_max_current": "Limit maximum total current",
+            "limit_mode": "Mode",
+            "reset_limit_max_current": "Reset maximum total current limit",
+            "max_current": "Maximum total current",
+            "automation_limit_max_current_action_text": /*FFN*/(current: number, default_current: number) => {
+                if (current === -1) {
+                    return <>reset maximum total current limit to the configured default current (<b>{default_current / 1000} A</b>).</>
+                }
+                return <>limit maximum total current to <b>{current / 1000} A</b>.</>
+            }/*NF*/,
+            "grid_power_draw": "Grid power draw",
+            "drawing": "Drawing power from the grid",
+            "feeding": "Feeding power to the grid",
+            "automation_grid_power_draw_text": /*FFN*/(drawing_power: boolean) => {
+                if (drawing_power) {
+                    return <>When <b>power is drawn</b> from the grid, </>;
+                } else {
+                    return <>When <b>power is fed</b> the grid, </>;
+                }
+            }/*NF*/,
+            "power_available": "Power available",
+            "not_available": "not available",
+            "available": "available",
+            "power": "Power",
+            "automation_power_available_text": /*FFN*/(power: boolean) => {
+                let not = <></>
+                if (!power) {
+                    not = <><b>not </b></>
+                }
+                return <>When {not}<b>enough</b> power for charging is available, </>
+            }/*NF*/,
+            "contactor_monitoring": "Contactor monitoring",
+            "automation_contactor_monitoring_text": /*FFN*/(contactor: boolean) => {
+                if (contactor) {
+                    return <>When <b>no contactor error</b> is detected on boot, </>
+                } else {
+                    return <>When <b>a contactor error</b> is detected, </>
+                }
+            }/*NF*/,
+            "contactor_monitoring_state": "State",
+            "contactor_error": "Contactor error",
+            "contactor_okay": "No contactor error on boot",
+            "phase_switch": "Phase switching",
+            "phase": "Phase",
+            "automation_phase_switch_text": /*FFN*/(phase: number) => {
+                let ret = <></>;
+                switch (phase) {
+                    case 1:
+                        ret = <><b>single-phase</b></>
+                        break;
+
+                    case 3:
+                        ret = <><b>three-phase</b></>
+                        break;
+                }
+                return <>When the contactor switched to {ret}, </>
+            }/*NF*/,
+            "input": /*SFN*/(input: number) => "Input " + input/*NF*/,
+            "state": "State",
+            "closed": "Closed",
+            "open": "Open",
+            "automation_input_text": /*FFN*/(input: number, state: boolean) => {
+                let ret = state ? <><b>closed</b></> : <><b>open</b></>
+                return <>If <b>Input {input}</b> switches to state {ret}, </>
+            }/*NF*/,
+            "switch_relay": "Switch relay",
+            "relay_state": "Swtich to",
+            "relay_state_open": "Open",
+            "relay_state_closed": "Closed",
+            "relay_action_text": /*FFN*/(state: boolean) => {
+                let ret = state ? <><b>close</b></> : <><b>open</b></>
+                return <>{ret} relay.</>
+            }/*NF*/,
+            "charge_mode_default": "Default mode",
+            "charge_mode_switch": "Switch charge mode",
+            "charge_mode": "Charge mode",
+            "fast": "Fast",
+            "disabled": "Disabled",
+            "pv_excess": "PV-Excess",
+            "guaranteed_power": "Min + PV: Minimum charging power",
+            "charge_mode_switch_action_text": /*FFN*/(mode: number, default_mode: number) => {
+                const modes = ["Fast", "Disabled", "PV-Excess", "Min + PV"];
+
+                let ret = <></>;
+                switch (mode) {
+                    case 0:
+                        ret = <><b>Fast</b></>
+                        break;
+
+                    case 1:
+                        ret = <><b>Disabled</b></>
+                        break;
+
+                    case 2:
+                        ret = <><b>PV-Excess</b></>
+                        break;
+
+                    case 3:
+                        ret = <><b>Min + PV</b></>
+                        break;
+
+                    default:
+                        ret = <><b>Default mode ({modes[default_mode]})</b></>
+                        break;
+                }
+                return <>switch charge mode to {ret}.</>
+            }/*NF*/,
+            "set_phases": "Phase switching",
+            "phases_wanted": "Switch to",
+            "single_phase": "Single-phase",
+            "three_phase": "Three-phase",
+            "automation_action_text": /*FFN*/(phases: number) => <>switch to <b>{phases == 1 ? "Single-phase" : "Three-phase"}</b></>/*NF*/
+        },
         "script": {
             "save_failed": "Failed to save energy manager settings.",
             "reboot_content_changed": "energy manager settings",
-            "mode_change_failed": "Failed to change charging mode."
+            "mode_change_failed": "Failed to change charging mode.",
+            "meter": /*SFN*/(slot: number|"?") => "Meter #" + slot/*NF*/
         }
     }
 }

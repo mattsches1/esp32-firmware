@@ -28,6 +28,7 @@
 #include "tools.h"
 #include "cool_string.h"
 #include "web_server.h"
+#include "modules/cm_networking/cm_networking_defs.h"
 
 #include <ESPmDNS.h>
 #include "lwip/ip_addr.h"
@@ -52,10 +53,10 @@ void CMNetworking::register_urls()
     }, true);
 
     server.on_HTTPThread("/charge_manager/scan_result", HTTP_GET, [this](WebServerRequest request) {
-        String result = cm_networking.get_scan_results();
+        CoolString result;
 
-        if (result == "In progress or not started")
-            return request.send(200, "text/plain; charset=utf-8", result.c_str());
+        if (!cm_networking.get_scan_results(result))
+            return request.send(200, "text/plain; charset=utf-8", "In progress or not started");
 
         return request.send(200, "application/json; charset=utf-8", result.c_str());
     });
@@ -92,7 +93,7 @@ static void dns_callback(const char *host, const ip_addr_t *ip, void *args)
 
 void CMNetworking::resolve_hostname(uint8_t charger_idx)
 {
-    if (this->hostnames[charger_idx].endsWith(".local")) {
+    if ((this->needs_mdns & (1 << charger_idx)) != 0) {
         if (!periodic_scan_task_started)
             task_scheduler.scheduleWithFixedDelay([this](){this->start_scan();}, 0, 60 * 1000);
         periodic_scan_task_started = true;
@@ -100,10 +101,10 @@ void CMNetworking::resolve_hostname(uint8_t charger_idx)
     }
 
     ip_addr_t ip;
-    int err = dns_gethostbyname_addrtype_lwip_ctx(hostnames[charger_idx].c_str(), &ip, dns_callback, &resolve_state[charger_idx], LWIP_DNS_ADDRTYPE_IPV4);
+    int err = dns_gethostbyname_addrtype_lwip_ctx(this->hosts[charger_idx], &ip, dns_callback, &resolve_state[charger_idx], LWIP_DNS_ADDRTYPE_IPV4);
 
     if (err == ERR_VAL)
-        logger.printfln("Charge manager has charger configured with hostname %s, but no DNS server is configured!", hostnames[charger_idx].c_str());
+        logger.printfln("Charge manager has charger configured with hostname %s, but no DNS server is configured!", this->hosts[charger_idx]);
 
     if (err != ERR_OK || ip.type != IPADDR_TYPE_V4)
         return;
@@ -115,7 +116,7 @@ void CMNetworking::resolve_hostname(uint8_t charger_idx)
 
     std::lock_guard<std::mutex> lock{dns_resolve_mutex};
     if (resolve_state[charger_idx] != RESOLVE_STATE_RESOLVED || dest_addrs[charger_idx].sin_addr.s_addr != in) {
-        logger.printfln("Resolved %s to %s", hostnames[charger_idx].c_str(), ipaddr_ntoa(&ip));
+        logger.printfln("Resolved %s to %s", this->hosts[charger_idx], ipaddr_ntoa(&ip));
     }
 
     dest_addrs[charger_idx].sin_addr.s_addr = in;
@@ -127,8 +128,7 @@ bool CMNetworking::is_resolved(uint8_t charger_idx) {
 }
 
 void CMNetworking::clear_cached_hostname(uint8_t charger_idx) {
-    const char *hostname = hostnames[charger_idx].c_str();
-    auto err = dns_removehost(hostname, nullptr);
+    auto err = dns_removehost(this->hosts[charger_idx], nullptr);
     if (err != ESP_OK)
         logger.printfln("cm_networking: Couldn't remove hostname from cache: error %i", err);
 }
@@ -146,8 +146,9 @@ void CMNetworking::check_results()
     scanning = false;
 
 #if MODULE_WS_AVAILABLE()
-    String s = get_scan_results();
-    ws.pushRawStateUpdate(s, "charge_manager/scan_result");
+    CoolString result;
+    if (get_scan_results(result))
+        ws.pushRawStateUpdate(result, "charge_manager/scan_result");
 #else
     {
         std::lock_guard<std::mutex> lock{scan_results_mutex};
@@ -224,16 +225,17 @@ bool CMNetworking::mdns_result_is_charger(mdns_result_t *entry, const char ** re
 
 void CMNetworking::resolve_via_mdns(mdns_result_t *entry) {
     if (entry->addr && entry->addr->addr.type == IPADDR_TYPE_V4) {
-        for(size_t i = 0; i < this->hostnames.size(); ++i ){
-            if (!this->hostnames[i].endsWith(".local"))
+        for(size_t i = 0; i < charger_count; ++i ){
+            if ((this->needs_mdns & (1 << i)) == 0)
                 continue;
 
-            String host = this->hostnames[i].substring(0, this->hostnames[i].length() - 6);
+            String host = String(this->hosts[i]);
+            host = host.substring(0, host.length() - 6);
 
             if (host == entry->hostname) {
                 this->dest_addrs[i].sin_addr.s_addr = entry->addr->addr.u_addr.ip4.addr;
                 if (this->resolve_state[i] != RESOLVE_STATE_RESOLVED) {
-                    logger.printfln("Resolved %s to %s (via mDNS scan)", this->hostnames[i].c_str(), ipaddr_ntoa((const ip_addr*)&entry->addr->addr));
+                    logger.printfln("Resolved %s to %s (via mDNS scan)", this->hosts[i], ipaddr_ntoa((const ip_addr*)&entry->addr->addr));
                 }
                 this->resolve_state[i] = RESOLVE_STATE_RESOLVED;
             }
@@ -299,19 +301,18 @@ size_t CMNetworking::build_scan_result_json(mdns_result_t *list, char *buf, size
     return json.end();
 }
 
-String CMNetworking::get_scan_results()
+bool CMNetworking::get_scan_results(CoolString &result)
 {
     std::lock_guard<std::mutex> lock{scan_results_mutex};
     if (scan_results == nullptr)
-        return "In progress or not started";
+        return false;
 
     size_t payload_size = build_scan_result_json(scan_results, nullptr, 0) + 1; // null terminator
 
-    CoolString result;
     result.reserve(payload_size);
 
     build_scan_result_json(scan_results, result.begin(), payload_size);
     result.setLength(payload_size - 1);
 
-    return result;
+    return true;
 }

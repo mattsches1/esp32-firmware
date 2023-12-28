@@ -148,7 +148,7 @@ export function toLocaleFixed(i: number, fractionDigits?: number) {
 
     return i.toLocaleString(undefined, {
         minimumFractionDigits: fractionDigits,
-        maximumFractionDigits: fractionDigits
+        maximumFractionDigits: fractionDigits,
     });
 }
 
@@ -208,8 +208,7 @@ export function addApiEventListener<T extends keyof API.EventMap>(type: T, liste
 export function addApiEventListener_unchecked(type: string, callback: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void {
     eventTarget.addEventListener_unchecked(type, callback, options);
     let api_cache_any = api_cache as any;
-    if (api_cache_any[type])
-    {
+    if (api_cache_any[type]) {
         API.trigger_unchecked(type, eventTarget);
     }
 }
@@ -220,6 +219,24 @@ let allow_render: Signal<boolean> = signal(false);
 
 export function render_allowed() {
     return allow_render.value;
+}
+
+let caps_active: Signal<boolean> = signal(false);
+
+export function capsLockActive() {
+    return caps_active.value;
+}
+
+function checkCapsLock(e: MouseEvent | KeyboardEvent) {
+    let active = e.getModifierState("CapsLock");
+    if (caps_active.value && e instanceof KeyboardEvent && e.type == "keyup" && e.key == "CapsLock")
+        active = false;
+    caps_active.value = active;
+}
+
+export function initCapsLockCheck() {
+    document.addEventListener("keyup", checkCapsLock);
+    document.addEventListener("click", checkCapsLock);
 }
 
 export function setupEventSource(first: boolean, keep_as_first: boolean, continuation: (ws: WebSocket, eventTarget: API.APIEventTarget) => void) {
@@ -269,7 +286,7 @@ export function setupEventSource(first: boolean, keep_as_first: boolean, continu
 
             allow_render.value = true;
         });
-    }
+    };
 
     continuation(ws, eventTarget);
 }
@@ -421,7 +438,7 @@ export const win1252Encode = (input: string) => {
 
 export function parseIP(ip: string) {
     // >>> 0 to force unsigned 32 bit integers
-    return ip.split(".").map((x, i, _) => parseInt(x, 10) * (1 << (8 * (3 - i)))).reduce((a, b) => a+b) >>> 0;
+    return ip.split(".").map((x, i, _) => parseInt(x, 10) * (1 << (8 * (3 - i)))).reduce((a, b) => a + b) >>> 0;
 }
 
 export function unparseIP(ip: number) {
@@ -449,7 +466,7 @@ export function getShowRebootModalFn(changed_value_name: string) {
     return () => {
         $('#reboot_content_changed').html(changed_value_name);
         $('#reboot').modal('show');
-    }
+    };
 }
 
 function timestamp_to_date(timestamp: number, time_fmt: any) {
@@ -647,7 +664,7 @@ export function compareArrays(a: Array<any>, b: Array<any>): boolean
 
 // https://stackoverflow.com/a/1535650
 export let nextId = (function() {
-    var id = 0;
+    let id = 0;
     return function() {return "ID-" + (++id).toString();};
 })();
 
@@ -663,4 +680,21 @@ export function joinNonEmpty(sep: string, lst: string[]) {
     return lst.filter(x => x) // remove empty slots
               .filter(x => x.length > 0)
               .join(sep);
+}
+
+export function get_updated_union<T extends object>(union: [number, T], update: Partial<T>): [number, T] {
+    return [union[0], {...union[1], ...update}];
+}
+
+export function toIsoString(date: Date) {
+    const pad = function(num: number) {
+        return (num < 10 ? '0' : '') + num;
+    };
+
+    return date.getFullYear() +
+        '-' + pad(date.getMonth() + 1) +
+        '-' + pad(date.getDate()) +
+        'T' + pad(date.getHours()) +
+        ':' + pad(date.getMinutes()) +
+        ':' + pad(date.getSeconds());
 }

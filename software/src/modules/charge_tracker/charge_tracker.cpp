@@ -28,23 +28,23 @@
 
 #include "pdf_charge_log.h"
 
-struct ChargeStart {
+struct [[gnu::packed]] ChargeStart {
     uint32_t timestamp_minutes = 0;
     float meter_start = 0.0f;
     uint8_t user_id = 0;
-} __attribute__((packed));
+};
 
 static_assert(sizeof(ChargeStart) == 9, "Unexpected size of ChargeStart");
 
-struct ChargeEnd {
+struct [[gnu::packed]] ChargeEnd {
     uint32_t charge_duration : 24;
     float meter_end = 0.0f;
-} __attribute__((packed));
+};
 
-struct Charge {
+struct [[gnu::packed]] Charge {
     ChargeStart cs;
     ChargeEnd ce;
-} __attribute__((packed));
+};
 
 static bool repair_logic(Charge *);
 
@@ -54,7 +54,6 @@ static_assert(sizeof(ChargeEnd) == 7, "Unexpected size of ChargeEnd");
 
 static_assert(CHARGE_RECORD_SIZE == 16, "Unexpected size of ChargeStart + ChargeEnd");
 
-#define CHARGE_RECORD_FOLDER "/charge-records"
 // 30 files with 256 records each: 7680 records @ ~ max. 10 records per day = ~ 2 years and one month of records.
 #define CHARGE_RECORD_FILE_COUNT 30
 #define CHARGE_RECORD_MAX_FILE_SIZE 4096
@@ -88,6 +87,19 @@ void ChargeTracker::pre_setup()
     config = Config::Object({
         {"electricity_price", Config::Uint16(0)}
     });
+
+// #if MODULE_AUTOMATION_AVAILABLE()
+//     automation.register_action(
+//         AutomationActionID::ChargeTrackerReset,
+//         *Config::Null(),
+//         [this](const Config *conf) {
+//             (void)conf;
+//             api.callCommand("charge_tracker/remove_all_charges", Config::ConfUpdateObject{{
+//                 {"do_i_know_what_i_am_doing", true}
+//             }});
+//         }
+//     );
+// #endif
 }
 
 String ChargeTracker::chargeRecordFilename(uint32_t i)
@@ -287,6 +299,7 @@ void ChargeTracker::removeOldRecords()
     // Now only users that are safe to remove remain.
     for (int user_id = 0; user_id < 256; ++user_id) {
         if ((users_to_delete[user_id / 32] & (1 << (user_id % 32))) != 0) {
+            // remove_from_username_file only removes if the user is not configured
             users.remove_from_username_file(user_id);
         }
     }
@@ -310,6 +323,10 @@ bool ChargeTracker::setupRecords()
         String name = String(f.name());
         if (f.isDirectory()) {
             logger.printfln("Unexpected directory %s in charge record folder", name.c_str());
+            continue;
+        }
+
+        if (name == "use_imexsum") {
             continue;
         }
 
@@ -371,7 +388,6 @@ bool ChargeTracker::setupRecords()
     this->first_charge_record = first;
     this->last_charge_record = last;
 
-    removeOldRecords();
     return true;
 }
 
@@ -667,6 +683,12 @@ void ChargeTracker::repair_charges() {
 
 void ChargeTracker::register_urls()
 {
+    // We have to do this here, not at the end of setup,
+    // because removeOldRecords calls users.remove_from_username_file
+    // which requires that the user config is already loaded from flash.
+    // This happens in users::setup() i.e. _after_ charge_tracker::setup()
+    removeOldRecords();
+
     api.addPersistentConfig("charge_tracker/config", &config, {}, 1000);
 
     server.on_HTTPThread("/charge_tracker/charge_log", HTTP_GET, [this](WebServerRequest request) {

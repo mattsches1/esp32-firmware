@@ -24,48 +24,50 @@ import * as util from "../../ts/util";
 interface AsyncModalProps {
 }
 
-interface AsyncModalStrings {
-    title: string
-    body: ComponentChildren
-    no_variant: string
-    no_text: string
+interface AsyncModalParams {
+    title: string;
+    body: ComponentChildren;
+    no_variant: string;
+    no_text: string;
 
-    yes_variant: string
-    yes_text: string
+    yes_variant: string;
+    yes_text: string;
+
+    nestingDepth?: number
 }
 
-interface AsyncModalState extends AsyncModalStrings {
-    show: boolean
+interface AsyncModalState extends AsyncModalParams {
+    show: boolean;
 
-    promiseResolve: (value: boolean | PromiseLike<boolean>) => void
+    promiseResolve: (value: boolean | PromiseLike<boolean>) => void;
 }
 
 export class AsyncModal extends Component<AsyncModalProps, AsyncModalState> {
-    constructor() {
-        super();
-    }
-
-    show = async (strings: AsyncModalStrings) => {
+    show = async (strings: AsyncModalParams) => {
         return new Promise<boolean>((resolve) => {
             this.setState({
                 show: true,
                 promiseResolve: resolve,
-                ...strings
+                ...strings,
             });
         });
-    }
+    };
 
     hide = (b: boolean) => {
         this.state.promiseResolve(b);
         this.setState({
             show: false,
-            promiseResolve: null
+            promiseResolve: null,
         });
-    }
+    };
 
     render(props: AsyncModalProps, state: Readonly<AsyncModalState>) {
         return (
-           <Modal show={state.show} onHide={() => {this.hide(false)}} centered>
+           <Modal show={state.show}
+                    onHide={() => {this.hide(false)}}
+                    centered
+                    backdropClassName={this.state.nestingDepth ? "modal-backdrop-" + this.state.nestingDepth : ""}
+                    className={this.state.nestingDepth ? "modal-" + this.state.nestingDepth : ""}>
                 {/* There seems to be an incompatibility between preact's and react-bootstrap's typings*/ }
                 <Modal.Header {...{closeButton: true} as any}>
                     <label class="modal-title form-label">{state.title}</label>

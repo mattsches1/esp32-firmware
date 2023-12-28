@@ -28,7 +28,6 @@ let x = {
             "config_error_no_max_current": "Maximaler Gesamtstrom der Wallboxen nicht konfiguriert",
             "config_error_no_chargers": "Keine Wallboxen konfiguriert",
             "config_error_excess_no_meter": "Überschussladen aktiviert aber kein Stromzähler eingerichtet",
-            "config_error_no_cm": "Lastmanagement nicht verfügbar",
 
             "no_bricklet": "Interner Fehler, Bricklet nicht gefunden"
         },
@@ -61,8 +60,12 @@ let x = {
             "default_mode": "Standardlademodus",
             "default_mode_muted": "wird nach Neustart des Energiemanagers verwendet",
             "auto_reset_charging_mode": "Tägliches Zurücksetzen",
+            "auto_reset_charging_mode_disabled": "Abweichende Automatisierungsregeln für Lademoduswechsel gefunden, bitte in den Automatisierungseinstellungen überprüfen.",
             "auto_reset_charging_mode_desc": "Setzt den Lademodus täglich auf den Standardlademodus zurück.",
-            "auto_reset_time": "Zurücksetzen um",
+            "meter_slot_grid_power": "Stromzähler",
+            "meter_slot_grid_power_muted": "für Überschussladen",
+            "meter_slot_grid_power_select": "Auswählen...",
+            "meter_slot_grid_power_none": "Keine Stromzähler konfiguriert",
             "guaranteed_power": "Min + PV: Mindestladeleistung",
             "guaranteed_power_muted": "Leistung, die im Min + PV-Modus zum Laden von Fahrzeugen aus dem Netz bezogen werden darf.",
             "target_power_from_grid": "Soll-Netzbezug",
@@ -86,15 +89,6 @@ let x = {
             "relay": "Relais",
             "single_phase": "Einphasig",
             "three_phase": "Dreiphasig",
-            "input3_rule_then": "Modus",
-            "input4_rule_then": "Modus",
-            "relay_config": "Modus",
-            "relay_manual": "Manuell gesteuert oder nicht verwendet",
-            "relay_rules": "Regelbasiert",
-            "relay_rule_when": "Wenn",
-            "relay_rule_is": "Ist",
-            "relay_config_then": "Dann",
-            "relay_config_close": "Relais schließen",
             "low": "Offen",
             "high": "Geschlossen",
             "contactor_fail": "Ausgelöst, Schütz defekt",
@@ -128,10 +122,135 @@ let x = {
             "hysteresis_time": "Hysterese-Zeit",
             "hysteresis_time_muted": "Minimale Wartezeit vor Phasenumschaltungen bzw. Anfang und Ende eines Ladevorganges, um die Ladeelektronik des Fahrzeuges nicht durch häufige Schaltvorgänge zu belasten."
         },
+        "automation": {
+            "slot": "Blockierungsslot",
+            "block_charge": "Laden blockieren",
+            "unblock_charge": "Laden freigeben",
+            "block_mode": "Modus",
+            "automation_block_charge_action_text": /*FFN*/(slot: number, block: boolean) => {
+                if (block) {
+                    return <><b>blockiere</b> das Laden durch Slot <b>{slot}</b>.</>
+                }
+                return <><b>gebe</b> das Laden durch Slot <b>{slot} frei</b>.</>
+            }/*NF*/,
+            "limit_max_current": "Maximalen Gesamtstrom begrenzen",
+            "limit_mode": "Modus",
+            "reset_limit_max_current": "Maximalen Gesamtstrom zurücksetzen",
+            "max_current": "Maximaler Gesamtstrom",
+            "automation_limit_max_current_action_text": /*FFN*/(current: number, default_current: number) => {
+                if (current === -1) {
+                    return <>setze den maximalen Gesamtstrom zurück auf den Standardwert (<b>{default_current / 1000} A</b>).</>
+                }
+                return <>begrenze den maximalen Gesamtstrom auf <b>{current / 1000} A</b>.</>
+            }/*NF*/,
+            "grid_power_draw": "Netzbezug",
+            "drawing": "Bezieht Energie aus dem Netz",
+            "feeding": "Speist Energie ins Netz ein",
+            "automation_grid_power_draw_text": /*FFN*/(drawing_power: boolean) => {
+                if (drawing_power) {
+                    return <>Wenn <b>Energie</b> aus dem Stromnetz <b>bezogen</b> wird, </>;
+                } else {
+                    return <>Wenn <b>Energie</b> ins Stromnetz <b>eingespeist</b> wird, </>;
+                }
+            }/*NF*/,
+            "power_available": "Leistung verfügbar",
+            "not_available": "Nicht verfügbar",
+            "available": "Verfügbar",
+            "power": "Leistung",
+            "automation_power_available_text": /*FFN*/(power: boolean) => {
+                let not = <></>
+                if (!power) {
+                    not = <><b>nicht </b></>
+                }
+                return <>Wenn {not}<b>genug</b> Leistung zum Laden verfügbar ist, </>
+            }/*NF*/,
+            "contactor_monitoring": "Schützüberwachung",
+            "automation_contactor_monitoring_text": /*FFN*/(contactor: boolean) => {
+                if (contactor) {
+                    return <>Wenn beim Start <b>kein Schützfehler</b> erkannt wird, </>
+                } else {
+                    return <>Wenn <b>ein Schützfehler</b> erkannt wird, </>
+                }
+            }/*NF*/,
+            "contactor_monitoring_state": "Status",
+            "contactor_error": "Schützfehler",
+            "contactor_okay": "Kein Schützfehler bei Start",
+            "phase_switch": "Phasenumschaltung",
+            "phase": "Phase",
+            "automation_phase_switch_text": /*FFN*/(phase: number) => {
+                let ret = <></>;
+                switch (phase) {
+                    case 1:
+                        ret = <><b>einphasig</b></>
+                        break;
+
+                    case 3:
+                        ret = <><b>dreiphasig</b></>
+                        break;
+                }
+                return <>Wenn das Schütz auf {ret} geschaltet hat, </>
+            }/*NF*/,
+            "input": /*SFN*/(input: number) => "Eingang " + input/*NF*/,
+            "state": "Zustand",
+            "closed": "Geschlossen",
+            "open": "Offen",
+            "automation_input_text": /*FFN*/(input: number, state: boolean) => {
+                let ret = state ? <><b>geschlossen</b></> : <><b>offen</b></>
+                return <>Wenn <b>Eingang {input}</b> auf Zustand {ret} wechselt, </>
+            }/*NF*/,
+            "switch_relay": "Relay schalten",
+            "relay_state": "Schalten auf",
+            "relay_state_open": "Offen",
+            "relay_state_closed": "Geschlossen",
+            "relay_action_text": /*FFN*/(state: boolean) => {
+                let ret = state ? <><b>schließen</b></> : <><b>öffnen</b></>
+                return <>Relay {ret}.</>
+            }/*NF*/,
+            "charge_mode_default": "Standardmodus",
+            "charge_mode_switch": "Lademodus wechseln",
+            "charge_mode": "Lademodus",
+            "fast": "Schnell",
+            "disabled": "Deaktiviert",
+            "pv_excess": "PV-Überschuss",
+            "guaranteed_power": "Min + PV: Mindestladeleistung",
+            "charge_mode_switch_action_text": /*FFN*/(mode: number, default_mode: number) => {
+                const modes = ["Schnell", "Deaktiviert", "PV-Überschuss", "Min + PV"];
+
+                let ret = <></>;
+                switch (mode) {
+                    case 0:
+                        ret = <><b>Schnell</b></>
+                        break;
+
+                    case 1:
+                        ret = <><b>Deaktiviert</b></>
+                        break;
+
+                    case 2:
+                        ret = <><b>PV-Überschuss</b></>
+                        break;
+
+                    case 3:
+                        ret = <><b>Min + PV</b></>
+                        break;
+
+                    default:
+                        ret = <><b>Standardmodus ({modes[default_mode]})</b></>
+                        break;
+                }
+                return <>wechsle Lademodus auf {ret}.</>
+            }/*NF*/,
+            "set_phases": "Phasenumschaltung",
+            "phases_wanted": "Umschaltung auf",
+            "single_phase": "Einphasig",
+            "three_phase": "Dreiphasig",
+            "automation_action_text": /*FFN*/(phases: number) => <>Schalte auf <b>{phases == 1 ? "Einphasig" : "Dreiphasig"}</b> um.</>/*NF*/
+        },
         "script": {
             "save_failed": "Speichern der Energiemanager-Einstellungen fehlgeschlagen.",
             "reboot_content_changed": "Energiemanager-Einstellungen",
-            "mode_change_failed": "Wechsel des Lademodus fehlgeschlagen."
+            "mode_change_failed": "Wechsel des Lademodus fehlgeschlagen.",
+            "meter": /*SFN*/(slot: number|"?") => "Zähler #" + slot/*NF*/
         }
     }
 }

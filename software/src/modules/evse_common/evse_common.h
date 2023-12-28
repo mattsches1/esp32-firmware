@@ -21,7 +21,9 @@
 
 #include "config.h"
 
+#include "modules/meters/meter_value_availability.h"
 #include "module.h"
+#include "tools.h"
 
 #define CHARGING_SLOT_COUNT 15
 #define CHARGING_SLOT_COUNT_SUPPORTED_BY_EVSE 20
@@ -40,7 +42,7 @@
 #define CHARGING_SLOT_OCPP 11
 #define CHARGING_SLOT_CHARGE_LIMITS 12
 #define CHARGING_SLOT_REQUIRE_METER 13
-#define CHARGING_SLOT_CRON 14
+#define CHARGING_SLOT_AUTOMATION 14
 
 #define IEC_STATE_A 0
 #define IEC_STATE_B 1
@@ -59,6 +61,8 @@
 
 #define SLOT_ACTIVE(x) ((bool)(x & 0x01))
 #define SLOT_CLEAR_ON_DISCONNECT(x) ((bool)(x & 0x02))
+
+#define EXTERNAL_TIMEOUT 30
 
 class IEvseBackend : virtual public IModule {
     friend class EvseCommon;
@@ -80,7 +84,7 @@ protected:
     virtual void set_data_storage(uint8_t, const uint8_t*) = 0;
     virtual void get_data_storage(uint8_t, uint8_t*) = 0;
 
-    virtual void set_indicator_led(int16_t, uint16_t, uint8_t*) = 0;
+    virtual void set_indicator_led(int16_t, uint16_t, uint16_t, uint8_t, uint8_t, uint8_t*) = 0;
 
     virtual void set_control_pilot_disconnect(bool, bool*) = 0;
     virtual bool get_control_pilot_disconnect() = 0;
@@ -110,6 +114,7 @@ class EvseCommon final : public IModule
 
 private:
     IEvseBackend *backend = nullptr;
+    unsigned long last_external_update = 0;
 
 public:
     EvseCommon();
@@ -128,6 +133,11 @@ public:
     void set_modbus_current(uint16_t);
     void set_modbus_enabled(bool);
 
+    uint32_t get_charger_meter();
+    MeterValueAvailability get_charger_meter_power(float *power, micros_t max_age = 0_usec);
+    MeterValueAvailability get_charger_meter_energy(float *energy, micros_t max_age = 0_usec);
+    bool get_use_imexsum();
+
     void set_require_meter_blocking(bool);
     void set_require_meter_enabled(bool);
     bool get_require_meter_blocking();
@@ -143,7 +153,7 @@ public:
 
     void set_data_storage(uint8_t, const uint8_t*);
     void get_data_storage(uint8_t, uint8_t*);
-    void set_indicator_led(int16_t, uint16_t, uint8_t*);
+    void set_indicator_led(int16_t, uint16_t, uint16_t, uint8_t, uint8_t, uint8_t*);
 
     bool apply_slot_default(uint8_t slot, uint16_t current, bool enabled, bool clear);
     void apply_defaults();
@@ -197,4 +207,12 @@ private:
     ConfigRoot ocpp_enabled_update;
     ConfigRoot require_meter_enabled;
     ConfigRoot require_meter_enabled_update;
+    ConfigRoot automation_current;
+    ConfigRoot automation_current_update;
+
+    // Stored on ESP
+    ConfigRoot meter_config;
+    uint32_t charger_meter_slot = 0;
+
+    bool use_imexsum = false;
 };

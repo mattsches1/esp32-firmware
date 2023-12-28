@@ -75,20 +75,24 @@ let x = {
 
             "managed_boxes": "Managed chargers",
 
-            "host_exists": "Host already exists",
-
-            "set_charge_manager": "Charge Manager",
-            "cron_action_text": /*FFN*/(current: number) => {
-              return (
-                <>
-                  set the maximum total current to <b>{current / 1000} A</b>.
-                </>
-              );
-            }/*NF*/
+            "host_exists": "Host already exists"
+        },
+        "automation": {
+          "charge_manager_wd": "Charge manager watchdog",
+          "automation_trigger_text": <>When the <b>charge manager watchdog</b> gets triggered, </>,
+          "set_charge_manager": "Charge Manager",
+          "automation_action_text": /*FFN*/(current: string) => {
+            return (
+              <>
+                set the current that is available for the <b>charge manager</b> to <b>{current} A</b>.
+              </>
+            );
+          }/*NF*/,
+          "max_current": "Maximum current"
         },
         "script": {
             "charge_state_0": "No vehicle connected",
-            "charge_state_1": "Waiting for user/NFC release",
+            "charge_state_1": "Waiting for local release",
             "charge_state_2": "Waiting for manager release",
             "charge_state_3": "Charging cleared",
             "charge_state_4": "Charging",

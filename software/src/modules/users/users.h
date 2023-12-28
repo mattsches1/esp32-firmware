@@ -37,7 +37,11 @@
 #define USERNAME_ENTRY_LENGTH (USERNAME_LENGTH + DISPLAY_NAME_LENGTH)
 #define MAX_PASSIVE_USERS 256
 
+#if defined(BOARD_HAS_PSRAM)
+#define MAX_ACTIVE_USERS 33
+#else
 #define MAX_ACTIVE_USERS 17
+#endif
 
 class Users final : public IModule
 {
@@ -52,6 +56,7 @@ public:
     void remove_from_username_file(uint8_t user_id);
     void search_next_free_user();
     int get_display_name(uint8_t user_id, char *ret_buf);
+    bool is_user_configured(uint8_t user_id);
 
     #define TRIGGER_CHARGE_ANY 0
     #define TRIGGER_CHARGE_START 1

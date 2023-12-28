@@ -18,13 +18,10 @@
  */
 
 import $ from "../../ts/jq";
-
 import * as API from "../../ts/api";
 import * as util from "../../ts/util";
-
 import { h, render, Fragment } from "preact";
 import { __ } from "../../ts/translation";
-
 import { ConfigComponent } from "../../ts/components/config_component";
 import { ConfigForm } from "../../ts/components/config_form";
 import { FormRow } from "../../ts/components/form_row";
@@ -34,18 +31,13 @@ import { SubPage } from "../../ts/components/sub_page";
 import { EVSE_SLOT_MODBUS_TCP } from "../evse_common/api";
 import { CollapsedSection } from "../../ts/components/collapsed_section";
 
-type ModbusTCPConfig = API.getType["modbus_tcp/config"];
+type ModbusTcpConfig = API.getType["modbus_tcp/config"];
 
 interface config {
-    evse_enable: boolean
+    evse_enable: boolean;
 }
 
-const input_count = 23;
-const holding_count = 7 + input_count;
-const discrete_count = 12 + holding_count;
-const coil_count = 2 + discrete_count;
-
-export class ModbusTCP extends ConfigComponent<'modbus_tcp/config', {}, config> {
+export class ModbusTcp extends ConfigComponent<'modbus_tcp/config', {}, config> {
     constructor() {
         super('modbus_tcp/config',
                 __("modbus_tcp.script.save_failed"),
@@ -56,7 +48,7 @@ export class ModbusTCP extends ConfigComponent<'modbus_tcp/config', {}, config> 
         });
     }
 
-    override async sendSave(t: "modbus_tcp/config", cfg: config & ModbusTCPConfig) {
+    override async sendSave(t: "modbus_tcp/config", cfg: config & ModbusTcpConfig) {
         await API.save_unchecked('evse/modbus_tcp_enabled', {enabled: this.state.evse_enable}, __("evse.script.save_failed"));
         await super.sendSave(t, cfg);
     }
@@ -73,7 +65,7 @@ export class ModbusTCP extends ConfigComponent<'modbus_tcp/config', {}, config> 
         return super.getIsModified(t);
     }
 
-    render(props: {}, state: ModbusTCPConfig & config) {
+    render(props: {}, state: ModbusTcpConfig & config) {
         if (!util.render_allowed())
             return (<></>);
 
@@ -101,7 +93,8 @@ export class ModbusTCP extends ConfigComponent<'modbus_tcp/config', {}, config> 
                         <InputNumber value={state.port}
                                 onValue={this.set("port")}
                                 min={1}
-                                max={65535}/>
+                                max={65535}
+                                required/>
                     </FormRow>
                     <FormRow label={__("modbus_tcp.content.table")}>
                         <InputSelect items={[
@@ -123,7 +116,7 @@ export class ModbusTCP extends ConfigComponent<'modbus_tcp/config', {}, config> 
     }
 }
 
-render(<ModbusTCP />, $("#modbus_tcp")[0]);
+render(<ModbusTcp />, $("#modbus_tcp")[0]);
 
 export function add_event_listeners(source: API.APIEventTarget) {
 }

@@ -61,6 +61,12 @@ struct ConfUnionPrototypeInternal;
 template<typename T>
 struct ConfUnionPrototype;
 
+enum class ConfigSource {
+    File, // The new config was read from the ESP's flash
+    API, // The new config was passed via the APi
+    Code // The new config was created from a ConfUpdate
+};
+
 struct Config {
     struct ConfString {
         using Slot = ConfStringSlot;
@@ -191,7 +197,7 @@ struct Config {
         using Slot = ConfObjectSlot;
     private:
         uint16_t idx;
-        Slot *getSlot();
+
 
     public:
         static bool slotEmpty(size_t i);
@@ -201,11 +207,10 @@ struct Config {
 
         Config *get(const String &s);
         const Config *get(const String &s) const;
-        std::vector<std::pair<String, Config>> *getVal();
-        const std::vector<std::pair<String, Config>> *getVal() const;
         const Slot *getSlot() const;
+        Slot *getSlot();
 
-        ConfObject(std::vector<std::pair<String, Config>> val);
+        ConfObject(std::vector<std::pair<String, Config>> &&val);
         ConfObject(const ConfObject &cpy);
         ~ConfObject();
 
@@ -540,7 +545,7 @@ public:
     bool removeLast();
     bool removeAll();
     bool remove(size_t i);
-    ssize_t count() const;
+    size_t count() const;
     std::vector<Config>::iterator begin();
     std::vector<Config>::iterator end();
 
@@ -625,7 +630,7 @@ private:
             logger.printfln("update_value: Config has wrong type. This is a %s. new value is a %s", this->value.getVariantName(), value_type);
 #ifdef DEBUG_FS_ENABLE
             logger.printfln("Content is %s", this->to_string().c_str());
-            logger.printfln("value is is %s", String(value).c_str());
+            logger.printfln("value is %s", String(value).c_str());
 #endif
             esp_system_abort("");
         }
@@ -702,41 +707,44 @@ public:
 
     ConfigRoot(Config cfg);
 
-    ConfigRoot(Config cfg, std::function<String(Config &)> validator);
+    ConfigRoot(Config cfg, std::function<String(Config &, ConfigSource)> validator);
 
-    std::function<String(Config &)> validator;
+    std::function<String(Config &, ConfigSource)> validator;
     bool permit_null_updates = true;
 
     void update_from_copy(Config *copy);
 
-    String update_from_file(File &file);
+    String update_from_file(File &&file);
 
     // Intentionally take a non-const char * here:
     // This allows ArduinoJson to deserialize in zero-copy mode
     String update_from_cstr(char *c, size_t payload_len);
-    String get_updated_copy(char *c, size_t payload_len, Config *out_config);
+    String get_updated_copy(char *c, size_t payload_len, Config *out_config, ConfigSource source);
 
-    String update_from_json(JsonVariant root, bool force_same_keys);
-    String get_updated_copy(JsonVariant root, bool force_same_keys, Config *out_config);
+    String update_from_json(JsonVariant root, bool force_same_keys, ConfigSource source);
+    String get_updated_copy(JsonVariant root, bool force_same_keys, Config *out_config, ConfigSource source);
 
     String update(const Config::ConfUpdate *val);
 
-    String validate();
+    String validate(ConfigSource source);
 
     OwnedConfig get_owned_copy();
 
 private:
     template<typename T>
-    String update_from_visitor(T visitor);
+    String update_from_visitor(T visitor, ConfigSource source);
 
     template<typename T>
-    String get_updated_copy(T visitor, Config *out_config);
+    String get_updated_copy(T visitor, Config *out_config, ConfigSource source);
 };
 
 template<typename T>
 struct ConfUnionPrototype {
     T tag;
     Config config;
+
+    ConfUnionPrototype() : tag(static_cast<T>(0)), config(*Config::Null()) {
+    }
 
     ConfUnionPrototype(T tag, Config config) : tag(tag), config(config) {
         Config::check_enum_template_type<T>();

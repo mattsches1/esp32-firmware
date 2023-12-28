@@ -44,7 +44,7 @@ void Ethernet::pre_setup()
         {"subnet", Config::Str("0.0.0.0", 7, 15)},
         {"dns", Config::Str("0.0.0.0", 7, 15)},
         {"dns2", Config::Str("0.0.0.0", 7, 15)},
-    }), [](Config &cfg) -> String {
+    }), [](Config &cfg, ConfigSource source) -> String {
         IPAddress ip_addr, subnet_mask, gateway_addr, unused;
 
         if (!ip_addr.fromString(cfg.get("ip")->asEphemeralCStr()))
@@ -161,6 +161,13 @@ void Ethernet::setup()
                 state.get("connection_state")->updateUint((uint)connection_state);
                 state.get("link_speed" )->updateUint(link_speed);
                 state.get("full_duplex")->updateBool(full_duplex);
+
+#if MODULE_WIFI_AVAILABLE()
+                if (wifi.is_sta_enabled()) {
+                    logger.printfln("Warning: Ethernet is connected and WiFi station is enabled at the same time.");
+                    logger.printfln("         This can lead to connectivity issues and is not recommended.");
+                }
+#endif
             }, 0);
         },
         ARDUINO_EVENT_ETH_CONNECTED);

@@ -54,9 +54,9 @@ let x = {
             "charge_tracker_remove_modal_text": <>All tracked charges and the username history will be removed. <b>This action cannot be undone!</b> The charger then will restart.</>
         }
     },
-    "meter": {
+    "meters": {
         "status": {
-            "charge_history": "Charge history"
+            "power_history": "Charge history"
         }
     }
 }

@@ -18,56 +18,56 @@
  */
 
 import { __ } from "../translation";
-import { h, Component, Fragment, VNode, ComponentChild } from "preact";
+import { h, Component, Fragment, ComponentChild, ComponentChildren } from "preact";
 import { Card, Button, Collapse } from "react-bootstrap";
 import { Plus, Edit3, Trash2 } from "react-feather";
 import { FormRow } from "./form_row";
 import { ItemModal } from "./item_modal";
 import * as util from "../../ts/util";
 
-export interface TableModalRow {
-    name: string
-    // FormRow only accepts VNodes, not other ComponentChild variants.
-    value: VNode
-}
-
 export interface TableRow {
-    key?: string
-    columnValues: ComponentChild[]
-    extraShow?: boolean
-    extraFieldName?: string
-    extraValue?: ComponentChild
-    extraKey?: string
-    fieldNames?: string[]
-    fieldValues?: ComponentChild[]
-    fieldWithBox?: boolean[]
-    editTitle?: string
-    onEditShow?: () => Promise<void>
-    onEditGetRows?: () => TableModalRow[]
-    onEditCheck?: () => Promise<boolean>
-    onEditSubmit?: () => Promise<void>
-    onEditHide?: () => Promise<void>
-    onRemoveClick?: () => Promise<void>
+    key?: string;
+    columnValues: ComponentChild[];
+    extraShow?: boolean;
+    extraFieldName?: string;
+    extraValue?: ComponentChild;
+    extraKey?: string;
+    fieldNames?: string[];
+    fieldValues?: ComponentChild[];
+    fieldWithBox?: boolean[];
+    editTitle?: string;
+    onEditShow?: () => Promise<void>;
+    onEditGetChildren?: () => ComponentChildren;
+    onEditCheck?: () => Promise<boolean>;
+    onEditSubmit?: () => Promise<void>;
+    onEditHide?: () => Promise<void>;
+    onRemoveClick?: () => Promise<void>;
+    onEditStart?: never;
+    onEditCommit?: never;
+    onEditAbort?: never;
 }
 
 export interface TableProps {
-    columnNames: string[]
-    rows: TableRow[]
-    addEnabled?: boolean
-    addMessage?: string
-    addTitle?: string
-    onAddShow?: () => Promise<void>
-    onAddGetRows?: () => TableModalRow[]
-    onAddCheck?: () => Promise<boolean>
-    onAddSubmit?: () => Promise<void>
-    onAddHide?: () => Promise<void>
-    tableTill?: 'xs' | 'sm' | 'md' | 'lg' | 'xl'
-    nestingDepth?: number
+    columnNames: string[];
+    rows: TableRow[];
+    addEnabled?: boolean;
+    addMessage?: string;
+    addTitle?: string;
+    onAddShow?: () => Promise<void>;
+    onAddGetChildren?: () => ComponentChildren;
+    onAddCheck?: () => Promise<boolean>;
+    onAddSubmit?: () => Promise<void>;
+    onAddHide?: () => Promise<void>;
+    tableTill?: "xs" | "sm" | "md" | "lg" | "xl";
+    nestingDepth?: number;
+    onAddStart?: never;
+    onAddCommit?: never;
+    onAddAbort?: never;
 }
 
 interface TableState {
-    showAddModal: boolean
-    showEditModal: number
+    showAddModal: boolean;
+    showEditModal: number;
 }
 
 const value_or_else = (value: ComponentChild, replacement: ComponentChild): ComponentChild => {
@@ -84,7 +84,6 @@ export class Table extends Component<TableProps, TableState> {
 
         this.state = {
             showAddModal: false,
-            addRows: [],
             showEditModal: null,
         } as any;
     }
@@ -130,7 +129,7 @@ export class Table extends Component<TableProps, TableState> {
                         {props.rows.map((row, i) => <>
                             <tr key={row.key}>
                                 {row.columnValues.map((value) => (
-                                    <td class={"text-break" + (row.extraValue ? " pb-0" : "")} style={"vertical-align: middle;" + (i == 0 ? " border-top: none;" : "")}>{value}</td>
+                                    <td class={row.extraValue ? " pb-0" : ""} style={"word-wrap: break-word; vertical-align: middle;" + (i == 0 ? " border-top: none;" : "")}>{value}</td>
                                 ))}
                                 <td class={row.extraValue ? "pb-0" : undefined} style={"width: 1%; white-space: nowrap; vertical-align: middle;" + (i == 0 ? " border-top: none;" : "")}>
                                     <Button variant="primary"
@@ -163,7 +162,7 @@ export class Table extends Component<TableProps, TableState> {
                                 </tr>
                                 : undefined}
                         </>)}
-                        {props.onAddSubmit ?
+                        {props.onAddShow ?
                         <tr>
                             <td colSpan={props.columnNames.length} style={"vertical-align: middle; width: 100%;" + (props.rows.length == 0 ? " border-top: none;" : "")}>
                                 {props.addMessage}
@@ -185,10 +184,10 @@ export class Table extends Component<TableProps, TableState> {
                 </table>
                 </Card.Body></Card>
 
-                <div class={`d-block d-${props.tableTill ? props.tableTill : 'sm'}-none` + " table-card-mode"}>
+                <div class={`d-block d-${props.tableTill ? props.tableTill : 'sm'}-none table-card-mode`}>
                     {props.rows.map((row, i) => {
                         let card_fields = this.get_card_fields(row);
-                        let needs_body = card_fields.length > 0 || row.extraValue;
+                        let needs_body = card_fields.length > 0 || (row.extraValue && row.extraShow);
 
                         return <><Card className="mb-3">
                         <div class="card-header d-flex justify-content-between align-items-center p-2d5" style={needs_body ? "" : "border-bottom: 0;"}>
@@ -280,14 +279,10 @@ export class Table extends Component<TableProps, TableState> {
                     yes_text={__("component.table.add")}
                     backdropClassName={props.nestingDepth === undefined ? undefined : ("modal-backdrop-" + props.nestingDepth)}
                     className={props.nestingDepth === undefined ? undefined : ("modal-" + props.nestingDepth)}
-                    size={props.nestingDepth === undefined ? "xl" : {0: "xl", 1: "lg", 2: "md", 3: "sm"}[props.nestingDepth] as 'xl' | 'lg' | 'sm'}
-                    >
-                    {state.showAddModal && props.onAddGetRows ?
-                        props.onAddGetRows().map((addRow) =>
-                            addRow.name ?
-                        <FormRow label={addRow.name}>
-                            {addRow.value}
-                        </FormRow> : addRow.value) : undefined}
+                    size={props.nestingDepth === undefined ? "xl" : {0: "xl", 1: "lg", 2: "md", 3: "sm"}[props.nestingDepth] as 'xl' | 'lg' | 'sm'} >{/* "md" doesn't exist but is just the normal size, the cast make it ignore "md"*/}
+                    {state.showAddModal && props.onAddGetChildren ?
+                        props.onAddGetChildren()
+                        : undefined}
                 </ItemModal>
 
                 <ItemModal
@@ -318,13 +313,10 @@ export class Table extends Component<TableProps, TableState> {
                     yes_text={__("component.table.apply")}
                     backdropClassName={props.nestingDepth === undefined ? undefined : ("modal-backdrop-" + props.nestingDepth)}
                     className={props.nestingDepth === undefined ? undefined : ("modal-" + props.nestingDepth)}
-                    size={props.nestingDepth === undefined ? "xl" : {0: "xl", 1: "lg", 2: "md", 3: "sm"}[props.nestingDepth] as 'xl' | 'lg' | 'sm'}>
-                    {state.showEditModal !== null && props.rows[state.showEditModal].onEditGetRows ?
-                        props.rows[state.showEditModal].onEditGetRows().map((editRow) =>
-                            editRow.name ?
-                        <FormRow label={editRow.name}>
-                            {editRow.value}
-                        </FormRow> : editRow.value) : undefined}
+                    size={props.nestingDepth === undefined ? "xl" : {0: "xl", 1: "lg", 2: "md", 3: "sm"}[props.nestingDepth] as 'xl' | 'lg' | 'sm'} >{/* "md" doesn't exist but is just the normal size, the cast make it ignore "md"*/}
+                    {state.showEditModal !== null && props.rows[state.showEditModal].onEditGetChildren ?
+                        props.rows[state.showEditModal].onEditGetChildren()
+                        : undefined}
                 </ItemModal>
             </>
         );

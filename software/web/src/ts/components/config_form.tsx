@@ -21,20 +21,21 @@ import { h, Component, Fragment, ComponentChildren } from "preact";
 import { __ } from "../translation";
 
 interface ConfigFormState {
-    saveInProgress: boolean
-    wasValidated: boolean
-    showSpinner: boolean
+    saveInProgress: boolean;
+    wasValidated: boolean;
+    showSpinner: boolean;
 }
 
 interface ConfigFormProps {
-    children: ComponentChildren
-    id: string
-    title: ComponentChildren
-    isModified: boolean
-    isDirty: boolean
-    onSave: () => Promise<void>
-    onReset: () => Promise<void>
-    onDirtyChange: (dirty: boolean) => void
+    children: ComponentChildren;
+    id: string;
+    title: ComponentChildren;
+    isModified: boolean;
+    isDirty: boolean;
+    onSave: () => Promise<void>;
+    onReset: () => Promise<void>;
+    onDirtyChange: (dirty: boolean) => void;
+    small?: boolean;
 }
 
 export class ConfigForm extends Component<ConfigFormProps, ConfigFormState> {
@@ -73,12 +74,17 @@ export class ConfigForm extends Component<ConfigFormProps, ConfigFormState> {
             </button> : <></>
 
     override render(props: ConfigFormProps, state: Readonly<ConfigFormState>) {
+        let common_classes = "col-12 col-sm text-center text-sm-left text-nowrap";
+
         return (
             <>
-                <div class="row sticky-under-top mb-3 pt-3">
-                    <div class="col pb-2 border-bottom tab-header-shadow">
+                <div class={"row sticky-under-top mb-3 " + (props.small ? "pt-4" : "pt-3")}>
+                    <div class={"col border-bottom tab-header-shadow" + (props.small ? "" : " pb-2")}>
                         <div class="row no-gutters">
-                            <h1 class="page-header col-12 col-sm text-center text-sm-left text-nowrap">{props.title}</h1>
+                            {props.small ?
+                                <h3 class={common_classes}>{props.title}</h3>
+                                : <h1 class={"page-header " + common_classes}>{props.title}</h1>
+                            }
                             <div class="col-12 col-sm row no-gutters">
                                 {this.resetButton()}
                                 <button type="submit" form={props.id} class="btn btn-primary col mb-2 ml-2 ml-md-3 mr-0" disabled={state.saveInProgress || !props.isDirty}>
@@ -97,6 +103,6 @@ export class ConfigForm extends Component<ConfigFormProps, ConfigFormState> {
                     {props.children}
                 </form>
             </>
-        )
+        );
     }
 }

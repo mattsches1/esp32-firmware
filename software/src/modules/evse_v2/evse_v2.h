@@ -58,7 +58,7 @@ protected:
     void set_data_storage(uint8_t page, const uint8_t *data) override;
     void get_data_storage(uint8_t page, uint8_t *data) override;
 
-    void set_indicator_led(int16_t indication, uint16_t duration, uint8_t *ret_status) override;
+    void set_indicator_led(int16_t indication, uint16_t duration, uint16_t color_h, uint8_t color_s, uint8_t color_v, uint8_t *ret_status) override;
 
     void set_control_pilot_disconnect(bool cp_disconnect, bool *cp_disconnected) override;
     bool get_control_pilot_disconnect() override;
@@ -83,11 +83,18 @@ public:
     // End IEvseBackend implementation
 
     uint16_t get_all_energy_meter_values(float *ret_values);
-    void reset_energy_meter_relative_energy();
+    bool reset_energy_meter_relative_energy();
     uint8_t get_energy_meter_type();
 
-    ConfigRoot energy_meter_values;
-    ConfigRoot energy_meter_errors;
+    struct meter_data {
+        bool phases_active[3];
+        bool phases_connected[3];
+        uint8_t meter_type;
+        float power;
+        float currents[3];
+        uint32_t error_count[6];
+    };
+
 private:
     ConfigRoot reset_dc_fault_current_state;
     ConfigRoot gpio_configuration;
