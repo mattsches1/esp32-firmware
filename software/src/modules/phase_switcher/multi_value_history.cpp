@@ -26,18 +26,6 @@
 #pragma GCC diagnostic ignored "-Wuseless-cast"
 #endif
 
-// Unchecked snprintf that returns size_t
-_ATTRIBUTE ((__format__ (__printf__, 3, 4)))
-static size_t snprintf_u(char *buf, size_t len, const char *format, ...)
-{
-    va_list args;
-    va_start(args, format);
-    int res = vsnprintf(buf, len, format, args);
-    va_end(args);
-
-    return res < 0 ? 0 : static_cast<size_t>(res);
-}
-
 void MultiValueHistory::setup()
 {
     for(int j = 0; j < MULTI_VALUE_HISTORY_NUMBER_OF_VALUES; ++j){

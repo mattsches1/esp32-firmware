@@ -24,10 +24,9 @@
 #include "module.h"
 #include <HTTPClient.h>
 
-#include "../meter/value_history.h"
+#include "../meters/value_history.h"
 
 #define EVSE_STOP_TIMEOUT 10000
-
 
 class SOC final : public IModule
 {
@@ -36,7 +35,6 @@ public:
     void pre_setup() override;
     void setup() override;
     void register_urls() override;
-    bool initialized = false;
 
 private:
     typedef enum {
