@@ -72,7 +72,7 @@ void SOC::pre_setup()
 
 void SOC::setup()
 {
-    if (!modbus_meter.initialized){
+    if (!meters.initialized){
         logger.printfln("SOC: Energy meter not available. Disabling SOC module.");
         return;
     }
