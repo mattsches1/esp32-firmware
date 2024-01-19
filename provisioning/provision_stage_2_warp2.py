@@ -35,8 +35,8 @@ from provision_common.bricklet_evse_v2 import BrickletEVSEV2
 from provision_stage_3_warp2 import Stage3
 
 evse = None
-
 power_off_on_error = True
+is_warp3 = None
 
 def run_bricklet_tests(ipcon, result, qr_variant, qr_power, qr_stand, qr_stand_wiring, ssid, stage3):
     global evse
@@ -101,6 +101,9 @@ def run_bricklet_tests(ipcon, result, qr_variant, qr_power, qr_stand, qr_stand_w
 
     if is_pro and qr_variant != "P":
         fatal_error("Scanned QR code implies variant {}, but detected was Pro: An ESP32 Brick and an energy meter was found. Is the QR code correct?".format(d[qr_variant]))
+
+    result["evse_version"] = evse_version
+    print("EVSE version is {}".format(evse_version))
 
     result["evse_uid"] = evse_enum.uid
     print("EVSE UID is {}".format(evse_enum.uid))
@@ -177,7 +180,9 @@ def retry_wrapper(fn, s):
 
 def is_front_panel_button_pressed():
     global evse
-    return retry_wrapper(lambda: evse.get_low_level_state().gpio[6], "check if front panel button is pressed")
+    global is_warp3
+    assert is_warp3 != None
+    return retry_wrapper(lambda: evse.get_low_level_state().gpio[5 if is_warp3 else 6], "check if front panel button is pressed")
 
 def get_iec_state():
     global evse
@@ -185,7 +190,7 @@ def get_iec_state():
 
 def reset_dc_fault():
     global evse
-    return retry_wrapper(lambda: evse.reset(), "reset EVSE")
+    return retry_wrapper(lambda: evse.reset_dc_fault_current_state(0xDC42FA23), "reset DC fault current state")
 
 def has_evse_error():
     global evse
@@ -281,7 +286,7 @@ def factory_reset(ssid):
     for i in range(45):
         start = time.monotonic()
         try:
-            req = urllib.request.Request("http://{}/factory_reset".format(ssid),
+            req = urllib.request.Request("http://{}{}/factory_reset".format(ssid, "" if i % 2 == 0 else ".local"),
                                          data=json.dumps({"do_i_know_what_i_am_doing": True}).encode("utf-8"),
                                          method='PUT',
                                          headers={"Content-Type": "application/json"})
@@ -304,7 +309,7 @@ def connect_to_ethernet(ssid, url):
     for i in range(45):
         start = time.monotonic()
         try:
-            with urllib.request.urlopen("http://{}/{}".format(ssid, url), timeout=1) as f:
+            with urllib.request.urlopen("http://{}{}/{}".format(ssid, "" if i % 2 == 0 else ".local", url), timeout=1) as f:
                 result = f.read()
                 break
         except:
@@ -344,6 +349,7 @@ def collect_nfc_tag_ids(stage3, getter, beep_notify):
     return seen_tags
 
 def main(stage3):
+    global is_warp3
     result = {"start": now()}
 
     github_reachable = True
@@ -367,7 +373,7 @@ def main(stage3):
     firmware_path = os.path.join(firmware_directory, firmware_path)
 
     # T:WARP2-CP-22KW-50;V:2.1;S:5000000001;B:2021-09;A:0;;;
-    pattern = r'^T:WARP2-C(B|S|P)-(11|22)KW-(50|75)(?:-PC)?;V:(\d+\.\d+);S:(5\d{9});B:(\d{4}-\d{2})(?:;A:(0|1))?;;;*$'
+    pattern = r'^T:WARP(2|3)-C(B|S|P)-(11|22)KW-(50|75)(?:-PC)?;V:(\d+\.\d+);S:(5\d{9});B:(\d{4}-\d{2})(?:;A:(0|1))?;;;*$'
     qr_code = my_input("Scan the wallbox QR code")
     match = re.match(pattern, qr_code)
 
@@ -375,19 +381,20 @@ def main(stage3):
         qr_code = my_input("Scan the wallbox QR code", red)
         match = re.match(pattern, qr_code)
 
-    qr_variant = match.group(1)
-    qr_power = match.group(2)
-    qr_cable_len = match.group(3)
-    qr_hw_version = match.group(4)
-    qr_serial = match.group(5)
-    qr_built = match.group(6)
-    qr_accessories = match.group(7)
+    qr_gen = match.group(1)
+    qr_variant = match.group(2)
+    qr_power = match.group(3)
+    qr_cable_len = match.group(4)
+    qr_hw_version = match.group(5)
+    qr_serial = match.group(6)
+    qr_built = match.group(7)
+    qr_accessories = match.group(8)
 
     if qr_accessories == None:
         qr_accessories = '0'
 
     print("Wallbox QR code data:")
-    print("    WARP Charger {}".format({"B": "Basic", "S": "Smart", "P": "Pro"}[qr_variant]))
+    print("    WARP{} Charger {}".format(qr_gen, {"B": "Basic", "S": "Smart", "P": "Pro"}[qr_variant]))
     print("    {} kW".format(qr_power))
     print("    {:1.1f} m".format(int(qr_cable_len) / 10.0))
     print("    HW Version: {}".format(qr_hw_version))
@@ -427,7 +434,7 @@ def main(stage3):
         result["accessories_qr_code"] = match.group(0)
 
     if qr_variant != "B":
-        pattern = r"^WIFI:S:(esp32|warp|warp2)-([{BASE58}]{{3,6}});T:WPA;P:([{BASE58}]{{4}}-[{BASE58}]{{4}}-[{BASE58}]{{4}}-[{BASE58}]{{4}});;$".format(BASE58=BASE58)
+        pattern = r"^WIFI:S:(esp32|warp|warp2|warp3)-([{BASE58}]{{3,6}});T:WPA;P:([{BASE58}]{{4}}-[{BASE58}]{{4}}-[{BASE58}]{{4}}-[{BASE58}]{{4}});;$".format(BASE58=BASE58)
         qr_code = getpass.getpass(green("Scan the ESP Brick QR code"))
         match = re.match(pattern, qr_code)
 
@@ -443,6 +450,7 @@ def main(stage3):
         hardware_type = match.group(1)
         esp_uid_qr = match.group(2)
         passphrase_qr = match.group(3)
+        is_warp3 = hardware_type == 'warp3'
 
         print("ESP Brick QR code data:")
         print("    Hardware type: {}".format(hardware_type))
@@ -453,11 +461,11 @@ def main(stage3):
 
         result["uid"] = esp_uid_qr
 
-        ssid = "warp2-" + esp_uid_qr
+        ssid = hardware_type + "-" + esp_uid_qr
 
         event_log = connect_to_ethernet(ssid, "event_log").decode('utf-8')
 
-        m = re.search(r"WARP2 (?:CHARGER|Charger) V(\d+).(\d+).(\d+)", event_log)
+        m = re.search(r"WARP(?:2|3) (?:CHARGER|Charger) V(\d+).(\d+).(\d+)", event_log)
         if not m:
             fatal_error("Failed to find version number in event log!" + event_log)
 
@@ -525,9 +533,7 @@ def main(stage3):
         if len(user_config["users"]) != 4:
             do_factory_reset = len(user_config["users"]) != 1
         else:
-            print("hier")
             for i, u in enumerate(user_config["users"][1:]):
-                print(u)
                 if u["roles"] != 2 ** 16 - 1 or \
                    u["current"] != 32000 or \
                    u["display_name"] != "Benutzer {}".format(i + 1) or \
@@ -635,7 +641,9 @@ def main(stage3):
     result["evse_test_report_found"] = True
 
     if qr_variant == "B":
-        ssid = "warp2-" + result["evse_uid"]
+        hardware_type = "warp2" if result["evse_version"] < 30 else "warp3"
+        is_warp3 = hardware_type == 'warp3'
+        ssid = hardware_type + "-" + result["evse_uid"]
 
     browser = None
     try:
@@ -658,7 +666,7 @@ def main(stage3):
         for i in range(45):
             start = time.monotonic()
             try:
-                req = urllib.request.Request("http://{}/charge_tracker/remove_all_charges".format(ssid),
+                req = urllib.request.Request("http://{}{}/charge_tracker/remove_all_charges".format(ssid, "" if i % 2 == 0 else ".local"),
                                              data=json.dumps({"do_i_know_what_i_am_doing":True}).encode("utf-8"),
                                              method='PUT',
                                              headers={"Content-Type": "application/json"})

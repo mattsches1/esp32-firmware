@@ -141,9 +141,7 @@ export class ChargeLimitsStatus extends Component {
 
             if (config.energy_wh != config_in_use.energy_wh) {
                 let conf_idx = energy_items.findIndex(x => x[0] == config_in_use.energy_wh.toString())
-                if (conf_idx == -1)
-                    console.log("ups");
-                else
+                if (conf_idx >= 0)
                     energy_items[conf_idx][1] += " " + __("charge_limits.content.overridden");
             }
 
@@ -182,5 +180,4 @@ export function add_event_listeners() {
 }
 
 export function update_sidebar_state(module_init: any) {
-    $("#sidebar-charge_limits").prop("hidden", !module_init.charge_limits);
 }

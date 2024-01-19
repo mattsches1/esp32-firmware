@@ -52,12 +52,20 @@ void WS::register_urls()
             }
 
             if (!to_send.reserve(required)) {
+                multi_heap_info_t dram_info;
+                heap_caps_get_info(&dram_info,  MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+                logger.printfln("ws: Not enough memory to send initial state. %u > %u (%u)", required, dram_info.largest_free_block, dram_info.total_free_bytes);
                 return;
             }
 
 
             for (auto &reg : api.states) {
-                to_send += "{\"topic\":\"" + reg.path + "\",\"payload\":" + reg.config->to_string_except(reg.keys_to_censor) + "}\n";
+                // Directly append to preallocated string. a += b + c + d + e + f would create a temporary string with multiple reallocations.
+                to_send.concat("{\"topic\":\"");
+                to_send.concat(reg.path);
+                to_send.concat("\",\"payload\":");
+                to_send.concat(reg.config->to_string_except(reg.keys_to_censor));
+                to_send.concat("}\n");
             }
         });
 

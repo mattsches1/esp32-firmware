@@ -156,9 +156,7 @@ void EVSEV2::pre_setup()
 #if MODULE_AUTOMATION_AVAILABLE()
     automation.register_trigger(
         AutomationTriggerID::EVSEButton,
-        Config::Object({
-            {"button_pressed", Config::Bool(false)}
-        })
+        *Config::Null()
     );
 
     automation.register_trigger(
@@ -529,7 +527,7 @@ String EVSEV2::get_evse_debug_line()
     if (rc != TF_E_OK) {
         logger.printfln("get_all_data_1 %d", rc);
         is_in_bootloader(rc);
-        return "get_all_data_1 failed";
+        return "\"get_all_data_1 failed\"";
     }
 
     rc = tf_evse_v2_get_low_level_state(&device,
@@ -545,9 +543,9 @@ String EVSEV2::get_evse_debug_line()
                                         &uptime);
 
     if (rc != TF_E_OK) {
-        logger.printfln("ll_state %d", rc);
+        logger.printfln("get_low_level_state %d", rc);
         is_in_bootloader(rc);
-        return "ll_state failed";
+        return "\"get_low_level_state failed\"";
     }
 
     rc = tf_evse_v2_get_all_charging_slots(&device, max_current, active_and_clear_on_disconnect);
@@ -555,7 +553,7 @@ String EVSEV2::get_evse_debug_line()
     if (rc != TF_E_OK) {
         logger.printfln("slots %d", rc);
         is_in_bootloader(rc);
-        return "get_all_charging_slots failed";
+        return "\"get_all_charging_slots failed\"";
     }
 
     // Currently max ~ 510
@@ -954,7 +952,7 @@ void EVSEV2::update_all_data()
     button_configuration.get("button")->updateUint(button_cfg);
 
 #if MODULE_AUTOMATION_AVAILABLE()
-    if (evse_common.button_state.get("button_pressed")->asBool() != button_pressed)
+    if (button_pressed && !evse_common.button_state.get("button_pressed")->asBool())
         automation.trigger_action(AutomationTriggerID::EVSEButton, nullptr, &trigger_action);
 #endif
 
@@ -1038,11 +1036,7 @@ bool EVSEV2::action_triggered(Config *config, void *data) {
     switch (config->getTag<AutomationTriggerID>())
     {
     case AutomationTriggerID::EVSEButton:
-        // This check happens before the new state is written to the config.
-        // Because of this we need to check if the current state in config is different than our desired state.
-        if (evse_common.button_state.get("button_pressed")->asBool() != cfg->get("button_pressed")->asBool())
-            return true;
-        break;
+        return true;
 
     case AutomationTriggerID::EVSEGPInput:
         if (*static_cast<bool *>(data) == cfg->get("high")->asBool())

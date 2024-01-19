@@ -400,6 +400,7 @@ void Meters::register_urls()
 #if MODULE_METERS_LEGACY_API_AVAILABLE()
     if (meters_legacy_api.get_linked_meter_slot() < METERS_SLOTS) {
         api.addState("meter/error_counters", &meter_slots[meters_legacy_api.get_linked_meter_slot()].errors, {}, 1000);
+        meter_slots[meters_legacy_api.get_linked_meter_slot()].power_history.register_urls("meter/");
     }
 #endif
 }
@@ -484,6 +485,24 @@ bool Meters::meter_is_fresh(uint32_t slot, micros_t max_age_us)
 bool Meters::meter_has_value_changed(uint32_t slot, micros_t max_age_us)
 {
     return !deadline_elapsed(meter_slots[slot].values_last_changed_at + max_age_us);
+}
+
+MeterValueAvailability Meters::get_values(uint32_t slot, const Config **values, micros_t max_age)
+{
+    if (slot >= METERS_SLOTS) {
+        *values = nullptr;
+        return MeterValueAvailability::Unavailable;
+    }
+
+    const MeterSlot &meter_slot = meter_slots[slot];
+
+    *values = &meter_slot.values;
+
+    if (max_age != 0_usec && deadline_elapsed(meter_slot.values_last_updated_at + max_age)) {
+        return MeterValueAvailability::Stale;
+    } else {
+        return MeterValueAvailability::Fresh;
+    }
 }
 
 MeterValueAvailability Meters::get_value_by_index(uint32_t slot, uint32_t index, float *value_out, micros_t max_age)
@@ -765,6 +784,11 @@ void Meters::declare_value_ids(uint32_t slot, const MeterValueID new_value_ids[]
 
     meter_slot.values_declared = true;
     logger.printfln("meters: Meter in slot %u declared %u values.", slot, value_id_count);
+
+    if (!meters_feature_declared) {
+        api.addFeature("meters");
+        meters_feature_declared = true;
+    }
 }
 
 bool Meters::get_cached_power_index(uint32_t slot, uint32_t *index)

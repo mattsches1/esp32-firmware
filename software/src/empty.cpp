@@ -1,5 +1,5 @@
 /* esp32-firmware
- * Copyright (C) 2023 Mattias Schäffersmann <mattias@tinkerforge.com>
+ * Copyright (C) 2024 Matthias Bolte <matthias@tinkerforge.com>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -17,23 +17,10 @@
  * Boston, MA 02111-1307, USA.
  */
 
-#pragma once
+#include <Arduino.h>
 
-#include "config.h"
-#include "module.h"
+void setup() {
+}
 
-class EmPvFaker final : public IModule
-{
-public:
-    EmPvFaker(){}
-    void pre_setup() override;
-    void setup() override;
-    void register_urls() override;
-
-    ConfigRoot state;
-
-private:
-    ConfigRoot config;
-    ConfigRoot runtime_config;
-    ConfigRoot runtime_config_update;
-};
+void loop() {
+}
