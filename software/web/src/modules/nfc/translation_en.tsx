@@ -41,12 +41,12 @@ let x = {
             "tag_id_invalid_feedback": "The BSSID must have three to ten groups separated by a colon, each with a two-digit hexadecimal number. For example 01:23:45:67:89:AB"
         },
         "automation": {
-            "nfc": "NFC-Tags",
+            "nfc": "Fake NFC tag",
             "add_tag_description": "Hold the new tag to the right side of the charger. Tag ID and type can also be typed in manually.",
             "trigger_charge_any": "Charge start/stop",
             "trigger_charge_start": "Charge start",
             "trigger_charge_stop": "Charge stop",
-            "action": "Tag action",
+            "action": "Action",
             "tag_id_invalid_feedback": "The BSSID must have three to ten groups separated by a colon, each with a two-digit hexadecimal number. For example 01:23:45:67:89:AB",
             "table_tag_id": "Tag ID",
             "table_user_id": "Assigned user",
@@ -60,10 +60,10 @@ let x = {
             "last_seen_suffix": " ago",
             "last_seen_and_known_tags": "Last seen tags and known tags",
 
-            "automation_action_text": /*FFN*/(tag_id: string, tag_type: string, tag_action: number) => {
-                let action = <></>;
-                if (tag_action !== 0) {
-                    action = <> to {tag_action == 1 ? "start a charge" : tag_action == 2 ? "stop a charge" : ""}</>
+            "automation_action_text": /*FFN*/(tag_id: string, tag_type: string, action: number) => {
+                let start_stop = <></>;
+                if (action !== 0) {
+                    start_stop = <> to {action == 1 ? "start a charge" : action == 2 ? "stop a charge" : ""}</>
                 }
                 return <>
                     fake the presence of the <b>NFC</b> tag "<b>{tag_id}</b>" ({tag_type}).

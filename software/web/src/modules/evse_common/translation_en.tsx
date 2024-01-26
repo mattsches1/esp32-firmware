@@ -219,27 +219,39 @@ let x = {
             "switch_to_three_phases": "Switch to three phases"
         },
         "automation": {
-            "external_current_wd": "External control watchdog",
+            "external_current_wd": "External control watchdog triggered",
             "external_current_wd_trigger": <>When the <b>external</b> control <b>watchdog</b> is triggered, </>,
-            "api_must_be_enabled": "API must be enabled to use this feature.",
-            "state_change": "State change",
+            "state_change": "Charge status changed",
             "led_duration": "Duration",
-            "led_state": "LED state",
-            "led_state_off": "Off",
-            "led_state_on": "On",
-            "led_state_blinking": "Acknowledge blinking",
-            "led_state_flickering": "Rejecting blinking",
-            "led_state_breathing": "Demanding blinking",
-            "led_state_error": /*SFN*/(count: number) => {
+            "indication": "Indication",
+            "led_indication": "Show on status LED",
+            "led_indication_off": "Off",
+            "led_indication_on": "On",
+            "led_indication_blinking": "Acknowledge blinking",
+            "led_indication_flickering": "Rejecting blinking",
+            "led_indication_breathing": "Demanding blinking",
+            "led_indication_error": /*SFN*/(count: number) => {
                 return "Blinking (" + count + " x)";
             }/*NF*/,
             "from": "From",
             "to": "To",
             "any": "Any state",
+            "automation_action_block": "Block charging",
+            "automation_action_allow": "Allow Charging",
+            "automation_action_limit_current": "Limit charging current",
             "allowed_charging_current": "Allowed charging current",
-            "automation_state_change_trigger": /*FFN*/(old_state: string, new_state: string) => <>When the vehicle state changes from "<b>{old_state}</b>" to "<b>{new_state}</b>",{" "}</>/*NF*/,
-            "automation_action_text": /*FFN*/(current: string) => <>set the allowed charging current to <b>{current} A</b>.</>/*NF*/,
-            "automation_led_action_text": /*FFN*/(state: string, duration: number) => state == "An" || state == "Aus" ? <>turn the status-LED <b>{state}</b> for <b>{duration} seconds</b>.</> : <>show <b>{state}</b> for <b>{duration / 1000} seconds</b> on the status-LED.</>/*NF*/
+            "action_allowed_charging_current": "Control charge",
+            "automation_state_change_trigger": /*FFN*/(old_state: string, new_state: string) => <>When the charge state changes from "<b>{old_state}</b>" to "<b>{new_state}</b>",{" "}</>/*NF*/,
+            "automation_action_text": /*FFN*/(current: string) => {
+                if (current == "0") {
+                    return <><b>block</b> charging.</>;
+                }
+                else if (current == "32") {
+                    return <><b>allow</b> charging.</>;
+                }
+                return <>limit the allowed charging current to <b>{current} A</b>.</>
+            }/*NF*/,
+            "automation_led_action_text": /*FFN*/(state: string, duration: number) => state == "An" || state == "Aus" ? <>turn the status LED <b>{state}</b> for <b>{duration} seconds</b>.</> : <>show <b>{state}</b> for <b>{duration / 1000} seconds</b> on the status LED.</>/*NF*/
         },
         "script": {
             "set_charging_current_failed": "Failed to set charging current",

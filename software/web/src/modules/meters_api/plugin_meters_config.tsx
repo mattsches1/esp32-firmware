@@ -244,31 +244,23 @@ class PresetSelector extends Component<PresetSelectorProps, PresetSelectorState>
     presets: Readonly<number[][]> = [
         [],
         [74,209,211,213,214,210,212],
-        [1,2,3,13,17,21,39,48,57,122,130,138,83,91,99,353,354,355,7,29,33,74,154,115,356,364,209,211,4,5,6,8,25,213,277,214,210,212],
-        [1,2,3,13,17,21,39,48,57,122,130,138,83,91,99,353,354,355,365,366,367,7,29,33,74,154,115,356,368,364,209,211,273,275,341,388,4,5,6,8,25,369,370,371,377,378,379,375,380,372,373,374,376,213,277,161,177,193,163,179,195,165,181,197,225,241,257,227,243,259,229,245,261,214,210,212]
+        [1,2,3,13,17,21,39,48,57,122,130,138,83,91,99,353,354,355,365,366,367,7,29,33,74,154,115,356,368,364,209,211,273,275,341,388,4,5,6,8,25,369,370,371,377,378,379,375,380,372,373,374,376,213,277,161,177,193,163,179,195,165,181,197,225,241,257,227,243,259,229,245,261,214,210,212],
+        [1,2,3,13,17,21,39,48,57,122,130,138,83,91,99,353,354,355,7,29,33,74,154,115,356,364,209,211,4,5,6,8,25,213,277,214,210,212]
     ];
 
     constructor(props: PresetSelectorProps) {
         super(props);
 
-        let preset: string;
-        switch (props.config[1].value_ids.toString()) {
-            case this.presets[1].toString():
-                preset = "1";
-                break;
+        let needle = props.config[1].value_ids.toString();
+        let preset = "0";
 
-            case this.presets[2].toString():
-                preset = "2";
+        for (let i = 0; i < this.presets.length; ++i) {
+            if (needle == this.presets[i].toString()) {
+                preset = i.toString();
                 break;
-
-            case this.presets[3].toString():
-                preset = "3";
-                break;
-
-            default:
-                preset = "0";
-                break;
+            }
         }
+
         this.state = {
             preset: preset
         } as any;
@@ -286,24 +278,9 @@ class PresetSelector extends Component<PresetSelectorProps, PresetSelectorState>
                 value={this.state.preset}
                 onValue={async (v) => {
 
-                    let value_ids: number[] = [];
-                    switch (v) {
-                        case "0":
-                            value_ids = this.presets[0];
-                            break;
+                    let preset = parseInt(v);
 
-                        case "1":
-                            value_ids = this.presets[1];
-                            break;
-
-                        case "2":
-                            value_ids = this.presets[2];
-                            break;
-
-                        case "3":
-                            value_ids = this.presets[3];
-                            break;
-                    }
+                    let value_ids: number[] = isNaN(preset) ? [] : this.presets[preset];
 
                     if (this.props.config[1].value_ids.toString() !== this.presets[parseInt(this.state.preset)].toString()) {
                         if (!await util.async_modal_ref.current.show({

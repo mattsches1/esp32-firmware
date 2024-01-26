@@ -26,6 +26,7 @@ import { InputFloat } from "../../ts/components/input_float";
 import { InputNumber } from "../../ts/components/input_number";
 import { FormRow } from "../../ts/components/form_row";
 import * as util from "../../ts/util";
+import { Collapse } from "react-bootstrap";
 
 export type EvseAutomationAction = [
     AutomationActionID.SetCurrent,
@@ -37,7 +38,7 @@ export type EvseAutomationAction = [
 export type EvseLedAutomationAction = [
     AutomationActionID.LED,
     {
-        state: number;
+        indication: number;
         duration: number;
     },
 ];
@@ -47,19 +48,39 @@ function get_set_current_table_children(action: EvseAutomationAction) {
 }
 
 function get_set_current_edit_children(action: EvseAutomationAction, on_action: (action: AutomationAction) => void) {
+    const items: [string, string][] = [
+        ["0", __("evse.automation.automation_action_block")],
+        ["32000", __("evse.automation.automation_action_allow")],
+        ["6000", __("evse.automation.automation_action_limit_current")]
+    ];
+
     return [
-        <FormRow label={__("evse.automation.allowed_charging_current")}>
-            <InputFloat
-                digits={3}
-                min={0}
-                max={32000}
-                unit="A"
-                value={action[1].current}
-                onValue={(v) => {
-                    on_action(util.get_updated_union(action, {current: v}));
-                }}
-            />
-        </FormRow>,
+        <>
+            <FormRow label="">
+                <InputSelect
+                    items={items}
+                    value={action[1].current === 0 ? "0" : action[1].current === 32000 ? "32000" : "6000"}
+                    onValue={(v) => {
+                        on_action(util.get_updated_union(action, {current: parseInt(v)}));
+                    }} />
+            </FormRow>
+            <Collapse in={action[1].current !== 0 && action[1].current !== 32000}>
+                    <div>
+                    <FormRow label={__("evse.automation.allowed_charging_current")}>
+                        <InputFloat
+                            digits={3}
+                            min={6000}
+                            max={32000}
+                            unit="A"
+                            value={action[1].current}
+                            onValue={(v) => {
+                                on_action(util.get_updated_union(action, {current: v}));
+                            }}
+                        />
+                    </FormRow>
+                </div>
+            </Collapse>
+        </>,
     ];
 }
 
@@ -73,59 +94,61 @@ function new_set_current_config(): AutomationAction {
 }
 
 function get_led_table_children(action: EvseLedAutomationAction) {
-    let state = "";
-    switch (action[1].state) {
+    let indication = "";
+    switch (action[1].indication) {
         case 0:
-            state = __("evse.automation.led_state_off");
+            indication = __("evse.automation.led_indication_off");
             break;
 
         case 255:
-            state = __("evse.automation.led_state_on");
+            indication = __("evse.automation.led_indication_on");
             break;
 
         case 1001:
-            state = __("evse.automation.led_state_blinking");
+            indication = __("evse.automation.led_indication_blinking");
             break;
 
         case 1002:
-            state = __("evse.automation.led_state_flickering");
+            indication = __("evse.automation.led_indication_flickering");
             break;
 
         case 1003:
-            state = __("evse.automation.led_state_breathing");
+            indication = __("evse.automation.led_indication_breathing");
             break;
     }
-    if (action[1].state > 2000 && action[1].state < 2011) {
-        state = __("evse.automation.led_state_error")(action[1].state - 2000);
+    if (action[1].indication > 2000 && action[1].indication < 2011) {
+        indication = __("evse.automation.led_indication_error")(action[1].indication - 2000);
     }
 
-    return __("evse.automation.automation_led_action_text")(state, action[1].duration);
+    return __("evse.automation.automation_led_action_text")(indication, action[1].duration);
 }
 
 function get_led_edit_children(action: EvseLedAutomationAction, on_action: (action: AutomationAction) => void) {
     const items: [string, string][] = [
-        ["0", __("evse.automation.led_state_off")],
-        ["255", __("evse.automation.led_state_on")],
-        ["1001", __("evse.automation.led_state_blinking")],
-        ["1002", __("evse.automation.led_state_flickering")],
-        ["1003", __("evse.automation.led_state_breathing")],
+        ["0", __("evse.automation.led_indication_off")],
+        ["255", __("evse.automation.led_indication_on")],
+        ["1001", __("evse.automation.led_indication_blinking")],
+        ["1002", __("evse.automation.led_indication_flickering")],
+        ["1003", __("evse.automation.led_indication_breathing")],
     ];
 
     for (let i = 1; i <= 10; i++) {
-        items.push([String(2000 + i), __("evse.automation.led_state_error")(i)]);
+        items.push([String(2000 + i), __("evse.automation.led_indication_error")(i)]);
     }
 
     return [<>
-        <FormRow label={__("evse.automation.led_state")}>
+        <FormRow label={__("evse.automation.indication")}>
             <InputSelect
                 items={items}
-                value={action[1].state.toString()}
+                value={action[1].indication.toString()}
                 onValue={(v) => {
-                    on_action(util.get_updated_union(action, {state: parseInt(v)}));
+                    on_action(util.get_updated_union(action, {indication: parseInt(v)}));
                 }} />
         </FormRow>
         <FormRow label={ __("evse.automation.led_duration")}>
             <InputNumber
+                min={1}
+                max={60}
                 value={action[1].duration / 1000}
                 unit="s"
                 onValue={(v) => {
@@ -139,8 +162,8 @@ function new_led_config(): AutomationAction {
     return [
         AutomationActionID.LED,
         {
-            duration: 0,
-            state: 0,
+            duration: 1000,
+            indication: 0,
         },
     ];
 }
@@ -149,14 +172,14 @@ export function init() {
     return {
         action_components: {
             [AutomationActionID.SetCurrent]: {
-                name: __("evse.automation.allowed_charging_current"),
+                name: __("evse.automation.action_allowed_charging_current"),
                 new_config: new_set_current_config,
                 clone_config: (action: AutomationAction) => [action[0], {...action[1]}] as AutomationAction,
                 get_edit_children: get_set_current_edit_children,
                 get_table_children: get_set_current_table_children,
             },
             [AutomationActionID.LED]: {
-                name: __("evse.automation.led_state"),
+                name: __("evse.automation.led_indication"),
                 new_config: new_led_config,
                 clone_config: (action: AutomationAction) => [action[0], {...action[1]}] as AutomationAction,
                 get_edit_children: get_led_edit_children,

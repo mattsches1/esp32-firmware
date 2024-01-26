@@ -64,6 +64,8 @@ static bool read_config_file(const char *config, JsonDocument &json)
     s.replace('/', '_');
     String filename = "/migration/" + s;
 
+    // ArduinoJson will clear the document when calling deserializeJson.
+    // Clear it anyway, in case any error happens.
     json.clear();
 
     if (!LittleFS.exists(filename)) {
@@ -76,6 +78,9 @@ static bool read_config_file(const char *config, JsonDocument &json)
     file.close();
 
     if (error) {
+        // Not sure if this is necessary, but the documentation does not tell
+        // what the state of a JsonDocument is after deserialization fails.
+        json.clear();
         logger.printfln("Skipping migration of %s: JSON-deserialization failed with %s", config, error.c_str());
         return false;
     }
@@ -92,6 +97,18 @@ static void write_config_file(const char *config, JsonDocument &json)
 
     File file = LittleFS.open(filename, "w");
     serializeJson(json, file);
+    file.close();
+}
+
+[[gnu::unused]]
+static void write_config_file(const char *config, const char *content)
+{
+    String s = config;
+    s.replace('/', '_');
+    String filename = "/migration/" + s;
+
+    File file = LittleFS.open(filename, "w");
+    file.write(reinterpret_cast<const uint8_t *>(content), strlen(content));
     file.close();
 }
 
@@ -125,6 +142,8 @@ static void migrate_charge_manager_minimum_current()
     }
 }
 
+// Don't use LittleFS.[...] directly in migrations if not necessary!
+// Prefer to use the functions above.
 static const ConfigMigration migrations[] = {
 #if defined(BUILD_NAME_WARP)
     {
@@ -136,6 +155,7 @@ static const ConfigMigration migrations[] = {
             for_file_in("/migration", [](File *file){
                 String path = file->path();
                 file->close();
+                // Save to use LittleFS here: We already know the correct path of the file.
                 if (path.endsWith(".tmp"))
                     LittleFS.remove(path);
 
@@ -318,11 +338,11 @@ static const ConfigMigration migrations[] = {
                                 {"enabled", enable_nfc}
                             }});
 
-                            Config *button_cfg = api.getState("evse/button_configuration");
+                            const Config *button_cfg = api.getState("evse/button_configuration");
                             if (button_cfg == nullptr)
                                 return;
 
-                            uint8_t new_button_cfg = api.getState("evse/button_configuration")->get("button")->asUint();
+                            uint8_t new_button_cfg = button_cfg->get("button")->asUint();
                             if (disable_button)
                                 new_button_cfg &= ~0x02;
 
@@ -351,6 +371,7 @@ static const ConfigMigration migrations[] = {
         // - Move meter/sdm630_reset to meters/0/sdm630_reset, track total, import and export value on reset
         // - Move meter/last_reset to meters/0/last_reset
         [](){
+            // Have to directly use LittleFS.[...] here: charge-records are not moved to /migration
             if (LittleFS.exists("/charge-records")) {
                 File f = LittleFS.open("/charge-records/use_imexsum", "w");
                 f.write((uint8_t)'T');
@@ -573,7 +594,7 @@ static const ConfigMigration migrations[] = {
                         }
                     }
 
-                    if (config["auto_reset_mode"].as<bool>() == true) {
+                    if (config["auto_reset_mode"].as<bool>()) {
                         DynamicJsonDocument task{16384};
                         auto trigger = task.createNestedArray("trigger");
                         trigger.add(1);
@@ -592,9 +613,7 @@ static const ConfigMigration migrations[] = {
                     }
 
                     DynamicJsonDocument automation_json{16384};
-                    if (LittleFS.exists("/migration/automation_config")) {
-                        read_config_file("automation/config", automation_json);
-                    } else {
+                    if (!read_config_file("automation/config", automation_json)) {
                         automation_json.createNestedArray("tasks");
                     }
                     auto automation_config = automation_json.as<JsonObject>();
@@ -632,6 +651,7 @@ static const ConfigMigration migrations[] = {
                     StaticJsonDocument<384> pm_cfg;
                     pm_cfg.to<JsonObject>();
 
+                    pm_cfg["phase_switching_mode"]   = em_cfg["phase_switching_mode"];
                     pm_cfg["excess_charging_enable"] = em_cfg["excess_charging_enable"];
                     pm_cfg["default_mode"]           = em_cfg["default_mode"];
                     pm_cfg["meter_slot_grid_power"]  = em_cfg["meter_slot_grid_power"];
@@ -639,6 +659,7 @@ static const ConfigMigration migrations[] = {
                     pm_cfg["guaranteed_power"]       = em_cfg["guaranteed_power"];
                     pm_cfg["cloud_filter_mode"]      = em_cfg["cloud_filter_mode"];
 
+                    em_cfg.remove("phase_switching_mode");
                     em_cfg.remove("excess_charging_enable");
                     em_cfg.remove("default_mode");
                     em_cfg.remove("meter_slot_grid_power");
@@ -663,9 +684,7 @@ static const ConfigMigration migrations[] = {
                         uint32_t meter_source = old_json["meter_source"].as<uint32_t>();
                         if (meter_source == 100) {
                             const char *new_config_str = "[4,{\"display_name\":\"API-Stromzähler\",\"value_ids\":[1,2,3,13,17,21,39,48,57,122,130,138,83,91,99,353,354,355,365,366,367,7,29,33,74,154,115,356,368,364,209,211,273,275,341,388,4,5,6,8,25,369,370,371,377,378,379,375,380,372,373,374,376,213,277,161,177,193,163,179,195,165,181,197,225,241,257,227,243,259,229,245,261,214,210,212]}]";
-                            File file = LittleFS.open("/migration/meters_0_config", "w");
-                            file.write(reinterpret_cast<const uint8_t *>(new_config_str), strlen(new_config_str));
-                            file.close();
+                            write_config_file("meters/0/config", new_config_str);
                         }
                     }
                     delete_config_file(old_config_path);

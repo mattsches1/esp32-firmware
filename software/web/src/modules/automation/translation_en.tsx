@@ -16,7 +16,9 @@ let x = {
             "friday": "Friday",
             "saturday": "Saturday",
             "sunday": "Sunday",
-            "every": "Every",
+            "every_day": "Daily",
+            "every_hour": "Every hour",
+            "every_minute": "Every minute",
             "weekdays": "Weekdays",
             "weekends": "Weekends",
             "month_end": "Month End",
@@ -84,7 +86,11 @@ let x = {
                 }
 
                 return <>{day}{time}, </>;
-            }/*NF*/
+            }/*NF*/,
+
+            "print_action": "Print to event log",
+            "print_action_message": "Message",
+            "print_action_text": /*FFN*/(message: string) => <>Show {message} in the <b>event log</b>.</> /*NF*/
         },
         "content": {
             "automation": "Automation",

@@ -219,26 +219,37 @@ let x = {
             "switch_to_three_phases": "Umschalten auf dreiphasig"
         },
         "automation" : {
-            "external_current_wd": "Watchdog der externen Steuerung",
+            "external_current_wd": "Watchdog der externen Steuerung ausgelöst",
             "external_current_wd_trigger": <>Wenn der <b>Watchdog</b> der <b>externen</b> Steuerung auslöst, </>,
-            "api_must_be_enabled": "Die API muss aktiviert sein, um die Status-LED steuern zu können.",
-            "state_change": "Fahrzeugstatus gewechselt",
+            "state_change": "Ladestatus gewechselt",
             "led_duration": "Dauer",
-            "led_state": "LED-Zustand",
-            "led_state_off": "Aus",
-            "led_state_on": "An",
-            "led_state_blinking": "Bestätigendes Blinken",
-            "led_state_flickering": "Ablehnendes Blinken",
-            "led_state_breathing": "Auffordendes Blinken",
-            "led_state_error": /*SFN*/(count: number) => {
+            "indication": "LED-Zustand",
+            "led_indication": "Zeige auf Status-LED an",
+            "led_indication_off": "Aus",
+            "led_indication_on": "An",
+            "led_indication_blinking": "Bestätigendes Blinken",
+            "led_indication_flickering": "Ablehnendes Blinken",
+            "led_indication_breathing": "Auffordendes Blinken",
+            "led_indication_error": /*SFN*/(count: number) => {
                 return "Blinken (" + count + "x)";
             }/*NF*/,
             "from": "Von",
             "to": "Zu",
             "any": "Beliebiger Status",
+            "automation_action_block": "Laden blockieren",
+            "automation_action_allow": "Laden freigeben",
+            "automation_action_limit_current": "Ladestrom begrenzen",
             "allowed_charging_current": "Erlaubter Ladestrom",
-            "automation_state_change_trigger": /*FFN*/(old_state: string, new_state: string) => <>Wenn der Fahrzeugstatus von "<b>{old_state}</b>" auf "<b>{new_state}</b>" wechselt,{" "}</>/*NF*/,
-            "automation_action_text": /*FFN*/(current: string) => <>setze den erlaubten Ladestrom auf <b>{current} A</b>.</>/*NF*/,
+            "action_allowed_charging_current": "Steuere Ladevorgang",
+            "automation_state_change_trigger": /*FFN*/(old_state: string, new_state: string) => <>Wenn der Ladestatus von "<b>{old_state}</b>" auf "<b>{new_state}</b>" wechselt,{" "}</>/*NF*/,
+            "automation_action_text": /*FFN*/(current: string) => {
+                if (current === "0") {
+                    return <><b>blockiere</b> das Laden.</>
+                } else if (current === "32") {
+                    return <><b>erlaube</b> das Laden.</>
+                }
+                return <>limitiere den erlaubten Ladestrom auf <b>{current} A</b>.</>
+            }/*NF*/,
             "automation_led_action_text": /*FFN*/(state: string, duration: number) => (state == "An" || state == "Aus") ? <>schalte die Status-LED für <b>{duration / 1000} Sekunden</b> <b>{state}</b>.</> : <>zeige <b>{state}</b> für <b>{duration / 1000} Sekunden</b> auf der Status-LED.</>/*NF*/
         },
         "script": {

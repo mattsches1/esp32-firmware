@@ -52,7 +52,6 @@ static const char *values_names[] = {
 void MetersLegacyAPI::pre_setup()
 {
     state = Config::Object({
-        {"readable", Config::Bool(false)},
         {"writable", Config::Bool(false)},
     });
 
@@ -258,7 +257,7 @@ void MetersLegacyAPI::register_events()
     if (old_value_ids->count() > 0) {
         on_value_ids_change(old_value_ids);
     } else {
-        event.registerEvent(value_ids_path, {}, [this](Config *event_value_ids) {
+        event.registerEvent(value_ids_path, {}, [this](const Config *event_value_ids) {
             return on_value_ids_change(event_value_ids);
         });
     }
@@ -465,7 +464,7 @@ EventResult MetersLegacyAPI::on_value_ids_change(const Config *value_ids)
         on_values_change(old_values);
     }
 
-    event.registerEvent(values_path, {}, [this](Config *event_values) {
+    event.registerEvent(values_path, {}, [this](const Config *event_values) {
         on_values_change(event_values);
         return EventResult::OK;
     });
@@ -478,7 +477,7 @@ EventResult MetersLegacyAPI::on_value_ids_change(const Config *value_ids)
     if (last_reset_config) {
         on_last_reset_change(last_reset_config);
 
-        event.registerEvent(last_reset_path, {}, [this](Config *event_last_reset) {
+        event.registerEvent(last_reset_path, {}, [this](const Config *event_last_reset) {
             on_last_reset_change(event_last_reset);
             return EventResult::OK;
         });
@@ -499,8 +498,6 @@ EventResult MetersLegacyAPI::on_value_ids_change(const Config *value_ids)
     if (has_phases) {
         api.addFeature("meter_phases");
     }
-
-    state.get("readable")->updateBool(true);
 
     if (linked_meter_class == MeterClassID::API) {
         state.get("writable")->updateBool(true);
