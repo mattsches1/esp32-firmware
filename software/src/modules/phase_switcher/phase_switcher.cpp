@@ -32,8 +32,6 @@ extern TaskScheduler task_scheduler;
 extern TF_HAL hal;
 extern WebServer server;
 
-extern API api;
-
 void PhaseSwitcher::pre_setup()
 {
     api_config = Config::Object({
@@ -172,18 +170,16 @@ bool PhaseSwitcher::setup_bricklets()
 
 uint16_t PhaseSwitcher::evse_get_max_current()
 {
-    static Config *evse_slots = api.getState("evse/slots", false);
+    if (api.hasFeature("evse")) {
+        uint16_t max_current_supply_cable = api.getState("evse/slots")->get(0)->get("max_current")->asUint();
+        uint16_t max_current_charging_cable = api.getState("evse/slots")->get(1)->get("max_current")->asUint();
+        uint16_t max_current_configuration = api.getState("evse/slots")->get(5)->get("max_current")->asUint();
 
-    if (evse_slots == nullptr){
+        return(min(min(max_current_supply_cable, max_current_charging_cable), max_current_configuration));
+    } else {
         logger.printfln("Phase switcher: Failed to retrieve max. current from EVSE bricklet. Using 6 A.");
         return(6000);
     }
-
-    uint16_t max_current_supply_cable = evse_slots->get(0)->get("max_current")->asUint();
-    uint16_t max_current_charging_cable = evse_slots->get(1)->get("max_current")->asUint();
-    uint16_t max_current_configuration = evse_slots->get(5)->get("max_current")->asUint();
-
-    return(min(min(max_current_supply_cable, max_current_charging_cable), max_current_configuration));
 }
 
 void PhaseSwitcher::register_urls()
@@ -228,14 +224,12 @@ void PhaseSwitcher::register_urls()
 
 uint8_t PhaseSwitcher::get_active_phases()
 {
-    static Config *evse_state = api.getState("evse/state", false);
-
-    if (evse_state == nullptr) 
+    if (!api.hasFeature("evse")) {
         return 0;
+    }
 
     // phase 1 is monitored via the EVSE bricklet, not via digital in bricklet
-    bool channel_state_1 = (evse_state->get("contactor_state")->asUint() == 3);
-
+    bool channel_state_1 = (api.getState("evse/state", false)->get("contactor_state")->asUint() == 3);
     bool channel_state[4];
 
     int retval = tf_industrial_digital_in_4_v2_get_value(&digital_in_bricklet.device, channel_state);
@@ -358,12 +352,14 @@ void PhaseSwitcher::set_current(uint16_t available_charging_power, uint8_t phase
 
 void PhaseSwitcher::handle_button()
 {
-    static Config *evse_low_level_state = api.getState("evse/low_level_state", false);
-    if (evse_low_level_state == nullptr) return;
+    if (!api.hasFeature("evse")) {
+        return;
+    }
 
-    bool button_state = evse_low_level_state->get("gpio")->get(0)->asBool();
     static uint32_t button_pressed_time, button_released_time;
     static bool quick_charging_requested = false;
+
+    bool button_state = api.getState("evse/low_level_state", false)->get("gpio")->get(0)->asBool();
 
     if (!button_state)
         button_pressed_time = millis();
@@ -404,21 +400,14 @@ void PhaseSwitcher::start_quick_charging()
 
 void PhaseSwitcher::handle_evse()
 {
-    static Config *evse_state = api.getState("evse/state", false);
-
-    if (evse_state == nullptr) {
-        if (debug) logger.printfln("Phase switcher handle_evse: Failed to get API 'evse/state'");
+    if (!api.hasFeature("evse")) {
+        if (debug) logger.printfln("Phase switcher handle_evse: API says EVSE module is not supported");
         return;
     }
 
-    static Config *evse_auto_start_charging = api.getState("evse/auto_start_charging", false);
-
-    if (evse_auto_start_charging == nullptr)
-        return;
-
-    charger_state = ChargerState(evse_state->get("charger_state")->asUint());
-    iec61851_state = IEC61851State(evse_state->get("iec61851_state")->asUint());
-    auto_start_charging = evse_auto_start_charging->get("auto_start_charging")->asBool();
+    charger_state = ChargerState(api.getState("evse/state", false)->get("charger_state")->asUint());
+    iec61851_state = IEC61851State(api.getState("evse/state", false)->get("iec61851_state")->asUint());
+    auto_start_charging = api.getState("evse/auto_start_charging", false)->get("auto_start_charging")->asBool();
 }
 
 void PhaseSwitcher::monitor_requested_phases()
@@ -650,12 +639,11 @@ void PhaseSwitcher::sequencer_state_stopped_by_evse()
 
 void PhaseSwitcher::write_outputs()
 {
-    static Config *evse_low_level_state = api.getState("evse/low_level_state", false);
-
-    if (evse_low_level_state == nullptr)
+    if (!api.hasFeature("evse")) {
         return;
+    }
 
-    bool evse_relay_output = evse_low_level_state->get("gpio")->get(3)->asBool();
+    bool evse_relay_output = api.getState("evse/low_level_state", false)->get("gpio")->get(3)->asBool();
     bool channel_request[4] = {false, false, false, false};
 
     if (debug) {
@@ -706,16 +694,13 @@ void PhaseSwitcher::write_outputs()
             return;
         }
     }
-
-
 }
 
 void PhaseSwitcher::contactor_check()
 {
-    static Config *evse_state = api.getState("evse/state", false);
-
-    if (evse_state == nullptr)
+    if (!api.hasFeature("evse")) {
         return;
+    }
 
     static bool contactor_error[4];
     static uint32_t watchdog_start[4];
@@ -727,7 +712,7 @@ void PhaseSwitcher::contactor_check()
         logger.printfln("Industrial digital in relay get value failed (rc %d).", retval);
         return;
     }
-    input_phase[1] = (evse_state->get("contactor_state")->asUint() == 3);
+    input_phase[1] = (api.getState("evse/state", false)->get("contactor_state")->asUint() == 3);
     input_phase[2] = value[2];
     input_phase[3] = value[3];
 
@@ -823,11 +808,8 @@ void PhaseSwitcher::update_all_data()
 
     // chart
     int16_t actual_charging_power = 0;
-    if (meters.initialized){
-        static Config *meter_values = api.getState("meters/0/values", false);
-
-        if (meter_values != nullptr)
-            actual_charging_power = meter_values->get(0)->asFloat();
+    if (api.hasFeature("meters")){
+        actual_charging_power = api.getState("meters/0/values", false)->get(0)->asFloat();
     }
     float samples[3] = {(float)available_charging_power, (float)actual_charging_power, (float)requested_phases_pending};
     power_history.add_sample(samples);

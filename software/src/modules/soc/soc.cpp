@@ -40,9 +40,6 @@ extern EventLog logger;
 extern TaskScheduler task_scheduler;
 extern WebServer server;
 
-extern API api;
-
-
 void SOC::pre_setup()
 {
     state = Config::Object({
@@ -237,20 +234,15 @@ void SOC::sequencer()
 
     std::lock_guard<std::mutex> lock(mutex);
 
-    static Config *wifi_state = api.getState("wifi/state", false);
-
-    if (wifi_state == nullptr)
+    if (!api.hasFeature("wifi") || !api.hasFeature("evse")) {
         return;
+    }
 
-    if (wifi_state->get("connection_state")->asInt() != 3 )    // 3 = connected
+    if (api.getState("wifi/state", false)->get("connection_state")->asInt() != 3 ) {    // 3 = connected
         return;
+    }   
 
-    static Config *evse_state = api.getState("evse/state", false);
-
-    if (evse_state == nullptr)
-        return;
-
-    charger_state = ChargerState(evse_state->get("charger_state")->asUint());
+    charger_state = ChargerState(api.getState("evse/state", false)->get("charger_state")->asUint());
 
     uint32_t update_rate = config_in_use.get("update_rate_when_idle")->asUint() * 1000;
 
@@ -329,11 +321,10 @@ void SOC::sequencer_state_inactive()
         vin_list_request_active = false;
         soc_request_active = false;
 
-        static Config *phase_switcher_state = api.getState("phase_switcher/state", false);
         bool phase_switcher_quick_charging_active = false;
 
-        if (phase_switcher_state != nullptr)
-            phase_switcher_quick_charging_active = (phase_switcher_state->get("sequencer_state")->asUint() == 25);
+        if (api.hasFeature("phase_switcher"))
+            phase_switcher_quick_charging_active = (api.getState("phase_switcher/state", false)->get("sequencer_state")->asUint() == 25);
 
         if (charger_state == charging && enabled && soc >= setpoint.get("setpoint")->asUint() && !ignore_soc_limit_once && !phase_switcher_quick_charging_active)
             sequencer_state = waiting_for_evse_stop;
