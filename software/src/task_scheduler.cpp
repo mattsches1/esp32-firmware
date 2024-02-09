@@ -26,8 +26,8 @@ TaskScheduler task_scheduler;
 
 static uint64_t last_task_id = 0;
 
-Task::Task(std::function<void(void)> fn, uint64_t task_id, uint32_t first_run_delay_ms, uint32_t delay_ms, bool once) :
-          fn(std::move(fn)),
+Task::Task(std::function<void(void)> &&fn, uint64_t task_id, uint32_t first_run_delay_ms, uint32_t delay_ms, bool once) :
+          fn(std::forward<std::function<void(void)>>(fn)),
           task_id(task_id),
           next_deadline_ms(millis() + first_run_delay_ms),
           delay_ms(delay_ms),
@@ -64,7 +64,8 @@ bool compare(const std::unique_ptr<Task> &a, const std::unique_ptr<Task> &b)
 }
 
 // https://stackoverflow.com/a/36711682
-bool TaskQueue::removeByTaskID(uint64_t task_id)  {
+bool TaskQueue::removeByTaskID(uint64_t task_id)
+{
     // The queue is locked if this function is called.
 
     auto it = std::find_if(this->c.begin(), this->c.end(), [task_id](const std::unique_ptr<Task> &t){return t->task_id == task_id;});
@@ -85,7 +86,8 @@ bool TaskQueue::removeByTaskID(uint64_t task_id)  {
     return true;
 }
 
-Task *TaskQueue::findByTaskID(uint64_t task_id) {
+Task *TaskQueue::findByTaskID(uint64_t task_id)
+{
     auto it = std::find_if(this->c.begin(), this->c.end(), [task_id](const std::unique_ptr<Task> &t){return t->task_id == task_id;});
 
     if (it == this->c.end()) {
@@ -117,11 +119,11 @@ void TaskScheduler::loop()
 
     {
         std::lock_guard<std::mutex> l{this->task_mutex};
-        if(tasks.empty()) {
+        if (tasks.empty()) {
             return;
         }
 
-        if(!deadline_elapsed(tasks.top()->next_deadline_ms)) {
+        if (!deadline_elapsed(tasks.top()->next_deadline_ms)) {
             return;
         }
 
@@ -175,7 +177,7 @@ uint64_t TaskScheduler::scheduleOnce(std::function<void(void)> &&fn, uint32_t de
 {
     std::lock_guard<std::mutex> l{this->task_mutex};
     uint64_t task_id = ++last_task_id;
-    tasks.emplace(new Task(fn, task_id, delay_ms, 0, true));
+    tasks.emplace(new Task(std::forward<std::function<void(void)>>(fn), task_id, delay_ms, 0, true));
     return task_id;
 }
 
@@ -183,11 +185,12 @@ uint64_t TaskScheduler::scheduleWithFixedDelay(std::function<void(void)> &&fn, u
 {
     std::lock_guard<std::mutex> l{this->task_mutex};
     uint64_t task_id = ++last_task_id;
-    tasks.emplace(new Task(fn, task_id, first_delay_ms, delay_ms, false));
+    tasks.emplace(new Task(std::forward<std::function<void(void)>>(fn), task_id, first_delay_ms, delay_ms, false));
     return task_id;
 }
 
-TaskScheduler::CancelResult TaskScheduler::cancel(uint64_t task_id) {
+TaskScheduler::CancelResult TaskScheduler::cancel(uint64_t task_id)
+{
     std::lock_guard<std::mutex> l{this->task_mutex};
     if (this->currentTask && this->currentTask->task_id == task_id) {
         this->currentTask->cancelled = true;
@@ -197,7 +200,8 @@ TaskScheduler::CancelResult TaskScheduler::cancel(uint64_t task_id) {
         return tasks.removeByTaskID(task_id) ? TaskScheduler::CancelResult::Cancelled : TaskScheduler::CancelResult::NotFound;
 }
 
-uint64_t TaskScheduler::currentTaskId() {
+uint64_t TaskScheduler::currentTaskId()
+{
     // currentTaskId is intended to write a self-canceling task.
     // Don't allow other threads to cancel tasks without knowing their ID.
     if (!running_in_main_task()) {
@@ -211,7 +215,8 @@ uint64_t TaskScheduler::currentTaskId() {
     return 0;
 }
 
-TaskScheduler::AwaitResult TaskScheduler::await(uint64_t task_id, uint32_t millis_to_wait) {
+TaskScheduler::AwaitResult TaskScheduler::await(uint64_t task_id, uint32_t millis_to_wait)
+{
     if (millis_to_wait == 0) {
         logger.printfln("Calling TaskScheduler::await with millis_to_wait == 0 is not allowed. This is not scheduleOnce!");
         return TaskScheduler::AwaitResult::Error;
@@ -256,13 +261,13 @@ TaskScheduler::AwaitResult TaskScheduler::await(uint64_t task_id, uint32_t milli
     }
 
     if (ulTaskNotifyTake(true, pdMS_TO_TICKS(millis_to_wait)) == 0) {
-        switch(this->cancel(task_id)) {
+        switch (this->cancel(task_id)) {
             case TaskScheduler::CancelResult::WillBeCancelled:
                 esp_system_abort("Awaited task timed out and can't be cancelled. Giving up.");
                 return TaskScheduler::AwaitResult::Timeout;
             case TaskScheduler::CancelResult::Cancelled:
                 return TaskScheduler::AwaitResult::Timeout;
-            case  TaskScheduler::CancelResult::NotFound:
+            case TaskScheduler::CancelResult::NotFound:
                 return TaskScheduler::AwaitResult::Done;
         }
     }
@@ -270,6 +275,7 @@ TaskScheduler::AwaitResult TaskScheduler::await(uint64_t task_id, uint32_t milli
     return TaskScheduler::AwaitResult::Done;
 }
 
-TaskScheduler::AwaitResult TaskScheduler::await(std::function<void(void)> &&fn, uint32_t millis_to_wait) {
-    return task_scheduler.await(task_scheduler.scheduleOnce(std::move(fn), 0), millis_to_wait);
+TaskScheduler::AwaitResult TaskScheduler::await(std::function<void(void)> &&fn, uint32_t millis_to_wait)
+{
+    return task_scheduler.await(task_scheduler.scheduleOnce(std::forward<std::function<void(void)>>(fn), 0), millis_to_wait);
 }

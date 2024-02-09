@@ -269,16 +269,22 @@ void Meters::setup()
     initialized = true;
 }
 
+#if defined(METERS_LOW_LATENCY) && METERS_LOW_LATENCY != 0
+#define METERS_VALUES_LOW_LATENCY true
+#else
+#define METERS_VALUES_LOW_LATENCY false
+#endif
+
 void Meters::register_urls()
 {
     for (uint32_t slot = 0; slot < METERS_SLOTS; slot++) {
         MeterSlot &meter_slot = meter_slots[slot];
 
-        api.addPersistentConfig(get_path(slot, Meters::PathType::Config), &meter_slot.config_union, {}, 1000);
-        api.addState(get_path(slot, Meters::PathType::State),    &meter_slot.state,     {}, 1000);
-        api.addState(get_path(slot, Meters::PathType::Errors),   &meter_slot.errors,    {}, 1000);
-        api.addState(get_path(slot, Meters::PathType::ValueIDs), &meter_slot.value_ids, {}, 1000);
-        api.addState(get_path(slot, Meters::PathType::Values),   &meter_slot.values,    {}, 1000);
+        api.addPersistentConfig(get_path(slot, Meters::PathType::Config), &meter_slot.config_union);
+        api.addState(get_path(slot, Meters::PathType::State),    &meter_slot.state);
+        api.addState(get_path(slot, Meters::PathType::Errors),   &meter_slot.errors);
+        api.addState(get_path(slot, Meters::PathType::ValueIDs), &meter_slot.value_ids);
+        api.addState(get_path(slot, Meters::PathType::Values),   &meter_slot.values, {}, METERS_VALUES_LOW_LATENCY);
 
         const String base_path = get_path(slot, Meters::PathType::Base);
 
@@ -399,7 +405,7 @@ void Meters::register_urls()
 
 #if MODULE_METERS_LEGACY_API_AVAILABLE()
     if (meters_legacy_api.get_linked_meter_slot() < METERS_SLOTS) {
-        api.addState("meter/error_counters", &meter_slots[meters_legacy_api.get_linked_meter_slot()].errors, {}, 1000);
+        api.addState("meter/error_counters", &meter_slots[meters_legacy_api.get_linked_meter_slot()].errors);
         meter_slots[meters_legacy_api.get_linked_meter_slot()].power_history.register_urls("meter/");
     }
 #endif
@@ -436,7 +442,7 @@ MeterGenerator *Meters::get_generator_for_class(MeterClassID meter_class)
     return get_generator_for_class(MeterClassID::None);
 }
 
-IMeter *Meters::new_meter_of_class(MeterClassID meter_class, uint32_t slot, Config *state,  Config *errors)
+IMeter *Meters::new_meter_of_class(MeterClassID meter_class, uint32_t slot, Config *state, Config *errors)
 {
     MeterGenerator *generator = get_generator_for_class(meter_class);
 
@@ -851,7 +857,7 @@ const Config * Meters::get_config_float_nan_prototype()
 const Config * Meters::get_config_uint_max_prototype()
 {
     if (config_uint_max_prototype.is_null()) {
-        config_uint_max_prototype  = Config::Uint32(UINT32_MAX);
+        config_uint_max_prototype = Config::Uint32(UINT32_MAX);
     }
     return &config_uint_max_prototype;
 }

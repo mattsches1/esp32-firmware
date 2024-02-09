@@ -40,49 +40,90 @@ void WS::setup()
 void WS::register_urls()
 {
     web_sockets.onConnect_HTTPThread([this](WebSocketsClient client) {
-        CoolString to_send;
-        auto result = task_scheduler.await([&to_send](){
-            size_t required = 1; // \0
-            for (auto &reg : api.states) {
-                required += 10;
-                required += reg.path.length();
-                required += 12;
-                required += reg.config->string_length();
-                required += 2;
-            }
+        // Max payload size is 4k.
+        // The framing needs 10 + 12 + 3 bytes (with the second \n to mark the end of the API dump)
+        // API path lengths should probably fit in the 103 bytes left.
+        size_t buf_size = 4096 + 128;
 
-            if (!to_send.reserve(required)) {
-                multi_heap_info_t dram_info;
-                heap_caps_get_info(&dram_info,  MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-                logger.printfln("ws: Not enough memory to send initial state. %u > %u (%u)", required, dram_info.largest_free_block, dram_info.total_free_bytes);
-                return;
-            }
-
-
-            for (auto &reg : api.states) {
-                // Directly append to preallocated string. a += b + c + d + e + f would create a temporary string with multiple reallocations.
-                to_send.concat("{\"topic\":\"");
-                to_send.concat(reg.path);
-                to_send.concat("\",\"payload\":");
-                to_send.concat(reg.config->to_string_except(reg.keys_to_censor));
-                to_send.concat("}\n");
-            }
-        });
-
-        if (result == TaskScheduler::AwaitResult::Done) {
-            if (to_send.length() == 0) {
-                client.close_HTTPThread();
-                return;
-            }
-
-            size_t len;
-            char *p = to_send.releaseOwnership(&len);
-            if (!client.sendOwnedBlocking_HTTPThread(p, len))
-                return;
+        auto buffer = heap_alloc_array<char>(buf_size);
+        size_t buf_used = 0;
+        if (!buffer) {
+            // TODO: Technically we'd have to log the heap size of the heap that was used for heap_alloc_array.
+            // However if the allocation fails we probably used the DRAM.
+            multi_heap_info_t dram_info;
+            heap_caps_get_info(&dram_info,  MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+            logger.printfln("ws: Not enough memory to send initial state. %u > %u (%u)", buf_size, dram_info.largest_free_block, dram_info.total_free_bytes);
+            client.close_HTTPThread();
+            return;
         }
 
-        for (auto &callback : on_connect_callbacks) {
-            callback(client);
+        int i = 0;
+        bool done = false;
+        char *buf = buffer.get();
+        while (!done) {
+            auto result = task_scheduler.await([&i, &done, &buf, &buf_used, buf_size]() {
+                for (; i < api.states.size(); ++i) {
+                    auto &reg = api.states[i];
+
+                    auto prefix = "{\"topic\":\"";
+                    auto prefix_len = strlen(prefix);
+
+                    auto path = reg.path.c_str();
+                    auto path_len = reg.path.length();
+
+                    auto infix = "\",\"payload\":";
+                    auto infix_len = strlen(infix);
+
+                    auto config_len = reg.config->string_length();
+
+                    auto suffix = "}\n";
+                    auto suffix_len = strlen(suffix);
+
+                    int req = prefix_len + path_len + infix_len + config_len + suffix_len + 1; // +1 for the second \n
+                    if ((buf_size - buf_used) < req) {
+                        done = false;
+                        if (req > buf_size)
+                            logger.printfln("API %s exceeds max WS buffer size! Required %u buf_size %u", path, req, buf_size);
+                        return;
+                    }
+
+                    memcpy(buf + buf_used, prefix, prefix_len);
+                    buf_used += prefix_len;
+
+                    memcpy(buf + buf_used, path, path_len);
+                    buf_used += path_len;
+
+                    memcpy(buf + buf_used, infix, infix_len);
+                    buf_used += infix_len;
+
+                    // We don't have to null-terminate the buffer because we know buf_used and the buffer will be handled as bytes.
+                    // So we only need suffix_len - 1 bytes here:
+                    // ArduinoJSON writes a \0 but we will immediately overwrite it with the first byte of the suffix.
+                    // However this could be the last API state, in this case we need one byte more for the second \n.
+                    buf_used += reg.config->to_string_except(reg.keys_to_censor, buf + buf_used, buf_size - buf_used - suffix_len);
+
+                    memcpy(buf + buf_used, suffix, suffix_len);
+                    buf_used += suffix_len;
+                }
+                done = true;
+            });
+
+            if (result == TaskScheduler::AwaitResult::Done) {
+                if (buf_used == 0) {
+                    client.close_HTTPThread();
+                    return;
+                }
+
+                if (done) {
+                    buf[buf_used] = '\n';
+                    buf_used += 1;
+                }
+
+                if (!client.sendOwnedNoFreeBlocking_HTTPThread(buf, buf_used))
+                    return;
+
+                buf_used = 0;
+            }
         }
     });
 
@@ -94,11 +135,6 @@ void WS::register_urls()
         if (len > 0)
             web_sockets.sendToAllOwned(payload, len);
     }, 1000, 1000);
-}
-
-void WS::addOnConnectCallback_HTTPThread(std::function<void(WebSocketsClient)> callback)
-{
-    on_connect_callbacks.push_back(callback);
 }
 
 void WS::addCommand(size_t commandIdx, const CommandRegistration &reg)
@@ -161,7 +197,8 @@ bool WS::pushRawStateUpdate(const String &payload, const String &path)
     return pushStateUpdate(0, payload, path);
 }
 
-IAPIBackend::WantsStateUpdate WS::wantsStateUpdate(size_t stateIdx) {
+IAPIBackend::WantsStateUpdate WS::wantsStateUpdate(size_t stateIdx)
+{
     return web_sockets.haveActiveClient() ?
            IAPIBackend::WantsStateUpdate::AsString :
            IAPIBackend::WantsStateUpdate::No;

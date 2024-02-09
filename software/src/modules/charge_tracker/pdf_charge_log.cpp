@@ -79,7 +79,8 @@ float table_column_offsets[] {
 
 #define TABLE_LINES_PER_OBJECT 8
 
-int get_streams_per_page(bool first_page, int *table_lines_to_place) {
+int get_streams_per_page(bool first_page, int *table_lines_to_place)
+{
     int result = 0;
     if (first_page) {
         result += 1  // letter head
@@ -106,7 +107,8 @@ int init_pdf_generator(WebServerRequest *request,
                        int letterhead_lines,
                        const char *table_header,
                        uint16_t tracked_charges,
-                       std::function<int(const char * *)> table_lines_cb) {
+                       std::function<int(const char **)> table_lines_cb)
+{
     struct pdf_info info;
     memset(&info, 0, sizeof(info));
     strncpy(info.title, title, ARRAY_SIZE(info.title) - 1);
@@ -125,7 +127,6 @@ int init_pdf_generator(WebServerRequest *request,
 
     int table_content_placed = 0;
     int table_lines_to_place = 0;
-
 
     table_lines_to_place = tracked_charges;
 

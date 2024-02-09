@@ -55,7 +55,7 @@ void EvseLed::setup()
 
 void EvseLed::register_urls()
 {
-    api.addPersistentConfig("evse/led_configuration", &config, {}, 1000);
+    api.addPersistentConfig("evse/led_configuration", &config);
 
     // Has to be named this way, because evse/indicator_led is the corresponding read API.
     api.addCommand("evse/indicator_led_update", &led, {}, [this](){
@@ -63,19 +63,23 @@ void EvseLed::register_urls()
     }, true);
 }
 
-static bool is_error(EvseLed::Blink state) {
+static bool is_error(EvseLed::Blink state)
+{
     return state >= EvseLed::Blink::ErrorStart && state <= EvseLed::Blink::ErrorEnd;
 }
 
-static bool is_pwm_or_evse(EvseLed::Blink state) {
+static bool is_pwm_or_evse(EvseLed::Blink state)
+{
     return state >= EvseLed::Blink::None && state <= EvseLed::Blink::On;
 }
 
-static bool is_nfc(EvseLed::Blink state) {
+static bool is_nfc(EvseLed::Blink state)
+{
     return state >= EvseLed::Blink::Ack && state <= EvseLed::Blink::Nag;
 }
 
-bool EvseLed::accepts_new_state(Blink new_state) {
+bool EvseLed::accepts_new_state(Blink new_state)
+{
     // Always accept new state if old state duration is elapsed
     if (deadline_elapsed(this->current_duration_end_us))
         return true;
@@ -105,7 +109,7 @@ bool EvseLed::accepts_new_state(Blink new_state) {
         return false;
 
     // Old and new state are both NFC animations. Prioritize Ack over Nack over Nag.
-    switch(new_state) {
+    switch (new_state) {
         case Blink::Ack:
             return true;
         case Blink::Nack:

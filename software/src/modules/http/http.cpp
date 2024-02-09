@@ -41,7 +41,6 @@ public:
 
     void alive()
     {
-
     }
 
     void end(String error)
@@ -179,7 +178,7 @@ WebServerRequestReturnProtect Http::api_handler_get(WebServerRequest req)
             continue;
 
         String response;
-        auto result = task_scheduler.await([&response, i](){
+        auto result = task_scheduler.await([&response, i]() {
             response = api.states[i].config->to_string_except(api.states[i].keys_to_censor);
         });
         if (result == TaskScheduler::AwaitResult::Timeout)
@@ -197,7 +196,8 @@ WebServerRequestReturnProtect Http::api_handler_get(WebServerRequest req)
     return req.send(405, "text/plain", "Request method for this URI is not handled by server");
 }
 
-WebServerRequestReturnProtect Http::api_handler_put(WebServerRequest req) {
+WebServerRequestReturnProtect Http::api_handler_put(WebServerRequest req)
+{
     for (size_t i = 0; i < api.commands.size(); i++)
         if (strcmp(api.commands[i].path.c_str(), req.uriCStr() + 1) == 0)
             return run_command(req, i);
@@ -251,7 +251,7 @@ WebServerRequestReturnProtect Http::api_handler_put(WebServerRequest req) {
         BufferedChunkedResponse buffered_response(&queued_response);
 
         task_scheduler.scheduleOnce(
-            [this, i, bytes_written, &buffered_response, response_owner_id]{
+            [this, i, bytes_written, &buffered_response, response_owner_id] {
                 api.callResponse(api.responses[i], recv_buf, bytes_written, &buffered_response, &response_ownership, response_owner_id);
             },
             0);
@@ -319,6 +319,7 @@ bool Http::pushRawStateUpdate(const String &payload, const String &path)
     return true;
 }
 
-IAPIBackend::WantsStateUpdate Http::wantsStateUpdate(size_t stateIdx) {
+IAPIBackend::WantsStateUpdate Http::wantsStateUpdate(size_t stateIdx)
+{
     return IAPIBackend::WantsStateUpdate::No;
 }

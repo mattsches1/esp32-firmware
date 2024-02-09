@@ -72,12 +72,12 @@ void MqttAutoDiscovery::setup()
 
     mqtt.subscribe(discovery_topic, [this](const char *topic, size_t topic_len, char *data, size_t data_len) {
         check_discovery_topic(topic, topic_len, data_len);
-    }, false);
+    }, Mqtt::Retained::Accept);
 }
 
 void MqttAutoDiscovery::register_urls()
 {
-    api.addPersistentConfig("mqtt/auto_discovery_config", &config, {}, 1000);
+    api.addPersistentConfig("mqtt/auto_discovery_config", &config);
 }
 
 void MqttAutoDiscovery::prepare_topics()
@@ -124,7 +124,6 @@ void MqttAutoDiscovery::prepare_topics()
 
 void MqttAutoDiscovery::subscribe_to_own()
 {
-
 }
 
 void MqttAutoDiscovery::check_discovery_topic(const char *topic, size_t topic_len, size_t data_len)

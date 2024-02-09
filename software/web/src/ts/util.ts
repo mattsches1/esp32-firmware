@@ -128,19 +128,6 @@ export function toLocaleFixed(i: number, fractionDigits?: number) {
     });
 }
 
-export function setNumericInput(id: string, i: number, fractionDigits: number) {
-    // Firefox does not localize numbers with a fractional part correctly.
-    // OTOH Webkit based browsers (correctly) expect setting the value to a non-localized number.
-    // Unfortunately, setting the value to a localized number (i.e. with , instead of . for German)
-    // does not raise an exception, instead only a warning on the console is shown.
-    // So to make everyone happy, we use user agent detection.
-    if (navigator.userAgent.indexOf("Gecko/") >= 0) {
-        (document.getElementById(id) as HTMLInputElement).value = toLocaleFixed(i, fractionDigits);
-    } else {
-        (document.getElementById(id) as HTMLInputElement).value = i.toFixed(fractionDigits);
-    }
-}
-
 let wsReconnectTimeout: number = null;
 let wsReconnectCallback: () => void = null;
 let ws: WebSocket = null;
@@ -216,10 +203,12 @@ export function setupEventSource(first: boolean, keep_as_first: boolean, continu
         wsReconnectTimeout = window.setTimeout(wsReconnectCallback, RECONNECT_TIME);
 
         let topics: any[] = [];
+
+        let end_marker_found = (e.data as string).includes("\n\n");
+        let messages = (e.data as string).trim();
+
         batch(() => {
-            for (let item of e.data.split("\n")) {
-                if (item == "")
-                    continue;
+            for (let item of messages.split("\n")) {
                 let obj = JSON.parse(item);
                 if (!("topic" in obj) || !("payload" in obj)) {
                     console.log("Received malformed event", obj);
@@ -234,7 +223,9 @@ export function setupEventSource(first: boolean, keep_as_first: boolean, continu
                 API.trigger(topic, eventTarget);
             }
 
-            allow_render.value = true;
+            if (end_marker_found) {
+                allow_render.value = true;
+            }
         });
     };
 

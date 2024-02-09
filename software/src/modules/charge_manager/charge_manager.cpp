@@ -66,7 +66,6 @@ static void apply_energy_manager_config(Config &conf)
     conf.get("enable_watchdog")->updateBool(false);
     conf.get("default_available_current")->updateUint(0);
 
-
     if (conf.get("chargers")->count() == 1 && conf.get("requested_current_margin")->asUint() == REQUESTED_CURRENT_MARGIN_DEFAULT) {
         conf.get("requested_current_margin")->updateUint(REQUESTED_CURRENT_MARGIN_ENERGY_MANAGER_1_CHARGER_DEFAULT);
     }
@@ -402,7 +401,7 @@ void ChargeManager::setup()
 
     max_avail_current = config.get("maximum_available_current")->asUint();
 
-    if(!config.get("enable_charge_manager")->asBool() || config.get("chargers")->count() == 0) {
+    if (!config.get("enable_charge_manager")->asBool() || config.get("chargers")->count() == 0) {
         initialized = true;
         return;
     }
@@ -473,13 +472,15 @@ void ChargeManager::check_watchdog()
     last_available_current_update = millis();
 }
 
-bool ChargeManager::have_chargers() {
+bool ChargeManager::have_chargers()
+{
     return charger_count > 0;
 }
 
 // Check is not 100% reliable after an uptime of 49 days because last_update might legitimately 0.
 // Work around that by caching the value once all chargers were seen once.
-bool ChargeManager::seen_all_chargers() {
+bool ChargeManager::seen_all_chargers()
+{
     if (all_chargers_seen)
         return true;
 
@@ -487,7 +488,7 @@ bool ChargeManager::seen_all_chargers() {
     if (charger_count == 0)
         return false;
 
-    for(size_t i = 0; i < charger_count; ++i)
+    for (size_t i = 0; i < charger_count; ++i)
         if (this->charger_state[i].last_update == 0)
             return false;
 
@@ -497,7 +498,7 @@ bool ChargeManager::seen_all_chargers() {
 
 bool ChargeManager::is_charging_stopped(uint32_t last_update_cutoff)
 {
-    for(size_t i = 0; i < charger_count; ++i) {
+    for (size_t i = 0; i < charger_count; ++i) {
         const auto &charger = this->charger_state[i];
         if (!a_after_b(charger.last_update, last_update_cutoff)) {
             return false;
@@ -518,7 +519,7 @@ void ChargeManager::set_all_control_pilot_disconnect(bool disconnect)
 
 bool ChargeManager::are_all_control_pilot_disconnected(uint32_t last_update_cutoff)
 {
-    for(size_t i = 0; i < charger_count; ++i) {
+    for (size_t i = 0; i < charger_count; ++i) {
         const auto &charger = this->charger_state[i];
         if (!a_after_b(charger.last_update, last_update_cutoff)) {
             return false;
@@ -534,7 +535,7 @@ bool ChargeManager::are_all_control_pilot_disconnected(uint32_t last_update_cuto
 
 bool ChargeManager::is_control_pilot_disconnect_supported(uint32_t last_update_cutoff)
 {
-    for(size_t i = 0; i < charger_count; ++i) {
+    for (size_t i = 0; i < charger_count; ++i) {
         const auto &charger = this->charger_state[i];
         if (!a_after_b(charger.last_update, last_update_cutoff)) {
             return false;
@@ -548,8 +549,8 @@ bool ChargeManager::is_control_pilot_disconnect_supported(uint32_t last_update_c
     return true;
 }
 
-
-const char* ChargeManager::get_charger_name(uint8_t idx) {
+const char *ChargeManager::get_charger_name(uint8_t idx)
+{
     return this->state.get("chargers")->get(idx)->get("name")->asEphemeralCStr();
 }
 
@@ -581,7 +582,7 @@ void ChargeManager::distribute_current()
     // Update control pilot disconnect
     {
         bool disconnect_requested = control_pilot_disconnect.get("disconnect")->asBool();
-        for(size_t i = 0; i < charger_count; ++i) {
+        for (size_t i = 0; i < charger_count; ++i) {
             this->charger_state[i].cp_disconnect = disconnect_requested;
         }
     }
@@ -611,7 +612,7 @@ void ChargeManager::distribute_current()
             // Charger does not respond anymore
             if (deadline_elapsed(charger.last_update + TIMEOUT_MS)) {
                 unreachable_evse_found = true;
-                LOCAL_LOG("stage 0: Can't reach EVSE of %s (%s): last_update too old.",this->get_charger_name(i), this->hosts[i]);
+                LOCAL_LOG("stage 0: Can't reach EVSE of %s (%s): last_update too old.", this->get_charger_name(i), this->hosts[i]);
 
                 bool state_was_not_five = charger.state != 5;
                 charger.state = 5;
@@ -627,7 +628,7 @@ void ChargeManager::distribute_current()
             }
 
             // Charger did not update the charging current in time
-            if(charger.allocated_current < charger.allowed_current && deadline_elapsed(charger.last_sent_config + TIMEOUT_MS)) {
+            if (charger.allocated_current < charger.allowed_current && deadline_elapsed(charger.last_sent_config + TIMEOUT_MS)) {
                 unreachable_evse_found = true;
                 LOCAL_LOG("stage 0: EVSE of %s (%s) did not react in time.", this->get_charger_name(i), this->hosts[i]);
 
@@ -941,16 +942,17 @@ void ChargeManager::distribute_current()
     }
 }
 
-void ChargeManager::set_allocated_current_callback(std::function<void(uint32_t)> callback) {
+void ChargeManager::set_allocated_current_callback(std::function<void(uint32_t)> callback)
+{
     allocated_current_callback = callback;
 }
 
 void ChargeManager::register_urls()
 {
-    api.addPersistentConfig("charge_manager/config", &config, {}, 1000);
-    api.addState("charge_manager/state", &state, {}, 1000);
+    api.addPersistentConfig("charge_manager/config", &config);
+    api.addState("charge_manager/state", &state);
 
-    api.addState("charge_manager/available_current", &available_current, {}, 1000);
+    api.addState("charge_manager/available_current", &available_current);
     api.addCommand("charge_manager/available_current_update", &available_current_update, {}, [this](){
         uint32_t current = this->available_current_update.get("current")->asUint();
         this->available_current.get("current")->updateUint(current);
@@ -958,13 +960,13 @@ void ChargeManager::register_urls()
         this->watchdog_triggered = false;
     }, false);
 
-    api.addState("charge_manager/available_phases", &available_phases, {}, 1000);
+    api.addState("charge_manager/available_phases", &available_phases);
     api.addCommand("charge_manager/available_phases_update", &available_phases_update, {}, [this](){
         uint32_t phases = this->available_phases_update.get("phases")->asUint();
         this->available_phases.get("phases")->updateUint(phases);
         logger.printfln("charge_manager: Available phases: %u", phases);
     }, false);
 
-    //api.addState("charge_manager/control_pilot_disconnect", &control_pilot_disconnect, {}, 1000);
+    //api.addState("charge_manager/control_pilot_disconnect", &control_pilot_disconnect);
     //api.addCommand("charge_manager/control_pilot_disconnect_update", &control_pilot_disconnect, {}, [](){}, false);
 }

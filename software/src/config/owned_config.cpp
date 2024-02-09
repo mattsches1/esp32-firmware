@@ -2,10 +2,9 @@
 
 OwnedConfig::OwnedConfigWrap::OwnedConfigWrap(const OwnedConfig *_conf) : conf(_conf)
 {
-
 }
 
-const OwnedConfig* OwnedConfig::OwnedConfigWrap::operator->() const
+const OwnedConfig *OwnedConfig::OwnedConfigWrap::operator->() const
 {
     return conf;
 }
@@ -89,17 +88,17 @@ const std::vector<OwnedConfig>::const_iterator OwnedConfig::cend() const
     return elements.cend();
 }
 
-const CoolString& OwnedConfig::asString() const
+const CoolString &OwnedConfig::asString() const
 {
     return *this->as<CoolString>();
 }
 
-const char* OwnedConfig::asEphemeralCStr() const
+const char *OwnedConfig::asEphemeralCStr() const
 {
     return this->as<CoolString>()->c_str();
 }
 
-const char* OwnedConfig::asUnsafeCStr() const
+const char *OwnedConfig::asUnsafeCStr() const
 {
     return this->as<CoolString>()->c_str();
 }

@@ -96,7 +96,6 @@ public:
         if (tfp == nullptr)
             return false;
 
-
         device_found = true;
 
         int result = ensure_matching_firmware(tfp, device_name, module_name, firmware, firmware_len, &logger, false);
@@ -123,7 +122,6 @@ public:
             return false;
         }
 
-
         update_identity(tfp);
         return true;
     }
@@ -145,7 +143,7 @@ public:
             initialized = false;
         }, true);
 
-        api.addState(url_prefix + "/identity", &identity, {}, 1000);
+        api.addState(url_prefix + "/identity", &identity);
     }
 
     void loop() override
@@ -204,7 +202,8 @@ protected:
     ConfigRoot identity;
 
 private:
-    void update_identity(TF_TFP *tfp) {
+    void update_identity(TF_TFP *tfp)
+    {
         char uid[8];
         char connected_uid[8];
         char position;

@@ -75,11 +75,14 @@ bool is_valid_subnet_mask(IPAddress subnet);
 
 extern TaskHandle_t mainTaskHandle;
 void set_main_task_handle();
-inline bool running_in_main_task() {return mainTaskHandle == xTaskGetCurrentTaskHandle();}
+inline bool running_in_main_task()
+{
+    return mainTaskHandle == xTaskGetCurrentTaskHandle();
+}
 
 void led_blink(int8_t led_pin, int interval, int blinks_per_interval, int off_time_ms);
 
-uint16_t internet_checksum(const uint8_t* data, size_t length);
+uint16_t internet_checksum(const uint8_t *data, size_t length);
 
 // Helper function to execute dns_gethostbyname in lwIP's TCPIP context.
 err_t dns_gethostbyname_lwip_ctx(const char *hostname, ip_addr_t *addr, dns_found_callback found, void *callback_arg);
@@ -122,7 +125,7 @@ public:
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
 
-void list_dir(fs::FS &fs, const char * dirname, uint8_t depth, uint8_t current_depth = 0);
+void list_dir(fs::FS &fs, const char *dirname, uint8_t depth, uint8_t current_depth = 0);
 
 template <typename T>
 T clamp(T min, T val, T max)
@@ -210,7 +213,7 @@ private:
 };
 
 // Remove seperator for nfc tags
-void remove_separator(const char * const in, char *out);
+void remove_separator(const char *const in, char *out);
 
 // minimal C++11 allocator with debug output
 template <class Tp>
@@ -221,16 +224,16 @@ struct DebugAlloc {
 
     int counter = 0;
 
-    Tp* allocate(std::size_t n)
+    Tp *allocate(std::size_t n)
     {
         n *= sizeof(Tp);
         printf("!!! %d allocating %u bytes (%u)\n", counter, n, sizeof(Tp));
         ++counter;
-        return static_cast<Tp*>(::operator new(n));
+        return static_cast<Tp *>(::operator new(n));
     }
-    void deallocate(Tp* p, std::size_t n)
+    void deallocate(Tp *p, std::size_t n)
     {
-        printf("!!! %d deallocating %u bytes\n", counter, n*sizeof*p);
+        printf("!!! %d deallocating %u bytes\n", counter, n * sizeof *p);
         ++counter;
         ::operator delete(p);
     }

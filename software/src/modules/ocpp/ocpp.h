@@ -32,11 +32,11 @@ public:
     void setup() override;
     void register_urls() override;
 
-    void on_tag_seen(const char *tag_id);
+    bool on_tag_seen(const char *tag_id);
 
     std::unique_ptr<OcppChargePoint> cp;
 
-    void(*tag_seen_cb)(int32_t, const char *, void *) = nullptr;
+    void (*tag_seen_cb)(int32_t, const char *, void *) = nullptr;
     void *tag_seen_cb_user_data = nullptr;
 
     ConfigRoot config;

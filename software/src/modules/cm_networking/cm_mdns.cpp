@@ -84,7 +84,7 @@ void CMNetworking::register_urls()
 static void dns_callback(const char *host, const ip_addr_t *ip, void *args)
 {
     std::lock_guard<std::mutex> lock{cm_networking.dns_resolve_mutex};
-    uint8_t *resolve_state = (uint8_t*)args;
+    uint8_t *resolve_state = (uint8_t *)args;
     if (ip == nullptr && *resolve_state != RESOLVE_STATE_NOT_RESOLVED) {
         *resolve_state = RESOLVE_STATE_NOT_RESOLVED;
         logger.printfln("Failed to resolve %s", host);
@@ -123,11 +123,13 @@ void CMNetworking::resolve_hostname(uint8_t charger_idx)
     resolve_state[charger_idx] = RESOLVE_STATE_RESOLVED;
 }
 
-bool CMNetworking::is_resolved(uint8_t charger_idx) {
+bool CMNetworking::is_resolved(uint8_t charger_idx)
+{
     return resolve_state[charger_idx] == RESOLVE_STATE_RESOLVED;
 }
 
-void CMNetworking::clear_cached_hostname(uint8_t charger_idx) {
+void CMNetworking::clear_cached_hostname(uint8_t charger_idx)
+{
     auto err = dns_removehost(this->hosts[charger_idx], nullptr);
     if (err != ESP_OK)
         logger.printfln("cm_networking: Couldn't remove hostname from cache: error %i", err);
@@ -197,7 +199,7 @@ bool CMNetworking::mdns_result_is_charger(mdns_result_t *entry, const char ** re
         return false;
 
     int found = 0;
-    for(size_t i = 0; i < entry->txt_count; ++i) {
+    for (size_t i = 0; i < entry->txt_count; ++i) {
         // strcmp is safe here: Keys are always null terminated.
         // https://github.com/espressif/esp-idf/blob/7eba5f80027e1648775b46f889cb4d9519afc965/components/mdns/mdns.c#L3000-L3011
         if (strcmp(entry->txt[i].key, "enabled") == 0 && entry->txt_value_len[i] > 0) {
@@ -223,9 +225,10 @@ bool CMNetworking::mdns_result_is_charger(mdns_result_t *entry, const char ** re
     return true;
 }
 
-void CMNetworking::resolve_via_mdns(mdns_result_t *entry) {
+void CMNetworking::resolve_via_mdns(mdns_result_t *entry)
+{
     if (entry->addr && entry->addr->addr.type == IPADDR_TYPE_V4) {
-        for(size_t i = 0; i < charger_count; ++i ){
+        for (size_t i = 0; i < charger_count; ++i) {
             if ((this->needs_mdns & (1 << i)) == 0)
                 continue;
 
@@ -288,7 +291,8 @@ void CMNetworking::add_scan_result_entry(mdns_result_t *entry, TFJsonSerializer 
     json.endObject();
 }
 
-size_t CMNetworking::build_scan_result_json(mdns_result_t *list, char *buf, size_t len) {
+size_t CMNetworking::build_scan_result_json(mdns_result_t *list, char *buf, size_t len)
+{
     TFJsonSerializer json{buf, len};
     json.addArray();
 

@@ -70,6 +70,7 @@ enum class ConfigSource {
 struct Config {
     struct ConfString {
         using Slot = ConfStringSlot;
+
     private:
         uint16_t idx;
         Slot *getSlot();
@@ -88,11 +89,12 @@ struct Config {
         ConfString(const ConfString &cpy);
         ~ConfString();
 
-        ConfString& operator=(const ConfString &cpy);
+        ConfString &operator=(const ConfString &cpy);
     };
 
     struct ConfFloat {
         using Slot = ConfFloatSlot;
+
     private:
         uint16_t idx;
         Slot *getSlot();
@@ -111,11 +113,12 @@ struct Config {
         ConfFloat(const ConfFloat &cpy);
         ~ConfFloat();
 
-        ConfFloat& operator=(const ConfFloat &cpy);
+        ConfFloat &operator=(const ConfFloat &cpy);
     };
 
     struct ConfInt {
         using Slot = ConfIntSlot;
+
     private:
         uint16_t idx;
         Slot *getSlot();
@@ -134,11 +137,12 @@ struct Config {
         ConfInt(const ConfInt &cpy);
         ~ConfInt();
 
-        ConfInt& operator=(const ConfInt &cpy);
+        ConfInt &operator=(const ConfInt &cpy);
     };
 
     struct ConfUint {
         using Slot = ConfUintSlot;
+
     private:
         uint16_t idx;
         Slot *getSlot();
@@ -157,7 +161,7 @@ struct Config {
         ConfUint(const ConfUint &cpy);
         ~ConfUint();
 
-        ConfUint& operator=(const ConfUint &cpy);
+        ConfUint &operator=(const ConfUint &cpy);
     };
 
     struct ConfBool {
@@ -170,6 +174,7 @@ struct Config {
 
     struct ConfArray {
         using Slot = ConfArraySlot;
+
     private:
         uint16_t idx;
         Slot *getSlot();
@@ -190,14 +195,14 @@ struct Config {
         ConfArray(const ConfArray &cpy);
         ~ConfArray();
 
-        ConfArray& operator=(const ConfArray &cpy);
+        ConfArray &operator=(const ConfArray &cpy);
     };
 
     struct ConfObject {
         using Slot = ConfObjectSlot;
+
     private:
         uint16_t idx;
-
 
     public:
         static bool slotEmpty(size_t i);
@@ -214,11 +219,12 @@ struct Config {
         ConfObject(const ConfObject &cpy);
         ~ConfObject();
 
-        ConfObject& operator=(const ConfObject &cpy);
+        ConfObject &operator=(const ConfObject &cpy);
     };
 
     struct ConfUnion {
         using Slot = ConfUnionSlot;
+
     private:
         uint16_t idx;
         Slot *getSlot();
@@ -240,9 +246,8 @@ struct Config {
         ConfUnion(const ConfUnion &cpy);
         ~ConfUnion();
 
-        ConfUnion& operator=(const ConfUnion &cpy);
+        ConfUnion &operator=(const ConfUnion &cpy);
     };
-
 
     struct ConfUpdateArray;
     struct ConfUpdateObject;
@@ -277,7 +282,6 @@ struct Config {
         uint8_t tag;
         ConfUpdate &value;
     };
-
 
     struct ConfVariant {
         struct Empty{uint8_t x;};
@@ -470,10 +474,11 @@ struct Config {
         Config::check_enum_template_type<T>();
         return Union(value, (uint8_t) tag, (ConfUnionPrototypeInternal*) prototypes, prototypes_len);
     }
+
 private:
     static Config Union(Config value, uint8_t tag, const ConfUnionPrototypeInternal prototypes[], uint8_t prototypes_len);
-public:
 
+public:
     static ConfigRoot *Null();
 
     static ConfigRoot *Confirm();
@@ -520,6 +525,9 @@ public:
 
             explicit operator const Config*() const;
 
+            std::vector<Config>::const_iterator begin() const;
+            std::vector<Config>::const_iterator end() const;
+
         private:
             const Config *conf;
     };
@@ -548,6 +556,8 @@ public:
     size_t count() const;
     std::vector<Config>::iterator begin();
     std::vector<Config>::iterator end();
+    std::vector<Config>::const_iterator begin() const;
+    std::vector<Config>::const_iterator end() const;
 
     template<typename T>
     T getTag() const {
@@ -677,6 +687,7 @@ private:
     }
 
     DynamicJsonDocument to_json(const std::vector<String> &keys_to_censor) const;
+
 public:
     size_t fillFloatArray(float *arr, size_t elements);
 
@@ -699,6 +710,7 @@ public:
 
     String to_string() const;
     String to_string_except(const std::vector<String> &keys_to_censor) const;
+    size_t to_string_except(const std::vector<String> &keys_to_censor, char *buf, size_t buf_size) const;
 };
 
 struct ConfigRoot : public Config {
@@ -708,8 +720,10 @@ public:
     ConfigRoot(Config cfg);
 
     ConfigRoot(Config cfg, std::function<String(Config &, ConfigSource)> validator);
+
 private:
     std::function<String(Config &, ConfigSource)> validator;
+
 public:
     bool permit_null_updates = true;
 

@@ -85,7 +85,8 @@ bool WebSockets::queueFull()
     return false;
 }
 
-static bool send_ws_work_item(WebSockets *ws, ws_work_item wi) {
+static bool send_ws_work_item(WebSockets *ws, ws_work_item wi)
+{
     httpd_ws_frame_t ws_pkt;
     memset(&ws_pkt, 0, sizeof(httpd_ws_frame_t));
 
@@ -356,15 +357,15 @@ void WebSockets::receivedPong(int fd)
     }
 }
 
-bool WebSocketsClient::sendOwnedBlocking_HTTPThread(char *payload, size_t payload_len)
+bool WebSocketsClient::sendOwnedNoFreeBlocking_HTTPThread(char *payload, size_t payload_len)
 {
     ws_work_item wi{{this->fd, -1, -1, -1, -1}, payload, payload_len};
     bool result = send_ws_work_item(ws, wi);
-    clear_ws_work_item(&wi);
     return result;
 }
 
-void WebSocketsClient::close_HTTPThread() {
+void WebSocketsClient::close_HTTPThread()
+{
     ws->keepAliveCloseDead(fd);
 }
 
@@ -536,7 +537,7 @@ void WebSockets::pre_setup() {
         {"queue_len", Config::Uint32(0)}
     });
 
-    for(int i = 0; i < MAX_WEB_SOCKET_CLIENTS; ++i) {
+    for (int i = 0; i < MAX_WEB_SOCKET_CLIENTS; ++i) {
         state.get("keep_alive_fds")->add();
         state.get("keep_alive_pongs")->add();
         keep_alive_fds[i] = -1;
@@ -544,10 +545,11 @@ void WebSockets::pre_setup() {
     }
 }
 
-void WebSockets::updateDebugState() {
+void WebSockets::updateDebugState()
+{
     std::lock_guard<std::recursive_mutex> lock{work_queue_mutex};
     std::lock_guard<std::recursive_mutex> lock2{keep_alive_mutex};
-    for(int i = 0; i < MAX_WEB_SOCKET_CLIENTS; ++i) {
+    for (int i = 0; i < MAX_WEB_SOCKET_CLIENTS; ++i) {
         state.get("keep_alive_fds")->get(i)->updateInt(keep_alive_fds[i]);
         state.get("keep_alive_pongs")->get(i)->updateUint(keep_alive_last_pong[i]);
         state.get("worker_active")->updateUint(worker_active);
@@ -594,7 +596,7 @@ void WebSockets::start(const char *uri)
         checkActiveClients();
     }, 100, 100);
 
-    api.addState("info/ws", &state, {}, 1000);
+    api.addState("info/ws", &state);
 }
 
 void WebSockets::onConnect_HTTPThread(std::function<void(WebSocketsClient)> fn)

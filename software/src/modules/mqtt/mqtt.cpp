@@ -141,33 +141,28 @@ void Mqtt::pre_setup()
 #endif
 }
 
-void Mqtt::subscribe_with_prefix(const String &path, SubscribeCallback callback, bool forbid_retained)
+void Mqtt::subscribe(const String &path, SubscribeCallback &&callback, Retained retained, CallbackInThread callback_in_thread, AddPrefix add_prefix)
 {
-    String topic = prefix + "/" + path;
-    subscribe_internal(topic, true, callback, forbid_retained);
-}
+    const String *topic;
+    bool starts_with_global_topic_prefix;
+    String local_topic(static_cast<const char *>(nullptr));
 
-void Mqtt::subscribe_with_prefix_mqtt_thread(const String &path, SubscribeCallback callback, bool forbid_retained)
-{
-    String topic = prefix + "/" + path;
-    subscribe_internal(topic, false, callback, forbid_retained);
-}
+    if (add_prefix == AddPrefix::No) {
+        topic = &path;
+        starts_with_global_topic_prefix = path.startsWith(prefix);
+    } else {
+        local_topic.reserve(128);
+        local_topic.concat(prefix);
+        local_topic.concat('/');
+        local_topic.concat(path);
 
+        topic = &local_topic;
+        starts_with_global_topic_prefix = true;
+    }
 
-void Mqtt::subscribe(const String &topic, SubscribeCallback callback, bool forbid_retained)
-{
-    subscribe_internal(topic, true, callback, forbid_retained);
-}
+    bool subscribed = esp_mqtt_client_subscribe(client, topic->c_str(), 0) >= 0;
 
-void Mqtt::subscribe_mqtt_thread(const String &topic, SubscribeCallback callback, bool forbid_retained)
-{
-    subscribe_internal(topic, false, callback, forbid_retained);
-}
-
-void Mqtt::subscribe_internal(const String &topic, bool callback_in_main_thread, SubscribeCallback callback, bool forbid_retained) {
-    bool subscribed = esp_mqtt_client_subscribe(client, topic.c_str(), 0) >= 0;
-
-    this->commands.push_back({topic, callback, forbid_retained, topic.startsWith(prefix), subscribed, callback_in_main_thread});
+    this->commands.push_back({*topic, std::forward<SubscribeCallback>(callback), retained, callback_in_thread, starts_with_global_topic_prefix, subscribed});
 }
 
 void Mqtt::addCommand(size_t commandIdx, const CommandRegistration &reg)
@@ -190,7 +185,6 @@ void Mqtt::addState(size_t stateIdx, const StateRegistration &reg)
 
 void Mqtt::addRawCommand(size_t rawCommandIdx, const RawCommandRegistration &reg)
 {
-
 }
 
 void Mqtt::addResponse(size_t responseIdx, const ResponseRegistration &reg)
@@ -241,7 +235,8 @@ IAPIBackend::WantsStateUpdate Mqtt::wantsStateUpdate(size_t stateIdx) {
            IAPIBackend::WantsStateUpdate::No;
 }
 
-void Mqtt::resubscribe() {
+void Mqtt::resubscribe()
+{
     if (this->state.get("connection_state")->asInt() != (int)MqttConnectionState::CONNECTED)
         return;
 
@@ -314,12 +309,14 @@ void Mqtt::onMqttDisconnect()
 }
 
 #if MODULE_AUTOMATION_AVAILABLE()
-static bool trigger_action(Config *cfg, void *data) {
+static bool trigger_action(Config *cfg, void *data)
+{
     return mqtt.action_triggered(cfg, data);
 }
 #endif
 
-static bool filter_mqtt_log(const char *topic, size_t topic_len) {
+static bool filter_mqtt_log(const char *topic, size_t topic_len)
+{
 #if MODULE_AUTOMATION_AVAILABLE()
     if (topic_len >= 12 && strncmp(topic, "automation_action/", 12) == 0)
         return false;
@@ -334,17 +331,19 @@ void Mqtt::onMqttMessage(char *topic, size_t topic_len, char *data, size_t data_
         if (!matchTopicFilter(topic, topic_len, c.topic.c_str(), c.topic.length()))
             continue;
 
-        if (retain && c.forbid_retained) {
-            logger.printfln("MQTT: Retained messages on topic %s are forbidden. Ignoring retained message (data_len=%u).", c.topic.c_str(), data_len);
+        if (retain && c.retained != Retained::Accept) {
+            if (c.retained == Retained::IgnoreWarn) {
+                logger.printfln("MQTT: Retained messages on topic %s are forbidden. Ignoring retained message (data_len=%u).", c.topic.c_str(), data_len);
+            }
             return;
         }
 
-        if (c.callback_in_main_thread) {
+        if (c.callback_in_thread == CallbackInThread::Main) {
             esp_mqtt_client_disable_receive(client, 100);
-            char *topic_cpy = (char *) malloc(topic_len);
+            char *topic_cpy = (char *)malloc(topic_len);
             memcpy(topic_cpy, topic, topic_len);
 
-            char *data_cpy = (char *) malloc(data_len);
+            char *data_cpy = (char *)malloc(data_len);
             memcpy(data_cpy, data, data_len);
 
             task_scheduler.scheduleOnce([this, c, topic_cpy, topic_len, data_cpy, data_len](){
@@ -378,13 +377,13 @@ void Mqtt::onMqttMessage(char *topic, size_t topic_len, char *data, size_t data_
             return;
         }
 
-        if (reg.is_action && data_len == 0)  {
+        if (reg.is_action && data_len == 0) {
             logger.printfln("MQTT: Topic %s is an action. Ignoring empty message.", reg.path.c_str());
             return;
         }
 
         esp_mqtt_client_disable_receive(client, 100);
-        api.callCommandNonBlocking(reg, data, data_len, [this, reg](String error){
+        api.callCommandNonBlocking(reg, data, data_len, [this, reg](String error) {
             if (error != "")
                 logger.printfln("MQTT: On %s: %s", reg.path.c_str(), error.c_str());
             esp_mqtt_client_enable_receive(this->client);
@@ -402,7 +401,7 @@ void Mqtt::onMqttMessage(char *topic, size_t topic_len, char *data, size_t data_
             return;
         }
 
-        char *data_cpy = (char *) malloc(data_len);
+        char *data_cpy = (char *)malloc(data_len);
         memcpy(data_cpy, data, data_len);
 
         esp_mqtt_client_disable_receive(client, 100);
@@ -590,9 +589,9 @@ void Mqtt::register_urls()
     if (automation.is_trigger_active(AutomationTriggerID::MQTT) && config.get("enable_mqtt")->asBool()) {
         ConfigVec trigger_config = automation.get_configured_triggers(AutomationTriggerID::MQTT);
         std::vector<String> subscribed_topics;
-        for (auto &conf: trigger_config) {
+        for (auto &conf : trigger_config) {
             bool already_subscribed = false;
-            for (auto &new_topic: subscribed_topics) {
+            for (auto &new_topic : subscribed_topics) {
                 if (conf.second->get("topic_filter")->asString() == new_topic)
                     already_subscribed = true;
             }
@@ -609,7 +608,7 @@ void Mqtt::register_urls()
                     msg.retained = false;
                     if (automation.trigger_action(AutomationTriggerID::MQTT, &msg, &trigger_action))
                         return;
-                }, !conf.second->get("retain")->asBool());
+                }, conf.second->get("retain")->asBool() ? Retained::Accept : Retained::IgnoreWarn);
                 subscribed_topics.push_back(topic);
             }
         }
@@ -617,7 +616,8 @@ void Mqtt::register_urls()
 #endif
 }
 
-void Mqtt::register_events() {
+void Mqtt::register_events()
+{
     if (!config.get("enable_mqtt")->asBool()) {
         return;
     }
@@ -646,8 +646,9 @@ void Mqtt::register_events() {
 }
 
 #if MODULE_AUTOMATION_AVAILABLE()
-bool Mqtt::action_triggered(Config *config, void *data) {
-    Config *cfg = (Config*)config->get();
+bool Mqtt::action_triggered(Config *config, void *data)
+{
+    Config *cfg = (Config *)config->get();
     MqttMessage *msg = (MqttMessage *)data;
     const CoolString &payload = cfg->get("payload")->asString();
 

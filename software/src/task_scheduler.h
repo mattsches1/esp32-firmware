@@ -40,7 +40,7 @@ struct Task {
     bool once;
     bool cancelled;
 
-    Task(std::function<void(void)> fn, uint64_t task_id, uint32_t first_run_delay_ms, uint32_t delay_ms, bool once);
+    Task(std::function<void(void)> &&fn, uint64_t task_id, uint32_t first_run_delay_ms, uint32_t delay_ms, bool once);
 };
 
 bool compare(const std::unique_ptr<Task> &a, const std::unique_ptr<Task> &b);
@@ -48,11 +48,13 @@ bool compare(const std::unique_ptr<Task> &a, const std::unique_ptr<Task> &b);
 class TaskQueue : public std::priority_queue<std::unique_ptr<Task>, std::vector<std::unique_ptr<Task>>, decltype(&compare)>
 {
     using std::priority_queue<std::unique_ptr<Task>, std::vector<std::unique_ptr<Task>>, decltype(&compare)>::priority_queue;
+
 public:
     bool removeByTaskID(uint64_t task_id);
     Task *findByTaskID(uint64_t task_id);
 
-    std::unique_ptr<Task> top_and_pop() {
+    std::unique_ptr<Task> top_and_pop()
+    {
         std::pop_heap(c.begin(), c.end(), comp);
         std::unique_ptr<Task> value = std::move(c.back());
         c.pop_back();

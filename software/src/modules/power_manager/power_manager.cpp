@@ -95,7 +95,6 @@ void PowerManager::pre_setup()
         {"phases_wanted", Config::Uint32(0)},
     });
     external_control_update = external_control;
-
 }
 
 void PowerManager::setup()
@@ -161,32 +160,32 @@ void PowerManager::register_urls()
     }, true);
 }
 
-Config * PowerManager::get_state()
+Config *PowerManager::get_state()
 {
     return &state;
 }
 
-Config * PowerManager::get_config_low_level_state()
+Config *PowerManager::get_config_low_level_state()
 {
     return &low_level_state;
 }
 
-const Config * PowerManager::get_config()
+const Config *PowerManager::get_config()
 {
     return &config;
 }
 
-const Config * PowerManager::get_debug_config()
+const Config *PowerManager::get_debug_config()
 {
     return &debug_config;
 }
 
-Config * PowerManager::get_config_charge_mode()
+Config *PowerManager::get_config_charge_mode()
 {
     return &charge_mode;
 }
 
-const Config * PowerManager::get_external_control()
+const Config *PowerManager::get_external_control()
 {
     return &external_control;
 }
@@ -197,4 +196,9 @@ void PowerManager::set_config_error(uint32_t config_error_mask)
     state.get("config_error_flags")->updateUint(config_error_flags);
 
     energy_manager.set_error(ERROR_FLAGS_BAD_CONFIG_MASK);
+}
+
+void PowerManager::set_external_control_phases_wanted(uint32_t phases_wanted)
+{
+    external_control.get("phases_wanted")->updateUint(phases_wanted);
 }

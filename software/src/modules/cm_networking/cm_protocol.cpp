@@ -147,7 +147,8 @@ static bool seq_num_invalid(uint16_t received_sn, uint16_t last_seen_sn)
     return received_sn <= last_seen_sn && last_seen_sn - received_sn < 5;
 }
 
-static bool endswith(const char *haystack, const char *needle) {
+static bool endswith(const char *haystack, const char *needle)
+{
     size_t haystack_len = strlen(haystack);
     size_t needle_len = strlen(needle);
 
@@ -168,12 +169,13 @@ struct ManagerQueueItem {
     struct sockaddr_in source_addr;
 };
 
-static void manager_task(void *arg) {
+static void manager_task(void *arg)
+{
     ManagerQueueItem item;
     memset(&item, 0, sizeof(ManagerQueueItem));
 
-    auto manager_sock = ((ManagerTaskArgs *) arg)->manager_sock;
-    auto manager_queue = ((ManagerTaskArgs *) arg)->manager_queue;
+    auto manager_sock = ((ManagerTaskArgs *)arg)->manager_sock;
+    auto manager_queue = ((ManagerTaskArgs *)arg)->manager_queue;
 
     for (;;) {
         socklen_t socklen = sizeof(item.source_addr);
@@ -186,7 +188,7 @@ static void manager_task(void *arg) {
     }
 }
 
-void CMNetworking::register_manager(const char * const * const hosts,
+void CMNetworking::register_manager(const char *const *const hosts,
                                     int charger_count,
                                     std::function<void(uint8_t /* client_id */, cm_state_v1 *, cm_state_v2 *)> manager_callback,
                                     std::function<void(uint8_t, uint8_t)> manager_error_callback)

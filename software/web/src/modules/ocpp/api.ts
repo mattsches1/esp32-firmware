@@ -20,8 +20,9 @@ export interface state {
     tag_expiry_date: number;
     tag_timeout: number;
     cable_timeout: number;
+    last_rejected_tag: string;
+    last_rejected_tag_reason: number;
     txn_id: number;
-    txn_confirmed_time: number;
     txn_start_time: number;
     current: number;
     txn_with_invalid_id: boolean;

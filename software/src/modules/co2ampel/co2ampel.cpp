@@ -61,14 +61,14 @@ static bool last_blink = false;
 
 static bool blink_allowed = true;
 
-
 static void touch_position_handler(TF_LCD128x64 *device, uint16_t pressure, uint16_t x,
                                    uint16_t y, uint32_t age, void *user_data) {
     blink_allowed = false;
 }
 
-void Co2Ampel::set_color(uint32_t c) {
-    switch(c) {
+void Co2Ampel::set_color(uint32_t c)
+{
+    switch (c) {
         case RED:
             check(tf_rgb_led_v2_set_rgb_value(&rgb, 255, 0, 0), "call set_rgb_value");
             break;
@@ -90,20 +90,19 @@ void Co2Ampel::set_color(uint32_t c) {
 void Co2Ampel::setup()
 {
     int result = tf_co2_v2_create(&co2, nullptr, &hal);
-    if(result != TF_E_OK) {
+    if (result != TF_E_OK) {
         logger.printfln("Failed to initialize CO2 Bricklet.");
         return;
     }
 
-
     result = tf_lcd_128x64_create(&lcd, nullptr, &hal);
-    if(result != TF_E_OK) {
+    if (result != TF_E_OK) {
         logger.printfln("Failed to initialize LCD Bricklet.");
         return;
     }
 
     result = tf_rgb_led_v2_create(&rgb, nullptr, &hal);
-    if(result != TF_E_OK) {
+    if (result != TF_E_OK) {
         logger.printfln("Failed to initialize RGB LED Bricklet.");
         return;
     }
@@ -191,8 +190,8 @@ void Co2Ampel::setup()
 
 void Co2Ampel::register_urls()
 {
-    api.addPersistentConfig("co2ampel/config", &config, {}, 1000);
-    api.addState("co2ampel/state", &state, {}, 1000);
+    api.addPersistentConfig("co2ampel/config", &config);
+    api.addState("co2ampel/state", &state);
     api.addCommand("co2ampel/stop_blink", Config::Null(), {}, [](){
         blink_allowed = false;
     }, true);

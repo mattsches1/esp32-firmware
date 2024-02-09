@@ -63,7 +63,7 @@ bool Coredump::build_coredump_info(JsonDocument &tf_coredump_json)
 
     String tf_coredump_string = tf_coredump_prefix;
 
-    if (tf_coredump_prefix.length () + tf_coredump_json_string.length() + tf_coredump_suffix.length() >= sizeof(tf_coredump_info))
+    if (tf_coredump_prefix.length() + tf_coredump_json_string.length() + tf_coredump_suffix.length() >= sizeof(tf_coredump_info))
         return false;
 
     tf_coredump_string += tf_coredump_json_string + tf_coredump_suffix;
@@ -139,7 +139,6 @@ void Coredump::register_urls()
             }
             request.sendChunk((char *)buffer + (i == 0 ? 20 : 0), to_send - (i == 0 ? 20 : 0));
         }
-
 
         return request.endChunkedResponse();
     });

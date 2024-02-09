@@ -60,8 +60,9 @@ void Ocpp::pre_setup()
         {"tag_expiry_date", Config::Int32(0)},
         {"tag_timeout", Config::Uint32(0)},
         {"cable_timeout", Config::Uint32(0)},
+        {"last_rejected_tag", Config::Str("", 0, 21)},
+        {"last_rejected_tag_reason", Config::Uint8(0)},
         {"txn_id", Config::Int32(0)},
-        {"txn_confirmed_time", Config::Int32(0)},
         {"txn_start_time", Config::Int32(0)},
         {"current", Config::Uint32(0)},
         {"txn_with_invalid_id", Config::Bool(false)},
@@ -127,15 +128,17 @@ void Ocpp::pre_setup()
 
 static const char *lookup = "0123456789ABCDEFabcdef";
 
-static uint8_t hex_digit_to_byte(char digit) {
-    for(size_t i = 0; i < strlen(lookup); ++i) {
+static uint8_t hex_digit_to_byte(char digit)
+{
+    for (size_t i = 0; i < strlen(lookup); ++i) {
         if (lookup[i] == digit)
             return i > 15 ? (i - 6) : i;
     }
     return 0xFF;
 }
 
-bool Ocpp::start_client() {
+bool Ocpp::start_client()
+{
     if (!config_in_use.get("enable_auth")->asBool()) {
         return cp->start(config_in_use.get("url")->asEphemeralCStr(), config_in_use.get("identity")->asEphemeralCStr(), nullptr, 0);
     }
@@ -143,7 +146,7 @@ bool Ocpp::start_client() {
     String pass = config_in_use.get("pass")->asString();
     bool pass_is_hex = pass.length() == 40;
     if (pass_is_hex) {
-        for(size_t i = 0; i < 40; ++i) {
+        for (size_t i = 0; i < 40; ++i) {
             if (!isxdigit(pass[i])) {
                 pass_is_hex = false;
                 break;
@@ -156,8 +159,8 @@ bool Ocpp::start_client() {
     }
 
     uint8_t pass_bytes[20] = {};
-    for(size_t i = 0; i < 20; ++i) {
-        pass_bytes[i] = hex_digit_to_byte(pass[2*i]) << 4 | hex_digit_to_byte(pass[2*i + 1]);
+    for (size_t i = 0; i < 20; ++i) {
+        pass_bytes[i] = hex_digit_to_byte(pass[2 * i]) << 4 | hex_digit_to_byte(pass[2 * i + 1]);
     }
     return cp->start(config.get("url")->asEphemeralCStr(), config_in_use.get("identity")->asEphemeralCStr(), pass_bytes, 20);
 }
@@ -191,10 +194,10 @@ void Ocpp::setup()
 
 void Ocpp::register_urls()
 {
-    api.addPersistentConfig("ocpp/config", &config, {"pass"}, 1000);
+    api.addPersistentConfig("ocpp/config", &config, {"pass"});
 #ifdef OCPP_STATE_CALLBACKS
-    api.addState("ocpp/state", &state, {}, 1000);
-    api.addState("ocpp/configuration", &configuration, {}, 1000);
+    api.addState("ocpp/state", &state);
+    api.addState("ocpp/configuration", &configuration);
 #endif
     api.addCommand("ocpp/reset", Config::Null(), {}, [](){
         remove_directory("/ocpp");
@@ -210,9 +213,10 @@ void Ocpp::register_urls()
 }
 
 #if MODULE_NFC_AVAILABLE()
-void Ocpp::on_tag_seen(const char *tag_id) {
+bool Ocpp::on_tag_seen(const char *tag_id)
+{
     if (tag_seen_cb == nullptr)
-        return;
+        return false;
 
     // We have to remove the separating ':'s from the tag_id.
     // OCPP expectes IDs that map to physical tag IDs to contain only the hex-bytes.
@@ -220,5 +224,6 @@ void Ocpp::on_tag_seen(const char *tag_id) {
     remove_separator(tag_id, buf);
 
     tag_seen_cb(1, buf, tag_seen_cb_user_data);
+    return true;
 }
 #endif

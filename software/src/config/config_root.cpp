@@ -32,7 +32,8 @@ String ConfigRoot::update_from_cstr(char *c, size_t len)
     return "";
 }
 
-String ConfigRoot::get_updated_copy(char *c, size_t payload_len, Config *out_config, ConfigSource source) {
+String ConfigRoot::get_updated_copy(char *c, size_t payload_len, Config *out_config, ConfigSource source)
+{
     DynamicJsonDocument doc(this->json_size(true));
     DeserializationError error = deserializeJson(doc, c, payload_len);
 
@@ -72,7 +73,6 @@ String ConfigRoot::get_updated_copy(JsonVariant root, bool force_same_keys, Conf
     result.trim();
     return result;
 }
-
 
 template<typename T>
 String ConfigRoot::get_updated_copy(T visitor, Config *out_config, ConfigSource source) {
@@ -124,12 +124,14 @@ String ConfigRoot::validate(ConfigSource source)
     return "";
 }
 
-void ConfigRoot::update_from_copy(Config *copy) {
+void ConfigRoot::update_from_copy(Config *copy)
+{
     ASSERT_MAIN_THREAD();
     this->value = copy->value;
     this->value.updated = 0xFF;
 }
 
-OwnedConfig ConfigRoot::get_owned_copy() {
+OwnedConfig ConfigRoot::get_owned_copy()
+{
     return Config::apply_visitor(to_owned{}, this->value);
 }

@@ -106,12 +106,11 @@ static void register_default_urls(void) {
         return send_index_html(request);
     });
 
-
     api.addCommand("reboot", Config::Null(), {}, []() {
         trigger_reboot("API");
     }, true);
 
-    api.addState("info/modules", &modules, {}, 10000);
+    api.addState("info/modules", &modules);
 
     server.on_HTTPThread("/force_reboot", HTTP_GET, [](WebServerRequest request) {
         ESP.restart();
@@ -165,7 +164,7 @@ void setup(void) {
 
     logger.printfln("Last reset reason was: %s", tf_reset_reason());
 
-    std::vector<IModule*> imodules;
+    std::vector<IModule *> imodules;
     modules_get_imodules(&imodules);
 
     config_pre_init();
@@ -174,7 +173,7 @@ void setup(void) {
         imodule->pre_init();
     }
 
-    if(!mount_or_format_spiffs()) {
+    if (!mount_or_format_spiffs()) {
         logger.printfln("Failed to mount SPIFFS.");
     }
 
@@ -225,7 +224,7 @@ void setup(void) {
     struct loop_chain **next_chain_ptr = &loop_chain;
     for (IModule *imodule : imodules) {
         if (is_module_loop_overridden(imodule)) {
-            *next_chain_ptr = static_cast<struct loop_chain*>(malloc(sizeof(struct loop_chain)));
+            *next_chain_ptr = static_cast<struct loop_chain *>(malloc(sizeof(struct loop_chain)));
             (*next_chain_ptr)->imodule = imodule;
             next_chain_ptr = &(*next_chain_ptr)->next;
         }

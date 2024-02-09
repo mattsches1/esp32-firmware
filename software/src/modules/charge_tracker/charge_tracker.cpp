@@ -108,7 +108,8 @@ String ChargeTracker::chargeRecordFilename(uint32_t i)
     return String(CHARGE_RECORD_FOLDER) + "/charge-record-" + i + ".bin";
 }
 
-bool ChargeTracker::repair_last(float meter_start) {
+bool ChargeTracker::repair_last(float meter_start)
+{
     Charge charges[3];
     charges[0].ce.meter_end = NAN;
     charges[2].cs.meter_start = meter_start;
@@ -404,7 +405,8 @@ bool ChargeTracker::currentlyCharging()
     return (file.size() % CHARGE_RECORD_SIZE) == sizeof(ChargeStart);
 }
 
-bool charged_invalid(ChargeStart cs, ChargeEnd ce) {
+bool charged_invalid(ChargeStart cs, ChargeEnd ce)
+{
     return isnan(cs.meter_start) || isnan(ce.meter_end) || ce.meter_end < cs.meter_start;
 }
 
@@ -483,8 +485,9 @@ void ChargeTracker::setup()
     updateState();
 }
 
-bool user_configured(const uint8_t configured_users[MAX_ACTIVE_USERS], uint8_t user_id) {
-    for(int i = 0; i < MAX_ACTIVE_USERS; ++i) {
+bool user_configured(const uint8_t configured_users[MAX_ACTIVE_USERS], uint8_t user_id)
+{
+    for (int i = 0; i < MAX_ACTIVE_USERS; ++i) {
         if (configured_users[i] == user_id) {
             return true;
         }
@@ -492,7 +495,8 @@ bool user_configured(const uint8_t configured_users[MAX_ACTIVE_USERS], uint8_t u
     return false;
 }
 
-static size_t timestamp_min_to_date_time_string(char buf[17], uint32_t timestamp_min, bool english) {
+static size_t timestamp_min_to_date_time_string(char buf[17], uint32_t timestamp_min, bool english)
+{
     const char * const unknown = english ? "unknown" : "unbekannt";
     size_t unknown_len =  english ? ARRAY_SIZE("unknown") : ARRAY_SIZE("unbekannt");
 
@@ -510,13 +514,15 @@ static size_t timestamp_min_to_date_time_string(char buf[17], uint32_t timestamp
     return sprintf(buf, "%2.2i.%2.2i.%4.4i %2.2i:%2.2i", t.tm_mday, t.tm_mon + 1, t.tm_year + 1900, t.tm_hour, t.tm_min);
 }
 
-static int get_display_name(uint8_t user_id, char *ret_buf) {
+static int get_display_name(uint8_t user_id, char *ret_buf)
+{
     int result = 0;
     task_scheduler.await([&result, user_id, ret_buf](){result = users.get_display_name(user_id, ret_buf);});
     return result;
 }
 
-static char *tracked_charge_to_string(char *buf, ChargeStart cs, ChargeEnd ce, bool english, uint32_t electricity_price) {
+static char *tracked_charge_to_string(char *buf, ChargeStart cs, ChargeEnd ce, bool english, uint32_t electricity_price)
+{
     buf += 1 + timestamp_min_to_date_time_string(buf, cs.timestamp_minutes, english);
 
     get_display_name(cs.user_id, buf);
@@ -530,7 +536,7 @@ static char *tracked_charge_to_string(char *buf, ChargeStart cs, ChargeEnd ce, b
         if (charged <= 999.999f) {
             int written = sprintf(buf, "%.3f", charged);
             if (!english)
-                for(int i = 0; i < written; ++i)
+                for (int i = 0; i < written; ++i)
                     if (buf[i] == '.')
                         buf[i] = ',';
             buf += 1 + written;
@@ -558,7 +564,7 @@ static char *tracked_charge_to_string(char *buf, ChargeStart cs, ChargeEnd ce, b
     } else {
         int written = sprintf(buf, "%.3f", cs.meter_start);
         if (!english)
-            for(int i = 0; i < written; ++i)
+            for (int i = 0; i < written; ++i)
                 if (buf[i] == '.')
                     buf[i] = ',';
         buf += 1 + written;
@@ -583,7 +589,8 @@ static char *tracked_charge_to_string(char *buf, ChargeStart cs, ChargeEnd ce, b
     return buf;
 }
 
-static bool repair_logic(Charge *buf) {
+static bool repair_logic(Charge *buf)
+{
     bool repaired = false;
     uint8_t state = 0;
 
@@ -640,7 +647,8 @@ static bool repair_logic(Charge *buf) {
     return repaired;
 }
 
-void ChargeTracker::repair_charges() {
+void ChargeTracker::repair_charges()
+{
     auto buf = heap_alloc_array<Charge>(258);
     uint32_t num_repaired = 0;
     Charge transfer;
@@ -690,7 +698,7 @@ void ChargeTracker::register_urls()
     // This happens in users::setup() i.e. _after_ charge_tracker::setup()
     removeOldRecords();
 
-    api.addPersistentConfig("charge_tracker/config", &config, {}, 1000);
+    api.addPersistentConfig("charge_tracker/config", &config);
 
     server.on_HTTPThread("/charge_tracker/charge_log", HTTP_GET, [this](WebServerRequest request) {
         std::lock_guard<std::mutex> lock{records_mutex};
@@ -718,9 +726,9 @@ void ChargeTracker::register_urls()
         return request.endChunkedResponse();
     });
 
-    api.addState("charge_tracker/last_charges", &last_charges, {}, 1000);
-    api.addState("charge_tracker/current_charge", &current_charge, {}, 1000);
-    api.addState("charge_tracker/state", &state, {}, 1000);
+    api.addState("charge_tracker/last_charges", &last_charges);
+    api.addState("charge_tracker/current_charge", &current_charge);
+    api.addState("charge_tracker/state", &state);
 
     api.addCommand("charge_tracker/remove_all_charges", Config::Confirm(), {Config::ConfirmKey()}, [this](String &result){
         if (!Config::Confirm()->get(Config::ConfirmKey())->asBool()) {
@@ -771,10 +779,10 @@ void ChargeTracker::register_urls()
             english = doc["english"] | false;
             if (current_timestamp_min == 0)
                 current_timestamp_min = doc["current_timestamp_min"] | 0l;
-            if (doc.containsKey("letterhead")){
+            if (doc.containsKey("letterhead")) {
                 const char *lh = doc["letterhead"];
                 letterhead_lines = 1;
-                for(size_t i = 0; i < LETTERHEAD_SIZE; ++i) {
+                for (size_t i = 0; i < LETTERHEAD_SIZE; ++i) {
                     if (lh[i] == '\0')
                         break;
                     if (lh[i] == '\n') {
@@ -815,7 +823,7 @@ void ChargeTracker::register_urls()
         String dev_name;
         auto await_result = task_scheduler.await([this, configured_users, &electricity_price, &dev_name]() mutable {
             electricity_price = this->config.get("electricity_price")->asUint();
-            for(int i = 0; i < users.config.get("users")->count(); ++i) {
+            for (int i = 0; i < users.config.get("users")->count(); ++i) {
                 configured_users[i] = users.config.get("users")->get(i)->get("id")->asUint();
             }
             dev_name = device_name.display_name.get("display_name")->asString();
@@ -824,7 +832,6 @@ void ChargeTracker::register_urls()
         });
         if (await_result == TaskScheduler::AwaitResult::Timeout)
             return request.send(500, "text/plain", "Failed to generate PDF: Task timed out");
-
 
         {
             char charge_buf[sizeof(ChargeStart) + sizeof(ChargeEnd)];
@@ -918,7 +925,7 @@ search_done:
 
         int written = sprintf(stats_head, "%s: %9.3f kWh", english ? "Total energy of exported charges" : "Gesamtenergie exportierter Ladevorgänge", charged_sum);
         if (!english)
-            for(int i = 0; i < written; ++i)
+            for (int i = 0; i < written; ++i)
                 if (stats_head[i] == '.')
                     stats_head[i] = ',';
         stats_head += 1 + written;
@@ -930,7 +937,7 @@ search_done:
                             electricity_price / 100.0f,
                             seen_charges_without_meter ? (english ? " Incomplete!" : " Unvollständig!") : "");
             if (!english)
-                for(int i = 0; i < written; ++i)
+                for (int i = 0; i < written; ++i)
                     if (stats_head[i] == '.')
                         stats_head[i] = ',';
             stats_head += 1 + written;

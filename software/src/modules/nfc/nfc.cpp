@@ -225,17 +225,18 @@ uint8_t NFC::get_user_id(tag_info_t *tag, uint8_t *tag_idx)
 
 void NFC::remove_user(uint8_t user_id)
 {
-    Config *tags = (Config *) config.get("authorized_tags");
+    Config *tags = (Config *)config.get("authorized_tags");
 
-    for(int i = 0; i < tags->count(); ++i) {
-        if(tags->get(i)->get("user_id")->asUint() == user_id)
+    for (int i = 0; i < tags->count(); ++i) {
+        if (tags->get(i)->get("user_id")->asUint() == user_id)
             tags->get(i)->get("user_id")->updateUint(0);
     }
     API::writeConfig("nfc/config", &config);
 }
 
 #if MODULE_AUTOMATION_AVAILABLE()
-static bool trigger_action(Config *cfg, void *data) {
+static bool trigger_action(Config *cfg, void *data)
+{
     return nfc.action_triggered(cfg, data);
 }
 #endif
@@ -247,8 +248,13 @@ void NFC::tag_seen(tag_info_t *tag, bool injected)
 
     if (user_id != 0) {
         // Found a new authorized tag.
+        bool blink_handled = false;
+#if MODULE_OCPP_AVAILABLE()
+        blink_handled = ocpp.on_tag_seen(tag->tag_id);
+#endif
 #if MODULE_EVSE_LED_AVAILABLE()
-        evse_led.set_module(EvseLed::Blink::Ack, 2000);
+        if (!blink_handled)
+            evse_led.set_module(EvseLed::Blink::Ack, 2000);
 #endif
 
         auth_info.get("tag_type")->updateUint(tag->tag_type);
@@ -256,15 +262,15 @@ void NFC::tag_seen(tag_info_t *tag, bool injected)
 
         users.trigger_charge_action(user_id, injected ? USERS_AUTH_TYPE_NFC_INJECTION : USERS_AUTH_TYPE_NFC, auth_info.value,
                 injected ? tag_injection_action : TRIGGER_CHARGE_ANY);
-#if MODULE_OCPP_AVAILABLE()
-        ocpp.on_tag_seen(tag->tag_id);
-#endif
+
     } else {
+        bool blink_handled = false;
 #if MODULE_OCPP_AVAILABLE()
-        ocpp.on_tag_seen(tag->tag_id);
+        blink_handled = ocpp.on_tag_seen(tag->tag_id);
 #endif
 #if MODULE_EVSE_LED_AVAILABLE()
-        evse_led.set_module(EvseLed::Blink::Nack, 2000);
+        if (!blink_handled)
+            evse_led.set_module(EvseLed::Blink::Nack, 2000);
 #endif
     }
 
@@ -377,8 +383,9 @@ void NFC::update_seen_tags()
     new_tags = tmp;
 }
 
-void NFC::setup_auth_tags() {
-    const auto *auth_tags_cfg = (Config *) config.get("authorized_tags");
+void NFC::setup_auth_tags()
+{
+    const auto *auth_tags_cfg = (Config *)config.get("authorized_tags");
     auth_tag_count = auth_tags_cfg->count();
     if (auth_tag_count == 0)
         return;
@@ -386,7 +393,7 @@ void NFC::setup_auth_tags() {
     auth_tags = heap_alloc_array<auth_tag_t>(auth_tag_count);
     memset(auth_tags.get(), 0, sizeof(auth_tag_t) * auth_tag_count);
 
-    for(int i = 0; i < auth_tag_count; ++i) {
+    for (int i = 0; i < auth_tag_count; ++i) {
         const auto tag = auth_tags_cfg->get(i);
 
         auth_tags[i].tag_type = tag->get("tag_type")->asUint();
@@ -423,8 +430,8 @@ void NFC::setup()
 
 void NFC::register_urls()
 {
-    api.addState("nfc/seen_tags", &seen_tags, {}, 1000);
-    api.addPersistentConfig("nfc/config", &config, {}, 1000);
+    api.addState("nfc/seen_tags", &seen_tags);
+    api.addPersistentConfig("nfc/config", &config);
     api.addCommand("nfc/inject_tag", &inject_tag, {}, [this](){
         last_tag_injection = millis();
         tag_injection_action = TRIGGER_CHARGE_ANY;
@@ -461,7 +468,8 @@ void NFC::loop()
 }
 
 #if MODULE_AUTOMATION_AVAILABLE()
-bool NFC::action_triggered(Config *config, void *data) {
+bool NFC::action_triggered(Config *config, void *data)
+{
     auto cfg = config->get();
     tag_info_t *tag = (tag_info_t *)data;
     switch (config->getTag<AutomationTriggerID>()) {

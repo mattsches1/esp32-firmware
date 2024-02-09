@@ -126,16 +126,17 @@ void ChargeLimits::setup()
 }
 
 #if MODULE_AUTOMATION_AVAILABLE()
-static bool trigger_action(Config *cfg, void *data) {
+static bool trigger_action(Config *cfg, void *data)
+{
     return charge_limits.action_triggered(cfg, data);
 }
 #endif
 
 void ChargeLimits::register_urls()
 {
-    api.addPersistentConfig("charge_limits/default_limits", &config, {}, 1000);
-    api.addState("charge_limits/state", &state, {}, 1000);
-    api.addState("charge_limits/active_limits", &config_in_use, {}, 1000);
+    api.addPersistentConfig("charge_limits/default_limits", &config);
+    api.addState("charge_limits/state", &state);
+    api.addState("charge_limits/active_limits", &config_in_use);
 
     api.addCommand("charge_limits/override_duration", &override_duration, {}, [this]() {
         was_triggered = false;
