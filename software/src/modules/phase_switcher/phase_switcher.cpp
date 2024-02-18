@@ -101,6 +101,7 @@ void PhaseSwitcher::setup()
         return;
     }
 
+    logger.printfln("Phase Switcher: Preparing to set up power history.");
     power_history.setup();
 
     api.restorePersistentConfig("phase_switcher/config", &api_config);
@@ -187,11 +188,11 @@ void PhaseSwitcher::register_urls()
     if (!initialized)
         return;
 
-    api.addPersistentConfig("phase_switcher/config", &api_config, {}, 1000);
+    api.addPersistentConfig("phase_switcher/config", &api_config);
 
-    api.addState("phase_switcher/state", &api_state, {}, 1000);
+    api.addState("phase_switcher/state", &api_state);
  
-    api.addState("phase_switcher/low_level_state", &api_low_level_state, {}, 1000);
+    api.addState("phase_switcher/low_level_state", &api_low_level_state);
 
     api.addCommand("phase_switcher/available_charging_power", &api_available_charging_power, {}, [this](){
         if (enabled && !quick_charging_active){

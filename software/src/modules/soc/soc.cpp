@@ -118,16 +118,16 @@ void SOC::register_urls()
     if (!initialized)
         return;
 
-    api.addState("soc/state", &state, {}, 1000);
+    api.addState("soc/state", &state);
  
-    api.addState("soc/setpoint", &setpoint, {}, 1000);
+    api.addState("soc/setpoint", &setpoint);
     api.addCommand("soc/setpoint_update", &setpoint_update, {}, [this](){
         uint16_t _setpoint = setpoint_update.get("setpoint")->asUint();
         setpoint.get("setpoint")->updateUint(_setpoint);
         api.writeConfig("soc/setpoint", &setpoint);
     }, false);
 
-    api.addPersistentConfig("soc/config", &config, {"password", "pin"}, 1000);
+    api.addPersistentConfig("soc/config", &config, {"password", "pin"});
 
     api.addCommand("soc/vin_list", Config::Null(), {}, [this](){
         // Abort if a request to list vins is running.

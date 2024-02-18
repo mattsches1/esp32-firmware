@@ -17,8 +17,8 @@
  * Boston, MA 02111-1307, USA.
  */
 
+#include "module_dependencies.h"
 #include "multi_value_history.h"
-#include "../meter/module_dependencies.h"
 
 #include "gcc_warnings.h"
 #ifdef __GNUC__
@@ -28,6 +28,9 @@
 
 void MultiValueHistory::setup()
 {
+// !!! FIXME
+    logger.printfln("Setting up multi value history...");
+
     for(int j = 0; j < MULTI_VALUE_HISTORY_NUMBER_OF_VALUES; ++j){
         history[j].setup();
         live[j].setup();
@@ -63,37 +66,50 @@ void MultiValueHistory::setup()
     // For ',' between the values.
     ++chars_per_value;
 
-#if MODULE_WS_AVAILABLE()
-    ws.addOnConnectCallback_HTTPThread([this](WebSocketsClient client) {
-        const size_t buf_size = MULTI_VALUE_RING_BUF_SIZE * MULTI_VALUE_HISTORY_NUMBER_OF_VALUES * (chars_per_value + 3) + 100;
+// #if MODULE_WS_AVAILABLE()
+//     {
+//         const size_t buf_size = MULTI_VALUE_RING_BUF_SIZE * MULTI_VALUE_HISTORY_NUMBER_OF_VALUES * (chars_per_value + 3) + 100;
 
-        // live
-        size_t buf_written = 0;
-        char *buf = static_cast<char *>(malloc(buf_size));
+//         // live
+//         size_t buf_written = 0;
+//         char *buf = static_cast<char *>(malloc(buf_size));
 
-        if (buf == nullptr)
-            return;
+//         if (buf == nullptr)
+//             return;
 
-        buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, "{\"topic\":\"%s/live\",\"payload\":", base_url.c_str());
-        buf_written += format_live(buf + buf_written, buf_size - buf_written);
-        buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, "}\n");
+//         buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, "{\"topic\":\"%s/live\",\"payload\":", base_url.c_str());
+//         buf_written += format_live(buf + buf_written, buf_size - buf_written);
+//         buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, "}\n");
 
-        client.sendOwnedBlocking_HTTPThread(buf, buf_written);
+//         ws.web_sockets.sendToAllOwned(buf, buf_written);
 
-        // history
-        buf_written = 0;
-        buf = static_cast<char *>(malloc(buf_size));
+//         if (debug_level >= 1){
+//             logger.printfln("Live initialized:");
+//             logger.write(buf, buf_written);
+//             logger.printfln(" ");
+//         }
 
-        if (buf == nullptr)
-            return;
+//         // history
+//         buf_written = 0;
+//         buf = static_cast<char *>(malloc(buf_size));
 
-        buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, "{\"topic\":\"%s/history\",\"payload\":", base_url.c_str());
-        buf_written += format_history(buf + buf_written, buf_size - buf_written);
-        buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, "}\n");
+//         if (buf == nullptr)
+//             return;
 
-        client.sendOwnedBlocking_HTTPThread(buf, buf_written);
-    });
-#endif
+//         buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, "{\"topic\":\"%s/history\",\"payload\":", base_url.c_str());
+//         buf_written += format_history(buf + buf_written, buf_size - buf_written);
+//         buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, "}\n");
+
+//         ws.web_sockets.sendToAllOwned(buf, buf_written);
+
+//         if (debug_level >= 1){
+//             logger.printfln("History live initialized:");
+//             logger.write(buf, buf_written);
+//             logger.printfln(" ");
+//         }
+
+//     };
+// #endif
 }
 
 void MultiValueHistory::register_urls(String base_url_)

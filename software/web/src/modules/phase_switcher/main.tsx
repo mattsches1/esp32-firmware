@@ -39,6 +39,8 @@ import { Button } from "react-bootstrap";
 import uPlot from 'uplot';
 import { FormSeparator } from "../../ts/components/form_separator";
 
+import { MeterValueID, METER_VALUE_IDS, METER_VALUE_INFOS, METER_VALUE_ORDER } from "../meters/meter_value_id";
+
 // ========= CONFIG =========
 
 type PhaseSwitcherConfig = API.getType['phase_switcher/config'];
@@ -50,7 +52,7 @@ interface PhaseSwitcherState {
 }
 
 interface MeterValues {
-    meter: API.getType["meter/values"];
+    meter: API.getType["meters/0/values"];
 }
 
 
@@ -538,9 +540,11 @@ function array_append<T>(a: Array<T>, b: Array<T>, tail: number): Array<T> {
     return a.slice(-tail);
 }
 
-export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, PhaseSwitcherConfig & PhaseSwitcherState & MeterValues> {
+export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, PhaseSwitcherConfig & PhaseSwitcherState> {
+    live_initialized = false;
     live_data: UplotData;
     pending_live_data: UplotData = {timestamps: [], samples: [[], [], []]};
+    history_initialized = false;
     history_data: UplotData;
     uplot_wrapper_live_ref = createRef();
     uplot_wrapper_history_ref = createRef();
@@ -548,7 +552,9 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
     constructor() {
         super('phase_switcher/config',
                 __("phase_switcher.script.save_failed"),
-                __("phase_switcher.script.reboot_content_changed"));
+                __("phase_switcher.script.reboot_content_changed"), {
+                    chart_selected: "history",
+              });
 
         util.addApiEventListener('phase_switcher/state', () => {
             this.setState({state: API.get('phase_switcher/state')});
@@ -558,22 +564,13 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
             this.setState({low_level_state: API.get('phase_switcher/low_level_state')});
         });
 
-        util.addApiEventListener('meter/values', () => {
-            this.setState({meter: API.get('meter/values')});
-        });
-
-        util.addApiEventListener("phase_switcher/live", () => {
-            let live = API.get("phase_switcher/live");
-
-            this.live_data = calculate_live_data(live.offset, live.samples_per_second, live.samples);
-            this.pending_live_data = {timestamps: [], samples: [[],[],[]]};
-
-            if (this.state.chart_selected == "live") {
-                this.update_uplot();
-            }
-        });
-
         util.addApiEventListener("phase_switcher/live_samples", () => {
+            if (!this.live_initialized) {
+                // received live_samples before live cache initialization
+                this.update_live_cache();
+                return;
+            }
+
             let live = API.get("phase_switcher/live_samples");
             let live_extra = calculate_live_data(0, live.samples_per_second, live.samples);
 
@@ -598,17 +595,13 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
             }
         });
 
-        util.addApiEventListener("phase_switcher/history", () => {
-            let history = API.get("phase_switcher/history");
-
-            this.history_data = calculate_history_data(history.offset, history.samples);
-
-            if (this.state.chart_selected == "history") {
-                this.update_uplot();
-            }
-        });
-
         util.addApiEventListener("phase_switcher/history_samples", () => {
+            if (!this.history_initialized) {
+                // received history_samples before history cache initialization
+                this.update_history_cache();
+                return;
+            }
+
             let history = API.get("phase_switcher/history_samples");
             let samples: number[][] = [[], [], []];
 
@@ -622,9 +615,73 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
             }
         });
 
-        this.state = {
-            chart_selected: "history",
-        } as any;
+    }
+
+    update_live_cache() {
+        this.update_live_cache_async()
+            .then((success: boolean) => {
+                if (!success) {
+                    window.setTimeout(() => {
+                        this.update_live_cache();
+                    }, 100);
+
+                    return;
+                }
+
+                this.update_uplot();
+            });
+    }
+
+    async update_live_cache_async() {
+        let response: string = '';
+
+        try {
+            response = await (await util.download('phase_switcher/live')).text();
+        } catch (e) {
+            console.log('Phase switcher: Could not get live data: ' + e);
+            return false;
+        }
+
+        let payload = JSON.parse(response);
+
+        this.live_initialized = true;
+        this.live_data = calculate_live_data(payload.offset, payload.samples_per_second, payload.samples);
+        this.pending_live_data = {timestamps: [], samples: [[],[],[]]};
+
+        return true;
+    }
+
+    update_history_cache() {
+        this.update_history_cache_async()
+            .then((success: boolean) => {
+                if (!success) {
+                    window.setTimeout(() => {
+                        this.update_history_cache();
+                    }, 100);
+
+                    return;
+                }
+
+                this.update_uplot();
+            });
+    }
+
+    async update_history_cache_async() {
+        let response: string = '';
+
+        try {
+            response = await (await util.download('phase_switcher/history')).text();
+        } catch (e) {
+            console.log('Phase switcher: Could not get history data: ' + e);
+            return false;
+        }
+
+        let payload = JSON.parse(response);
+
+        this.history_initialized = true;
+        this.history_data = calculate_history_data(payload.offset, payload.samples);
+
+        return true;
     }
 
     update_uplot() {
@@ -640,10 +697,23 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
         }
     }
 
-    render(props: {}, api_data: Readonly<PhaseSwitcherConfig & PhaseSwitcherState & MeterValues>) {
-        if (!util.render_allowed() || !API.hasFeature("phase_switcher") || !API.hasFeature("meter"))
+    render(props: {}, api_data: Readonly<PhaseSwitcherConfig & PhaseSwitcherState>) {
+        if (!util.render_allowed() || !API.hasFeature("phase_switcher") || !API.hasFeature("meters")) {
             return <></>
+        }
 
+        let value_ids = API.get_unchecked(`meters/0/value_ids`);
+        let values = API.get_unchecked(`meters/0/values`);
+        let power = 0;
+
+        if (value_ids && value_ids.length > 0 && values && values.length > 0) {
+            let idx = value_ids.indexOf(MeterValueID.PowerActiveLSumImExDiff);
+
+            if (idx >= 0) {
+                power = values[idx];
+            }
+        }
+    
         return (
             <SubPage>
                 <ConfigForm id="phase_switcher_config_form" 
@@ -673,7 +743,7 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
                                 <OutputFloat value={api_data.state.available_charging_power} digits={0} scale={0} unit="W" maxFractionalDigitsOnPage={0} maxUnitLengthOnPage={1}/>
                             </div>
                             <div class="mb-1 col-6 px-1">
-                                <OutputFloat value={api_data.meter.power} digits={0} scale={0} unit="W" maxFractionalDigitsOnPage={0} maxUnitLengthOnPage={1}/>
+                                <OutputFloat value={power} digits={0} scale={0} unit="W" maxFractionalDigitsOnPage={0} maxUnitLengthOnPage={1}/>
                             </div>
                         </div>
                     </FormRow>

@@ -115,6 +115,6 @@ public:
     String base_url = "default";
 
 // !!! FIXME
-    int debug_level = 0;
+    int debug_level = 1;
 
 };
