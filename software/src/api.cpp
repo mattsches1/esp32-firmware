@@ -50,6 +50,14 @@ void API::pre_setup()
         {"config", Config::Str("", 0, 12)},
         {"config_type", Config::Str("", 0, 32)},
     });
+
+    modified_prototype = Config::Object({
+        // 0 - Config not modified since boot, config has default values (i.e. does not exist in flash)
+        // 1 - Config modified since boot,     config has default values (i.e. does not exist in flash)
+        // 2 - Config not modified since boot, config is changed from defaults (i.e. exists in flash)
+        // 3 - Config modified since boot,     config is changed from defaults (i.e. exists in flash)
+        {"modified", Config::Uint8(0)}
+    });
 }
 
 void API::setup()
@@ -115,7 +123,7 @@ void API::setup()
             // If no backend wants the state update as string
             // don't serialize the payload.
             if (wsu == IAPIBackend::WantsStateUpdate::AsString)
-                payload = reg.config->to_string_except(reg.keys_to_censor);
+                payload = reg.config->to_string_except(reg.keys_to_censor, reg.keys_to_censor_len);
 
             uint8_t sent = 0;
 
@@ -132,16 +140,42 @@ void API::setup()
     }, 250, 250);
 }
 
-void API::addCommand(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor_in_debug_report, std::function<void(void)> callback, bool is_action) {
+void API::addCommand(const char * const path, ConfigRoot *config, std::initializer_list<String> keys_to_censor_in_debug_report, std::function<void()> &&callback, bool is_action)
+{
+    // The lambda's by-copy capture creates a safe copy of the callback.
     this->addCommand(path, config, keys_to_censor_in_debug_report, [callback](String &){callback();}, is_action);
 }
 
-void API::addCommand(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor_in_debug_report, std::function<void(String &)> callback, bool is_action)
+void API::addCommand(const char * const path, ConfigRoot *config, std::initializer_list<String> keys_to_censor_in_debug_report, std::function<void(String &)> &&callback, bool is_action)
 {
-    if (already_registered(path, "command"))
+    size_t path_len = strlen(path);
+
+    if (path_len > std::numeric_limits<decltype(CommandRegistration::path_len)>::max()) {
+        logger.printfln("API command %s: path too long!", path);
+        return;
+    }
+
+    if (keys_to_censor_in_debug_report.size() > std::numeric_limits<decltype(CommandRegistration::keys_to_censor_in_debug_report_len)>::max()) {
+        logger.printfln("API command %s: keys_to_censor_in_debug_report too long!", path);
+        return;
+    }
+
+    if (already_registered(path, path_len, "command"))
         return;
 
-    commands.push_back({path, config, callback, keys_to_censor_in_debug_report, is_action, 0, nullptr});
+    auto ktc = new String[keys_to_censor_in_debug_report.size()];
+    std::copy(keys_to_censor_in_debug_report.begin(), keys_to_censor_in_debug_report.end(), ktc);
+
+    commands.push_back({
+        path,
+        ktc,
+        config,
+        std::forward<std::function<void(String &)>>(callback),
+        (uint8_t)path_len,
+        (uint8_t)keys_to_censor_in_debug_report.size(),
+        is_action,
+    });
+
     auto commandIdx = commands.size() - 1;
 
     for (auto *backend : this->backends) {
@@ -149,17 +183,55 @@ void API::addCommand(const String &path, ConfigRoot *config, std::initializer_li
     }
 }
 
-void API::addState(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor, bool low_latency)
+void API::addCommand(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor_in_debug_report, std::function<void(void)> &&callback, bool is_action) {
+    // The lambda's by-copy capture creates a safe copy of the callback.
+    this->addCommand(strdup(path.c_str()), config, keys_to_censor_in_debug_report, [callback](String &){callback();}, is_action);
+}
+
+void API::addCommand(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor_in_debug_report, std::function<void(String &)> &&callback, bool is_action)
 {
-    if (already_registered(path, "state"))
+    this->addCommand(strdup(path.c_str()), config, keys_to_censor_in_debug_report, std::forward<std::function<void(String &)>>(callback), is_action);
+}
+
+void API::addState(const char * const path, ConfigRoot *config, std::initializer_list<String> keys_to_censor, bool low_latency)
+{
+    size_t path_len = strlen(path);
+
+    if (path_len > std::numeric_limits<decltype(StateRegistration::path_len)>::max()) {
+        logger.printfln("API state %s: path too long!", path);
+        return;
+    }
+
+    if (keys_to_censor.size() > std::numeric_limits<decltype(StateRegistration::keys_to_censor_len)>::max()) {
+        logger.printfln("API state %s: keys_to_censor too long!", path);
+        return;
+    }
+
+    if (already_registered(path, path_len, "state"))
         return;
 
-    states.push_back({path, config, keys_to_censor, low_latency});
+    auto ktc = new String[keys_to_censor.size()];
+    std::copy(keys_to_censor.begin(), keys_to_censor.end(), ktc);
+
+    states.push_back({
+        path,
+        ktc,
+        config,
+        (uint8_t)path_len,
+        (uint8_t)keys_to_censor.size(),
+        low_latency
+    });
+
     auto stateIdx = states.size() - 1;
 
     for (auto *backend : this->backends) {
         backend->addState(stateIdx, states[stateIdx]);
     }
+}
+
+void API::addState(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor, bool low_latency)
+{
+    this->addState(strdup(path.c_str()), config, keys_to_censor, low_latency);
 }
 
 bool API::addPersistentConfig(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor)
@@ -176,13 +248,7 @@ bool API::addPersistentConfig(const String &path, ConfigRoot *config, std::initi
 
     // It is okay to leak this: Configs cannot be deregistered.
     // The [path]_modified config has to live forever
-    ConfigRoot *conf_modified = new ConfigRoot(Config::Object({
-        // 0 - Config not modified since boot, config has default values (i.e. does not exist in flash)
-        // 1 - Config modified since boot,     config has default values (i.e. does not exist in flash)
-        // 2 - Config not modified since boot, config is changed from defaults (i.e. exists in flash)
-        // 3 - Config modified since boot,     config is changed from defaults (i.e. exists in flash)
-        {"modified", Config::Uint8(0)}
-    }));
+    ConfigRoot *conf_modified = new ConfigRoot{modified_prototype};
 
     {
         // If the config is written to flash, we assume that it is not the default configuration.
@@ -198,9 +264,9 @@ bool API::addPersistentConfig(const String &path, ConfigRoot *config, std::initi
 
         String conf_modified_path = path + "_modified";
         addState(conf_modified_path, conf_modified);
-
-        addState(path, config, keys_to_censor);
     }
+
+    addState(path, config, keys_to_censor);
 
     addCommand(path + "_update", config, keys_to_censor, [path, config, conf_modified]() {
         API::writeConfig(path, config);
@@ -215,12 +281,20 @@ bool API::addPersistentConfig(const String &path, ConfigRoot *config, std::initi
     return true;
 }
 
-void API::addRawCommand(const String &path, std::function<String(char *, size_t)> callback, bool is_action)
+void API::addRawCommand(const char * const path, std::function<String(char *, size_t)> &&callback, bool is_action)
 {
-    if (already_registered(path, "raw command"))
+    size_t path_len = strlen(path);
+
+    if (path_len > std::numeric_limits<decltype(RawCommandRegistration::path_len)>::max()) {
+        logger.printfln("API raw command %s: path too long!", path);
+        return;
+    }
+
+    if (already_registered(path, path_len, "raw command"))
         return;
 
-    raw_commands.push_back({path, callback, is_action});
+
+    raw_commands.push_back({path, std::forward<std::function<String(char *, size_t)>>(callback), (uint8_t) path_len, is_action});
     auto rawCommandIdx = raw_commands.size() - 1;
 
     for (auto *backend : this->backends) {
@@ -236,7 +310,7 @@ void API::callResponse(ResponseRegistration &reg, char *payload, size_t len, ICh
 
     if (!(len == 0 && reg.config->is_null())) {
         String message = reg.config->update_from_cstr(payload, len);
-        if (message != "") {
+        if (!message.isEmpty()) {
             response->begin(false);
             response->write(message.c_str(), message.length());
             response->flush();
@@ -248,12 +322,34 @@ void API::callResponse(ResponseRegistration &reg, char *payload, size_t len, ICh
     reg.callback(response, response_ownership, response_owner_id);
 }
 
-void API::addResponse(const String &path, ConfigRoot *config, std::initializer_list<String> keys_to_censor_in_debug_report, std::function<void(IChunkedResponse *, Ownership *, uint32_t)> callback)
+void API::addResponse(const char * const path, ConfigRoot *config, std::initializer_list<String> keys_to_censor_in_debug_report, std::function<void(IChunkedResponse *, Ownership *, uint32_t)> &&callback)
 {
-    if (already_registered(path, "response"))
+    size_t path_len = strlen(path);
+
+    if (path_len > std::numeric_limits<decltype(ResponseRegistration::path_len)>::max()) {
+        logger.printfln("API response %s: path too long!", path);
+        return;
+    }
+
+    if (keys_to_censor_in_debug_report.size() > std::numeric_limits<decltype(ResponseRegistration::keys_to_censor_in_debug_report_len)>::max()) {
+        logger.printfln("API state %s: keys_to_censor_in_debug_report too long!", path);
+        return;
+    }
+
+    if (already_registered(path, path_len, "response"))
         return;
 
-    responses.push_back({path, config, callback, keys_to_censor_in_debug_report});
+    auto ktc = new String[keys_to_censor_in_debug_report.size()];
+    std::copy(keys_to_censor_in_debug_report.begin(), keys_to_censor_in_debug_report.end(), ktc);
+
+    responses.push_back({
+        path,
+        ktc,
+        config,
+        std::forward<std::function<void(IChunkedResponse *, Ownership *, uint32_t)>>(callback),
+        (uint8_t)path_len,
+        (uint8_t)keys_to_censor_in_debug_report.size()
+    });
     auto responseIdx = responses.size() - 1;
 
     for (auto *backend : this->backends) {
@@ -314,10 +410,10 @@ void API::removeAllConfig()
 }
 
 /*
-void API::addTemporaryConfig(String path, Config *config, std::initializer_list<String> keys_to_censor, std::function<void(void)> callback)
+void API::addTemporaryConfig(String path, Config *config, std::initializer_list<String> keys_to_censor, std::function<void(void)> &&callback)
 {
     addState(path, config, keys_to_censor);
-    addCommand(path + "_update", config, callback);
+    addCommand(path + "_update", config, std::forward<std::function<void(void)>>(callback));
 }
 */
 
@@ -333,11 +429,11 @@ bool API::restorePersistentConfig(const String &path, ConfigRoot *config)
 
     String error = config->update_from_file(LittleFS.open(filename));
 
-    if (error != "") {
+    if (!error.isEmpty()) {
         logger.printfln("Failed to restore persistent config %s: %s", path_copy.c_str(), error.c_str());
     }
 
-    return error == "";
+    return error.isEmpty();
 }
 
 void API::registerDebugUrl()
@@ -387,21 +483,21 @@ void API::registerDebugUrl()
             result += ",\n \"";
             result += reg.path;
             result += "\": ";
-            result += reg.config->to_string_except(reg.keys_to_censor);
+            result += reg.config->to_string_except(reg.keys_to_censor, reg.keys_to_censor_len);
         }
 
         for (auto &reg : commands) {
             result += ",\n \"";
             result += reg.path;
             result += "\": ";
-            result += reg.config->to_string_except(reg.keys_to_censor_in_debug_report);
+            result += reg.config->to_string_except(reg.keys_to_censor_in_debug_report, reg.keys_to_censor_in_debug_report_len);
         }
 
         for (auto &reg : responses) {
             result += ",\n \"";
             result += reg.path;
             result += "\": ";
-            result += reg.config->to_string_except(reg.keys_to_censor_in_debug_report);
+            result += reg.config->to_string_except(reg.keys_to_censor_in_debug_report, reg.keys_to_censor_in_debug_report_len);
         }
 
         result += "}";
@@ -439,7 +535,7 @@ String API::callCommand(CommandRegistration &reg, char *payload, size_t len)
 
             if (payload != nullptr) {
                 result = reg.config->update_from_cstr(payload, len);
-                if (result != "")
+                if (!result.isEmpty())
                     return;
             }
 
@@ -479,7 +575,7 @@ void API::callCommandNonBlocking(CommandRegistration &reg, char *payload, size_t
 
             if (cpy != nullptr) {
                 result = reg.config->update_from_cstr(cpy, len);
-                if (result != "") {
+                if (!result.isEmpty()) {
                     return;
                 }
             }
@@ -501,7 +597,7 @@ String API::callCommand(const char *path, Config::ConfUpdate payload)
 
         String error = reg.config->update(&payload);
 
-        if (error != "") {
+        if (!error.isEmpty()) {
             return error;
         }
         reg.callback(error);
@@ -514,7 +610,7 @@ String API::callCommand(const char *path, Config::ConfUpdate payload)
 const Config *API::getState(const String &path, bool log_if_not_found)
 {
     for (auto &reg : states) {
-        if (reg.path != path) {
+        if (path.length() != reg.path_len || path != reg.path) {
             continue;
         }
 
@@ -522,10 +618,10 @@ const Config *API::getState(const String &path, bool log_if_not_found)
     }
 
     if (log_if_not_found) {
-        logger.printfln("Key %s not found. Contents are:", path.c_str());
+        logger.printfln("API state %s not found. Known states are:", path.c_str());
 
         for (auto &reg : states) {
-            logger.printfln("%s,", reg.path.c_str());
+            logger.printfln("%s,", reg.path);
         }
     }
 
@@ -543,30 +639,30 @@ void API::addFeature(const char *name)
     new_feature->updateString(name);
 }
 
-bool API::already_registered(const String &path, const char *api_type)
+bool API::already_registered(const char *path, size_t path_len, const char *api_type)
 {
     for (auto &reg : this->states) {
-        if (reg.path != path)
+        if (path_len != reg.path_len || memcmp(path, reg.path, path_len) != 0)
             continue;
-        logger.printfln("Can't register %s %s. Already registered as state!", api_type, path.c_str());
+        logger.printfln("Can't register %s %s. Already registered as state!", api_type, path);
         return true;
     }
     for (auto &reg : this->commands) {
-        if (reg.path != path)
+        if (path_len != reg.path_len || memcmp(path, reg.path, path_len) != 0)
             continue;
-        logger.printfln("Can't register %s %s. Already registered as command!", api_type, path.c_str());
+        logger.printfln("Can't register %s %s. Already registered as command!", api_type, path);
         return true;
     }
     for (auto &reg : this->raw_commands) {
-        if (reg.path != path)
+        if (path_len != reg.path_len || memcmp(path, reg.path, path_len) != 0)
             continue;
-        logger.printfln("Can't register %s %s. Already registered as raw command!", api_type, path.c_str());
+        logger.printfln("Can't register %s %s. Already registered as raw command!", api_type, path);
         return true;
     }
     for (auto &reg : this->responses) {
-        if (reg.path != path)
+        if (path_len != reg.path_len || memcmp(path, reg.path, path_len) != 0)
             continue;
-        logger.printfln("Can't register %s %s. Already registered as response!", api_type, path.c_str());
+        logger.printfln("Can't register %s %s. Already registered as response!", api_type, path);
         return true;
     }
 

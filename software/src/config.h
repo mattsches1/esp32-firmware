@@ -686,7 +686,7 @@ private:
         return toWrite;
     }
 
-    DynamicJsonDocument to_json(const std::vector<String> &keys_to_censor) const;
+    DynamicJsonDocument to_json(const String *keys_to_censor, size_t keys_to_censor_len) const;
 
 public:
     size_t fillFloatArray(float *arr, size_t elements);
@@ -706,26 +706,36 @@ public:
     void save_to_file(File &file);
 
     void write_to_stream(Print &output);
-    void write_to_stream_except(Print &output, const std::vector<String> &keys_to_censor);
+    void write_to_stream_except(Print &output, const String *keys_to_censor, size_t keys_to_censor_len);
 
     String to_string() const;
-    String to_string_except(const std::vector<String> &keys_to_censor) const;
-    size_t to_string_except(const std::vector<String> &keys_to_censor, char *buf, size_t buf_size) const;
+
+    String to_string_except(const String *keys_to_censor, size_t keys_to_censor_len) const;
+    size_t to_string_except(const String *keys_to_censor, size_t keys_to_censor_len, char *buf, size_t buf_size) const;
 };
 
 struct ConfigRoot : public Config {
 public:
+    using Validator = std::function<String(Config &, ConfigSource)>;
+
     ConfigRoot() = default;
 
     ConfigRoot(Config cfg);
 
-    ConfigRoot(Config cfg, std::function<String(Config &, ConfigSource)> validator);
+    ConfigRoot(Config cfg, Validator &&validator);
 
 private:
-    std::function<String(Config &, ConfigSource)> validator;
+    Validator *validator;
+
+    // Require alignment of validator to be at least two:
+    // We want to store permit_null_updates in the lowest bit of the pointer
+    // (yes, this is cursed!)
+    // to save 4 bytes of memory per ConfigRoot.
+    static_assert(alignof(Validator) > 1, "Validator not at least 2 byte aligned!");
 
 public:
-    bool permit_null_updates = true;
+    void set_permit_null_updates(bool permit_null_updates);
+    bool get_permit_null_updates();
 
     void update_from_copy(Config *copy);
 

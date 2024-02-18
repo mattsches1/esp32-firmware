@@ -22,6 +22,8 @@
 
 #include <Arduino.h>
 
+#include "esp_crt_bundle.h"
+
 #include "task_scheduler.h"
 #include "tools.h"
 #include "api.h"
@@ -46,10 +48,16 @@ extern char local_uid_str[32];
 
 #define MQTT_RECV_BUFFER_HEADROOM (MQTT_RECV_BUFFER_SIZE / 4)
 
+extern "C" esp_err_t esp_crt_bundle_attach(void *conf);
+
+#if not MODULE_CERTS_AVAILABLE()
+#define MAX_CERT_ID -1
+#endif
+
 void Mqtt::pre_setup()
 {
     // The real UID will be patched in later
-    config = ConfigRoot(Config::Object({
+    config = ConfigRoot{Config::Object({
         {"enable_mqtt", Config::Bool(false)},
         {"broker_host", Config::Str("", 0, 128)},
         {"broker_port", Config::Uint16(1883)},
@@ -57,7 +65,13 @@ void Mqtt::pre_setup()
         {"broker_password", Config::Str("", 0, 64)},
         {"global_topic_prefix", Config::Str(String(BUILD_HOST_PREFIX) + "/" + "ABC", 0, 64)},
         {"client_name", Config::Str(String(BUILD_HOST_PREFIX) + "-" + "ABC", 1, 64)},
-        {"interval", Config::Uint32(1)}
+        {"interval", Config::Uint32(1)},
+        // esp_mqtt_transport_t. -1 because we don't allow MQTT_TRANSPORT_UNKNOWN.
+        {"protocol", Config::Uint(MQTT_TRANSPORT_OVER_TCP - 1, MQTT_TRANSPORT_OVER_TCP - 1, MQTT_TRANSPORT_OVER_WSS - 1)},
+        {"cert_id", Config::Int(-1, -1, MAX_CERT_ID)},
+        {"client_cert_id", Config::Int(-1, -1, MAX_CERT_ID)},
+        {"client_key_id", Config::Int(-1, -1, MAX_CERT_ID)},
+        {"path", Config::Str("", 0, 64)}
     }), [](Config &cfg, ConfigSource source) -> String {
 #if MODULE_MQTT_AUTO_DISCOVERY_AVAILABLE()
         const String &global_topic_prefix = cfg.get("global_topic_prefix")->asString();
@@ -67,7 +81,7 @@ void Mqtt::pre_setup()
             return "Global topic prefix cannot be the same as the MQTT auto discovery topic prefix.";
 #endif
         return "";
-    });
+    }};
 
     state = Config::Object({
         {"connection_state", Config::Int(0)},
@@ -88,7 +102,7 @@ void Mqtt::pre_setup()
         [this](const Config *cfg) {
             const CoolString &topic = cfg->get("topic_filter")->asString();
             if (topic.startsWith(this->config.get("global_topic_prefix")->asString())) {
-                return String("Mqtt-topic must not contain the global prefix.");
+                return String("MQTT topic must not contain the global prefix.");
             }
             bool valid = true;
             int pos = topic.indexOf('#');
@@ -129,11 +143,11 @@ void Mqtt::pre_setup()
         [this](const Config *cfg) {
             const CoolString &topic = cfg->get("topic")->asString();
             if (topic.startsWith(this->config.get("global_topic_prefix")->asString())) {
-                return String("Mqtt-topic must not contain the global prefix.");
+                return String("MQTT topic must not contain the global prefix.");
             }
 
             if (topic.indexOf('#') != -1 || topic.indexOf('+') != -1) {
-                return String("Mqtt-topic must not contain wildcards.");
+                return String("MQTT topic must not contain wildcards.");
             }
             return String("");
         }
@@ -169,12 +183,12 @@ void Mqtt::addCommand(size_t commandIdx, const CommandRegistration &reg)
 {
     auto req_size = reg.config->max_string_length();
     if (req_size > MQTT_RECV_BUFFER_SIZE) {
-        logger.printfln("MQTT: Recv buf is %u bytes. %s requires %u. Bump MQTT_RECV_BUFFER_SIZE! Updates on this topic might break the MQTT connection!", MQTT_RECV_BUFFER_SIZE, reg.path.c_str(), req_size);
+        logger.printfln("MQTT: Recv buf is %u bytes. %s requires %u. Bump MQTT_RECV_BUFFER_SIZE! Updates on this topic might break the MQTT connection!", MQTT_RECV_BUFFER_SIZE, reg.path, req_size);
         return;
     }
 #if MODULE_DEBUG_AVAILABLE()
     if (req_size > (MQTT_RECV_BUFFER_SIZE - MQTT_RECV_BUFFER_HEADROOM))
-        logger.printfln("MQTT: Recv buf is %u bytes. %s requires %u. Maybe bump MQTT_RECV_BUFFER_SIZE?", MQTT_RECV_BUFFER_SIZE, reg.path.c_str(), req_size);
+        logger.printfln("MQTT: Recv buf is %u bytes. %s requires %u. Maybe bump MQTT_RECV_BUFFER_SIZE?", MQTT_RECV_BUFFER_SIZE, reg.path, req_size);
 #endif
 }
 
@@ -369,23 +383,23 @@ void Mqtt::onMqttMessage(char *topic, size_t topic_len, char *data, size_t data_
     topic_len -= prefix.length() + 1;
 
     for (auto &reg : api.commands) {
-        if (topic_len != reg.path.length() || memcmp(topic, reg.path.c_str(), topic_len) != 0)
+        if (topic_len != reg.path_len || memcmp(topic, reg.path, topic_len) != 0)
             continue;
 
         if (retain && reg.is_action) {
-            logger.printfln("MQTT: Topic %s is an action. Ignoring retained message (data_len=%u).", reg.path.c_str(), data_len);
+            logger.printfln("MQTT: Topic %s is an action. Ignoring retained message (data_len=%u).", reg.path, data_len);
             return;
         }
 
         if (reg.is_action && data_len == 0) {
-            logger.printfln("MQTT: Topic %s is an action. Ignoring empty message.", reg.path.c_str());
+            logger.printfln("MQTT: Topic %s is an action. Ignoring empty message.", reg.path);
             return;
         }
 
         esp_mqtt_client_disable_receive(client, 100);
         api.callCommandNonBlocking(reg, data, data_len, [this, reg](String error) {
-            if (error != "")
-                logger.printfln("MQTT: On %s: %s", reg.path.c_str(), error.c_str());
+            if (!error.isEmpty())
+                logger.printfln("MQTT: On %s: %s", reg.path, error.c_str());
             esp_mqtt_client_enable_receive(this->client);
         });
 
@@ -393,11 +407,11 @@ void Mqtt::onMqttMessage(char *topic, size_t topic_len, char *data, size_t data_
     }
 
     for (auto &reg : api.raw_commands) {
-        if (topic_len != reg.path.length() || memcmp(topic, reg.path.c_str(), topic_len) != 0)
+        if (topic_len != reg.path_len || memcmp(topic, reg.path, topic_len) != 0)
             continue;
 
         if (retain && reg.is_action) {
-            logger.printfln("MQTT: Topic %s is an action. Ignoring retained message (data_len=%u).", reg.path.c_str(), data_len);
+            logger.printfln("MQTT: Topic %s is an action. Ignoring retained message (data_len=%u).", reg.path, data_len);
             return;
         }
 
@@ -407,8 +421,8 @@ void Mqtt::onMqttMessage(char *topic, size_t topic_len, char *data, size_t data_
         esp_mqtt_client_disable_receive(client, 100);
         task_scheduler.scheduleOnce([this, reg, data_cpy, data_len](){
             String error = reg.callback(data_cpy, data_len);
-            if (error != "")
-                logger.printfln("MQTT: On %s: %s", reg.path.c_str(), error.c_str());
+            if (!error.isEmpty())
+                logger.printfln("MQTT: On %s: %s", reg.path, error.c_str());
 
             free(data_cpy);
             esp_mqtt_client_enable_receive(this->client);
@@ -419,7 +433,7 @@ void Mqtt::onMqttMessage(char *topic, size_t topic_len, char *data, size_t data_
 
     // Don't print error message on state topics, this could be one of our own messages.
     for (auto &reg : api.states) {
-        if (topic_len != reg.path.length() || memcmp(topic, reg.path.c_str(), topic_len) != 0)
+        if (topic_len != reg.path_len || memcmp(topic, reg.path, topic_len) != 0)
             continue;
         return;
     }
@@ -521,6 +535,8 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 
 void Mqtt::setup()
 {
+    initialized = true;
+
     if (!api.restorePersistentConfig("mqtt/config", &config)) {
         config.get("global_topic_prefix")->updateString(String(BUILD_HOST_PREFIX) + String("/") + String(local_uid_str));
         config.get("client_name")->updateString(String(BUILD_HOST_PREFIX) + String("-") + String(local_uid_str));
@@ -546,7 +562,6 @@ void Mqtt::setup()
     prefix = this->config_in_use.get("global_topic_prefix")->asString();
 
     if (!config.get("enable_mqtt")->asBool()) {
-        initialized = true;
         return;
     }
 
@@ -569,6 +584,65 @@ void Mqtt::setup()
     mqtt_cfg.out_buffer_size = MQTT_SEND_BUFFER_SIZE;
     mqtt_cfg.network_timeout_ms = 1000;
     mqtt_cfg.message_retransmit_timeout = 400;
+    // + 1 to undo the -1 in the config's definition.
+    mqtt_cfg.transport = (esp_mqtt_transport_t) (config_in_use.get("protocol")->asUint() + 1);
+    bool encrypted = mqtt_cfg.transport == MQTT_TRANSPORT_OVER_SSL || mqtt_cfg.transport == MQTT_TRANSPORT_OVER_WSS;
+
+    if (encrypted && config_in_use.get("cert_id")->asInt() != -1) {
+#if MODULE_CERTS_AVAILABLE()
+        size_t cert_len = 0;
+        auto cert = certs.get_cert((uint8_t) config_in_use.get("cert_id")->asInt(), &cert_len);
+        if (cert == nullptr) {
+            logger.printfln("MQTT: Failed to get certificate with ID %d", config_in_use.get("cert_id")->asInt());
+            return;
+        }
+        // Leak cert here: MQTT requires the buffer to live forever.
+        mqtt_cfg.cert_pem = (const char *)cert.release();
+#else
+        logger.printfln("MQTT: Can't use custom certitifate: certs module is not built into this firmware!");
+        return;
+#endif
+    }
+    else if (encrypted) {
+        mqtt_cfg.crt_bundle_attach = esp_crt_bundle_attach;
+    }
+
+    if (encrypted && config_in_use.get("client_cert_id")->asInt() != -1) {
+#if MODULE_CERTS_AVAILABLE()
+        size_t cert_len = 0;
+        auto cert = certs.get_cert((uint8_t) config_in_use.get("client_cert_id")->asInt(), &cert_len);
+        if (cert == nullptr) {
+            logger.printfln("MQTT: Failed to get client certificate with ID %d", config_in_use.get("client_cert_id")->asInt());
+            return;
+        }
+        // Leak cert here: MQTT requires the buffer to live forever.
+        mqtt_cfg.client_cert_pem = (const char *)cert.release();
+#else
+        logger.printfln("MQTT: Can't use custom client certitifate: certs module is not built into this firmware!");
+        return;
+#endif
+    }
+
+    if (encrypted && config_in_use.get("client_key_id")->asInt() != -1) {
+#if MODULE_CERTS_AVAILABLE()
+        size_t cert_len = 0;
+        auto cert = certs.get_cert((uint8_t) config_in_use.get("client_key_id")->asInt(), &cert_len);
+        if (cert == nullptr) {
+            logger.printfln("MQTT: Failed to get client certificate with ID %d", config_in_use.get("client_key_id")->asInt());
+            return;
+        }
+        // Leak cert here: MQTT requires the buffer to live forever.
+        mqtt_cfg.client_key_pem = (const char *)cert.release();
+#else
+        logger.printfln("MQTT: Can't use custom client key: certs module is not built into this firmware!");
+        return;
+#endif
+    }
+
+    if ((mqtt_cfg.transport == MQTT_TRANSPORT_OVER_WS || mqtt_cfg.transport == MQTT_TRANSPORT_OVER_WSS) && config_in_use.get("path")->asString().length() > 0) {
+        mqtt_cfg.path = config_in_use.get("path")->asEphemeralCStr();
+        logger.printfln("Using path %s", mqtt_cfg.path);
+    }
 
     client = esp_mqtt_client_init(&mqtt_cfg);
     esp_mqtt_client_register_event(client, (esp_mqtt_event_id_t)ESP_EVENT_ANY_ID, mqtt_event_handler, this);
@@ -576,8 +650,6 @@ void Mqtt::setup()
     task_scheduler.scheduleWithFixedDelay([this](){
         this->resubscribe();
     }, 1000, 1000);
-
-    initialized = true;
 }
 
 void Mqtt::register_urls()
