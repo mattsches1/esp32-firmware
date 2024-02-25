@@ -101,7 +101,6 @@ void PhaseSwitcher::setup()
         return;
     }
 
-    logger.printfln("Phase Switcher: Preparing to set up power history.");
     power_history.setup();
 
     api.restorePersistentConfig("phase_switcher/config", &api_config);
