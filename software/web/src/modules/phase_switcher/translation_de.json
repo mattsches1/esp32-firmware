@@ -40,7 +40,7 @@
 
             "delay_time" : {
                 "title": "Verzögerungszeit",
-                "description": "Zeit, für die die Umschaltschwelle mindestens unter-/überschritten sein muss"
+                "description": "Zeit, für die die Umschaltschwelle mindestens über-/unterschritten sein muss"
             },
             "minimum_duration" : {
                 "title": "Mindestdauer",
