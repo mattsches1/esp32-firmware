@@ -17,23 +17,13 @@ import glob
 from pathlib import PurePath
 from base64 import b64encode
 from zlib import crc32
+from collections import namedtuple
+import tinkerforge_util as tfutil
 import util
-
 from hyphenations import hyphenations, allowed_missing
 
-# use "with ChangedDirectory('/path/to/abc')" instead of "os.chdir('/path/to/abc')"
-class ChangedDirectory(object):
-    def __init__(self, path):
-        self.path = path
-        self.previous_path = None
-
-    def __enter__(self):
-        self.previous_path = os.getcwd()
-        os.chdir(self.path)
-
-    def __exit__(self, type_, value, traceback):
-        os.chdir(self.previous_path)
-
+FrontendComponent = namedtuple('FrontendComponent', 'module component mode')
+FrontendStatusComponent = namedtuple('FrontendStatusComponent', 'module component')
 
 def get_changelog_version(name):
     path = os.path.join('changelog_{}.txt'.format(name))
@@ -49,17 +39,17 @@ def get_changelog_version(name):
             if re.match(r'^(?:- [A-Z0-9\(]|  ([A-Za-z0-9\(\"]|--hide-payload)).*$', line) != None:
                 continue
 
-            m = re.match(r'^(?:<unknown>|20[0-9]{2}-[0-9]{2}-[0-9]{2}): ([0-9]+)\.([0-9]+)\.([0-9]+) \((?:<unknown>|[a-f0-9]+)\)$', line)
+            m = re.match(r'^(?:<unknown>|20[0-9]{2}-[0-9]{2}-[0-9]{2}): ([0-9]+)\.([0-9]+)\.([0-9]+)(?:-beta\.([0-9]+))? \((?:<unknown>|[a-f0-9]+)\)$', line)
 
             if m == None:
                 raise Exception('Invalid line {} in {}: {}'.format(i + 1, path, line))
 
-            version = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            version = (int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4)) if m.group(4) != None else 255)
 
             if version[0] not in [0, 1, 2]:
                 raise Exception('Invalid major version in {}: {}'.format(path, version))
 
-            if len(versions) > 0 and (version[2] < 90 and versions[-1][2] < 90) or  (version[2] >= 90 and versions[-1][2] >= 90):
+            if len(versions) > 0 and (version[2] < 90 and versions[-1][2] < 90) or (version[2] >= 90 and versions[-1][2] >= 90):
                 if versions[-1] >= version:
                     raise Exception('Invalid version order in {}: {} -> {}'.format(path, versions[-1], version))
 
@@ -75,22 +65,24 @@ def get_changelog_version(name):
                 if versions[-1][0] != version[0] and (version[1] != 0 or version[2] != 0):
                     raise Exception('Invalid version jump in {}: {} -> {}'.format(path, versions[-1], version))
 
+                # FIXME: validate optional beta part
+
             versions.append(version)
 
     if len(versions) == 0:
         raise Exception('No version found in {}'.format(path))
 
-    oldest_version = (str(versions[0][0]), str(versions[0][1]), str(versions[0][2]))
-    version = (str(versions[-1][0]), str(versions[-1][1]), str(versions[-1][2]))
+    oldest_version = (str(versions[0][0]), str(versions[0][1]), str(versions[0][2]), str(versions[0][3]))
+    version = (str(versions[-1][0]), str(versions[-1][1]), str(versions[-1][2]), str(versions[-1][3]))
     return oldest_version, version
 
-def write_firmware_info(display_name, major, minor, patch, build_time):
+def write_firmware_info(display_name, major, minor, patch, beta, build_time):
     buf = bytearray([0xFF] * 4096)
 
     # 7121CE12F0126E
     # tink er for ge
-    buf[0:7] = bytearray.fromhex("7121CE12F0126E") # magic
-    buf[7] = 0x01 #firmware_info_version, note: a new version has to be backwards compatible
+    buf[0:7] = bytes.fromhex("7121CE12F0126E") # magic
+    buf[7] = 0x02 # firmware_info_version, note: a new version has to be backwards compatible
 
     name_bytes = display_name.encode("utf-8") # firmware name, max 60 chars
     buf[8:8 + len(name_bytes)] = name_bytes
@@ -100,12 +92,13 @@ def write_firmware_info(display_name, major, minor, patch, build_time):
     buf[70] = int(minor)
     buf[71] = int(patch)
     buf[72:76] = build_time.to_bytes(4, byteorder='little')
+    buf[76] = int(beta) # since version 2
     buf[4092:4096] = crc32(buf[0:4092]).to_bytes(4, byteorder='little')
 
     with open(os.path.join(env.subst("$BUILD_DIR"), "firmware_info.bin"), "wb") as f:
         f.write(buf)
 
-def generate_module_dependencies_header(info_path, header_path, backend_module, backend_modules, all_mods_upper):
+def generate_module_dependencies_header(info_path, header_path_prefix, backend_module, backend_modules, all_mods_upper, backend_module_instance_names):
     if backend_module:
         module_name = backend_module.space
     else:
@@ -181,8 +174,12 @@ def generate_module_dependencies_header(info_path, header_path, backend_module, 
                     if conflict_name == module_name:
                         print(f"Dependency error: Module '{module_name}' cannot list itself as conflicting.", file=sys.stderr)
                         sys.exit(1)
-                    conflict_module, _ = find_backend_module_space(backend_modules, conflict_name)
-                    if conflict_module:
+                    conflict_module, index = find_backend_module_space(backend_modules, conflict_name)
+                    if index < 0:
+                        if not allow_nonexist and '_'.join(conflict_name.split(' ')).upper() not in all_mods_upper:
+                            print(f"Dependency error: Module '{conflict_name}' in 'Conflicts' list of module '{module_name}' does not exist.", file=sys.stderr)
+                            sys.exit(1)
+                    elif conflict_module:
                         print(f"Dependency error: Module '{module_name}' conflicts with module '{conflict_name}'.", file=sys.stderr)
                         sys.exit(1)
 
@@ -234,28 +231,37 @@ def generate_module_dependencies_header(info_path, header_path, backend_module, 
 
             defines  = ''.join(['#define MODULE_{}_AVAILABLE() {}\n'.format(x, "1" if x in backend_mods_upper else "0") for x in all_optional_mods_upper])
             includes = ''.join([f'#include "modules/{x.under}/{x.under}.h"\n' for x in dep_mods])
-            decls    = ''.join([f'extern {x.camel} {x.under};\n' for x in dep_mods])
+            decls    = ''.join([f'extern {x.camel} {backend_module_instance_names[x.space]};\n' for x in dep_mods])
 
-            header_content  = '// WARNING: This file is generated.\n\n'
-            header_content += '#pragma once\n'
+            available_h_content  = '// WARNING: This file is generated.\n\n'
+            available_h_content += '#pragma once\n'
+
+            dependencies_h_content  = '// WARNING: This file is generated.\n\n'
+            dependencies_h_content += '#pragma once\n\n'
+            dependencies_h_content += '#if __INCLUDE_LEVEL__ > 1\n'
+            dependencies_h_content += f'#error "Don\'t include {os.path.split(header_path_prefix)[-1]}dependencies.h in headers, only in sources! Use {os.path.split(header_path_prefix)[-1]}available.h in headers if you want to check whether a module is compiled in"\n'
+            dependencies_h_content += '#endif\n\n'
+            dependencies_h_content += f'#include "{os.path.split(header_path_prefix)[-1]}available.h"\n'
 
             if defines:
-                header_content += '\n' + defines
+                available_h_content += '\n' + defines
             if includes:
-                header_content += '\n' + includes
+                dependencies_h_content += '\n' + includes
             if decls:
-                header_content += '\n' + decls
+                dependencies_h_content += '\n' + decls
 
             if config['Dependencies'].getboolean('ModuleList', False):
-                header_content += '\n'
-                header_content += '#include "config.h"\n'
-                header_content += 'extern Config modules;\n'
+                dependencies_h_content += '\n'
+                dependencies_h_content += '#include "config.h"\n'
+                dependencies_h_content += 'extern Config modules;\n'
 
-            util.write_file_if_different(header_path, header_content)
+            tfutil.write_file_if_different(header_path_prefix + 'available.h', available_h_content)
+            tfutil.write_file_if_different(header_path_prefix + 'dependencies.h', dependencies_h_content)
 
     if not has_dependencies:
         try:
-            os.remove(header_path)
+            os.remove(header_path_prefix + 'available.h')
+            os.remove(header_path_prefix + 'dependencies.h')
         except FileNotFoundError:
             pass
 
@@ -366,40 +372,64 @@ def check_translation(translation, parent_key=None):
 
 HYPHENATE_THRESHOLD = 9
 
-missing_hyphenations = []
+missing_hyphenations = {}
 
-def hyphenate(s, key):
+def should_be_hyphenated(x):
+    return x not in allowed_missing and not x.startswith("___START_FRAGMENT___") and not x.endswith("___END_FRAGMENT___")
+
+def hyphenate(s, key, lang):
     if '\u00AD' in s:
         print("Found unicode soft hyphen in translation value {}: {}".format(key, s.replace('\u00AD', "___HERE___")))
         sys.exit(1)
 
+    if '&shy;' in s:
+        print("Found HTML entity soft hyphen in translation value {}: {}".format(key, s))
+        sys.exit(1)
+
     # Replace longest words first. This prevents replacing parts of longer words.
-    for word in sorted(re.split('\W+', s.replace("&shy;", "")), key=lambda x: len(x), reverse=True):
+    for word in sorted(re.split(r'\W+', s), key=lambda x: len(x), reverse=True):
         for l, r in hyphenations:
             if word == l:
                 s = s.replace(l, r)
                 break
         else:
             is_too_long = len(word) > HYPHENATE_THRESHOLD
-            is_camel_case = word[:1].islower() and not word[1:].islower()
+            is_camel_case = re.search(r'[a-z][A-Z]', word) is not None
             is_snake_case = "_" in word
-            if is_too_long:# and not (is_camel_case or is_snake_case):
-                missing_hyphenations.append(word)
+            if is_too_long and not is_camel_case and not is_snake_case and should_be_hyphenated(word):
+                missing_hyphenations.setdefault(lang, []).append(word)
 
     return s
 
-def hyphenate_translation(translation, parent_key=None):
+def hyphenate_translation(translation, parent_key=None, lang=None):
     if parent_key == None:
         parent_key = []
 
-    return {key: (hyphenate(value, key) if isinstance(value, str) else hyphenate_translation(value, parent_key=parent_key + [key])) for key, value in translation.items()}
+    return {key: (hyphenate(value, key, lang if lang is not None else key) if isinstance(value, str) else hyphenate_translation(value, parent_key + [key], lang if lang is not None else key)) for key, value in translation.items()}
 
 def repair_rtc_dir():
     path = os.path.abspath("src/modules/rtc")
+
     try:
-        os.remove(path + "/real_time_clock_v2_bricklet_firmware_bin.digest")
-        os.remove(path + "/real_time_clock_v2_bricklet_firmware_bin.embedded.cpp")
-        os.remove(path + "/real_time_clock_v2_bricklet_firmware_bin.embedded.h")
+        os.remove(os.path.join(path, "real_time_clock_v2_bricklet_firmware_bin.digest"))
+        os.remove(os.path.join(path, "real_time_clock_v2_bricklet_firmware_bin.embedded.cpp"))
+        os.remove(os.path.join(path, "real_time_clock_v2_bricklet_firmware_bin.embedded.h"))
+    except:
+        pass
+
+def repair_firmware_update_dir():
+    path = os.path.abspath("src/modules/firmware_update")
+
+    try:
+        os.remove(os.path.join(path, "recovery_html.digest"))
+        os.remove(os.path.join(path, "recovery_html.embedded.cpp"))
+        os.remove(os.path.join(path, "recovery_html.embedded.h"))
+    except:
+        pass
+
+    try:
+        os.remove(os.path.join(path, "signature_public_key.embedded.cpp"))
+        os.remove(os.path.join(path, "signature_public_key.embedded.h"))
     except:
         pass
 
@@ -451,24 +481,56 @@ def main():
         return
 
     repair_rtc_dir()
+    repair_firmware_update_dir()
+
     subprocess.check_call([env.subst('$PYTHONEXE'), "-u", "update_packages.py"])
 
     # Add build flags
     timestamp = int(time.time())
     name = env.GetProjectOption("custom_name")
+    manufacturer = env.GetProjectOption("custom_manufacturer")
     config_type = env.GetProjectOption("custom_config_type")
     host_prefix = env.GetProjectOption("custom_host_prefix")
     display_name = env.GetProjectOption("custom_display_name")
     manual_url = env.GetProjectOption("custom_manual_url")
     apidoc_url = env.GetProjectOption("custom_apidoc_url")
     firmware_url = env.GetProjectOption("custom_firmware_url")
+    firmware_update_url = env.GetProjectOption("custom_firmware_update_url")
+    day_ahead_price_api_url = env.GetProjectOption("custom_day_ahead_price_api_url")
+    solar_forecast_api_url = env.GetProjectOption("custom_solar_forecast_api_url")
     require_firmware_info = env.GetProjectOption("custom_require_firmware_info")
     build_flags = env.GetProjectOption("build_flags")
     frontend_debug = env.GetProjectOption("custom_frontend_debug") == "true"
     web_only = env.GetProjectOption("custom_web_only") == "true"
+    prepare_only = "-DPREPARE_ONLY" in build_flags
     web_build_flags = env.GetProjectOption("custom_web_build_flags")
+    signed = env.GetProjectOption("custom_signed") == "true"
     monitor_speed = env.GetProjectOption("monitor_speed")
     nightly = "-DNIGHTLY" in build_flags
+
+    if sys.platform.startswith('linux'):
+        firmware_elf_symlink = f'build/{name}_firmware_latest.elf'
+        firmware_bin_symlink = f'build/{name}_firmware_latest_merged.bin'
+
+        try:
+            os.remove(firmware_elf_symlink)
+        except FileNotFoundError:
+            pass
+
+        try:
+            os.remove(firmware_bin_symlink)
+        except FileNotFoundError:
+            pass
+
+        try:
+            os.remove('build/firmware_latest.elf')
+        except FileNotFoundError:
+            pass
+
+        try:
+            os.remove('build/firmware_latest_merged.bin')
+        except FileNotFoundError:
+            pass
 
     is_release = len(subprocess.run(["git", "tag", "--contains", "HEAD"], check=True, capture_output=True).stdout) > 0
     is_dirty = len(subprocess.run(["git", "diff"], check=True, capture_output=True).stdout) > 0
@@ -512,12 +574,16 @@ def main():
 
     if 'mqtt_enable' in custom_wifi:
         build_flags.append('-DDEFAULT_MQTT_ENABLE={0}'.format(custom_wifi['mqtt_enable']))
+
     if 'mqtt_broker_host' in custom_wifi:
         build_flags.append('-DDEFAULT_MQTT_BROKER_HOST=\\"{0}\\"'.format(custom_wifi['mqtt_broker_host']))
+
     if 'mqtt_broker_port' in custom_wifi:
         build_flags.append('-DDEFAULT_MQTT_BROKER_PORT={0}'.format(custom_wifi['mqtt_broker_port']))
+
     if 'mqtt_broker_username' in custom_wifi:
         build_flags.append('-DDEFAULT_MQTT_BROKER_USERNAME=\\"{0}\\"'.format(custom_wifi['mqtt_broker_username']))
+
     if 'mqtt_broker_password' in custom_wifi:
         build_flags.append('-DDEFAULT_MQTT_BROKER_PASSWORD=\\"{0}\\"'.format(custom_wifi['mqtt_broker_password']))
 
@@ -563,43 +629,60 @@ def main():
     build_lines.append('#define OLDEST_VERSION_MAJOR {}'.format(oldest_version[0]))
     build_lines.append('#define OLDEST_VERSION_MINOR {}'.format(oldest_version[1]))
     build_lines.append('#define OLDEST_VERSION_PATCH {}'.format(oldest_version[2]))
+    build_lines.append('#define OLDEST_VERSION_BETA {}'.format(oldest_version[3]))
     build_lines.append('#define BUILD_VERSION_MAJOR {}'.format(version[0]))
     build_lines.append('#define BUILD_VERSION_MINOR {}'.format(version[1]))
     build_lines.append('#define BUILD_VERSION_PATCH {}'.format(version[2]))
+    build_lines.append('#define BUILD_VERSION_BETA {}'.format(version[3]))
     build_lines.append('#define BUILD_VERSION_STRING "{}.{}.{}"'.format(*version))
     build_lines.append('#define BUILD_HOST_PREFIX "{}"'.format(host_prefix))
-    build_lines.append('#define BUILD_NAME_{}'.format(name.upper()))
+    build_lines.append('#define BUILD_HOST_PREFIX_LENGTH {}'.format(len(host_prefix)))
+
+    for firmware in ['WARP', 'WARP2', 'WARP3', 'ENERGY_MANAGER']:
+        build_lines.append('#define BUILD_IS_{}() {}'.format(firmware, 1 if firmware == name.upper() else 0))
+
     build_lines.append('#define BUILD_CONFIG_TYPE "{}"'.format(config_type))
+    build_lines.append('#define BUILD_NAME "{}"'.format(name))
+    build_lines.append('#define BUILD_NAME_LENGTH {}'.format(len(name)))
+    build_lines.append('#define BUILD_MANUFACTURER "{}"'.format(manufacturer))
     build_lines.append('#define BUILD_DISPLAY_NAME "{}"'.format(display_name))
     build_lines.append('#define BUILD_DISPLAY_NAME_UPPER "{}"'.format(display_name.upper()))
     build_lines.append('#define BUILD_REQUIRE_FIRMWARE_INFO {}'.format(require_firmware_info))
     build_lines.append('#define BUILD_MONITOR_SPEED {}'.format(monitor_speed))
-    build_lines.append('uint32_t build_timestamp(void);')
-    build_lines.append('const char *build_timestamp_hex_str(void);')
-    build_lines.append('const char *build_version_full_str(void);')
-    build_lines.append('const char *build_info_str(void);')
-    build_lines.append('const char *build_filename_str(void);')
-    build_lines.append('const char *build_commit_id_str(void);')
-    util.write_file_if_different(os.path.join('src', 'build.h'), '\n'.join(build_lines))
+    build_lines.append('#define BUILD_FIRMWARE_UPDATE_URL "{}"'.format(firmware_update_url))
+    build_lines.append('#define BUILD_DAY_AHEAD_PRICE_API_URL "{}"'.format(day_ahead_price_api_url))
+    build_lines.append('#define BUILD_SOLAR_FORECAST_API_URL "{}"'.format(solar_forecast_api_url))
+    build_lines.append('uint32_t build_timestamp();')
+    build_lines.append('const char *build_timestamp_hex_str();')
+    build_lines.append('const char *build_version_full_str();')
+    build_lines.append('const char *build_version_full_str_upper();')
+    build_lines.append('const char *build_info_str();')
+    build_lines.append('const char *build_filename_str();')
+    build_lines.append('const char *build_commit_id_str();')
+    tfutil.write_file_if_different(os.path.join('src', 'build.h'), '\n'.join(build_lines))
 
-    firmware_basename = '{}_firmware{}{}_{}_{:x}{}'.format(
+    firmware_basename = '{}_firmware{}{}{}_{}_{:x}{}'.format(
         name,
+        "-UNSIGNED" if not signed else "",
         "-NIGHTLY" if nightly else "",
         "-WITH-WIFI-PASSPHRASE-DO-NOT-DISTRIBUTE" if not_for_distribution else "",
-        '_'.join(version),
+        "{}_{}_{}{}".format(*version[:3], f"_beta_{version[3]}" if version[3] != "255" else ""),
         timestamp,
         dirty_suffix,
     )
 
+    version_full_str = "{}.{}.{}{}+{:x}".format(*version[:3], f"-beta.{version[3]}" if version[3] != "255" else "", timestamp)
+
     build_lines = []
     build_lines.append('#include "build.h"')
-    build_lines.append('uint32_t build_timestamp(void) {{ return {}; }}'.format(timestamp))
-    build_lines.append('const char *build_timestamp_hex_str(void) {{ return "{:x}"; }}'.format(timestamp))
-    build_lines.append('const char *build_version_full_str(void) {{ return "{}.{}.{}-{:x}"; }}'.format(*version, timestamp))
-    build_lines.append('const char *build_info_str(void) {{ return "git url: {}, git branch: {}, git commit id: {}"; }}'.format(git_url, branch_name, git_commit_id))
-    build_lines.append('const char *build_filename_str(void){{return "{}"; }}'.format(firmware_basename))
-    build_lines.append('const char *build_commit_id_str(void){{return "{}"; }}'.format(git_commit_id))
-    util.write_file_if_different(os.path.join('src', 'build.cpp'), '\n'.join(build_lines))
+    build_lines.append('uint32_t build_timestamp() {{ return {}; }}'.format(timestamp))
+    build_lines.append('const char *build_timestamp_hex_str() {{ return "{:x}"; }}'.format(timestamp))
+    build_lines.append('const char *build_version_full_str() {{ return "{}"; }}'.format(version_full_str))
+    build_lines.append('const char *build_version_full_str_upper() {{ return "{}"; }}'.format(version_full_str.upper()))
+    build_lines.append('const char *build_info_str() {{ return "git url: {}, git branch: {}, git commit id: {}"; }}'.format(git_url, branch_name, git_commit_id))
+    build_lines.append('const char *build_filename_str() {{ return "{}"; }}'.format(firmware_basename))
+    build_lines.append('const char *build_commit_id_str() {{ return "{}"; }}'.format(git_commit_id))
+    tfutil.write_file_if_different(os.path.join('src', 'build.cpp'), '\n'.join(build_lines))
     del build_lines
 
     with open(os.path.join(env.subst('$BUILD_DIR'), 'firmware_basename'), 'w', encoding='utf-8') as f:
@@ -610,9 +693,59 @@ def main():
         frontend_modules.append(util.FlavoredName("Nightly").get())
         frontend_modules.append(util.FlavoredName("Debug").get())
 
+    frontend_components = []
+    for entry in env.GetProjectOption("custom_frontend_components").splitlines():
+        m = re.match(r'^\s*([^|\$]+)(?:\s*\|\s*([^|\$]+))?(?:\s*\$\s*(Open|Close))?\s*$', entry)
+
+        if m == None:
+            print('Error: Invalid custom_frontend_components entry:', entry)
+            sys.exit(1)
+
+        module = util.FlavoredName(m.group(1).strip()).get()
+
+        if module not in frontend_modules:
+            print('Error: Unknown module in custom_frontend_components entry:', module.space)
+            sys.exit(1)
+
+        if m.group(2) != None:
+            component = util.FlavoredName(m.group(2).strip()).get()
+        else:
+            component = module
+
+        mode = m.group(3)
+
+        frontend_components.append(FrontendComponent(module, component, mode))
+
+    if nightly:
+        module = util.FlavoredName("Debug").get()
+        component = module
+        frontend_components.append(FrontendComponent(module, component, None))
+
+    frontend_status_components = []
+    for entry in env.GetProjectOption("custom_frontend_status_components").splitlines():
+        parts = [x.strip() for x in entry.split('|')]
+
+        if len(parts) == 1:
+            module = util.FlavoredName(parts[0]).get()
+            component = util.FlavoredName(parts[0] + ' Status').get()
+        elif len(parts) == 2:
+            module = util.FlavoredName(parts[0]).get()
+            component = util.FlavoredName(parts[1]).get()
+        else:
+            print('Error: Invalid custom_frontend_status_components entry:', entry)
+            sys.exit(1)
+
+        if module not in frontend_modules:
+            print('Error: Unknown module in custom_frontend_status_components entry:', module.space)
+            sys.exit(1)
+
+        frontend_status_components.append(FrontendStatusComponent(module, component))
+
     branding_module = find_branding_module(frontend_modules)
 
     metadata = json.dumps({
+        'name': name,
+        'signed': signed,
         'frontend_modules': [frontend_module.under for frontend_module in frontend_modules]
     }, separators=(',', ':'))
 
@@ -620,16 +753,16 @@ def main():
     for web_build_flag in web_build_flags.split('\n'):
         web_build_lines.append(f'export const {web_build_flag};')
 
-    util.write_file_if_different(os.path.join('web', 'src', 'build.ts'), '\n'.join(web_build_lines))
+    tfutil.write_file_if_different(os.path.join('web', 'src', 'build.ts'), '\n'.join(web_build_lines))
 
     # Handle backend modules
     excluded_backend_modules = list(os.listdir('src/modules'))
-    backend_modules = [util.FlavoredName(x).get() for x in env.GetProjectOption("custom_backend_modules").splitlines()]
+    backend_modules = [util.FlavoredName(x).get() for x in ['Task Scheduler', 'Event Log', 'API', 'Web Server'] + env.GetProjectOption("custom_backend_modules").splitlines()]
 
     if nightly:
         backend_modules.append(util.FlavoredName("Debug").get())
 
-    with ChangedDirectory('src'):
+    with tfutil.ChangedDirectory('src'):
         excluded_bindings = [PurePath(x).as_posix() for x in glob.glob('bindings/brick_*') + glob.glob('bindings/bricklet_*')]
 
     excluded_bindings.remove('bindings/bricklet_unknown.h')
@@ -658,7 +791,7 @@ def main():
         mod_path = os.path.join('src', 'modules', backend_module.under)
 
         if not os.path.exists(mod_path) or not os.path.isdir(mod_path):
-            print("Backend module {} not found.".format(backend_module.space, mod_path))
+            print("Backend module {} not found.".format(backend_module.space))
 
         for root, dirs, files in os.walk(mod_path):
             for name in files:
@@ -675,7 +808,7 @@ def main():
             environ['PLATFORMIO_METADATA'] = metadata
 
             abs_branding_module = os.path.abspath(branding_module)
-            with ChangedDirectory(mod_path):
+            with tfutil.ChangedDirectory(mod_path):
                 subprocess.check_call([env.subst('$PYTHONEXE'), "-u", "prepare.py", abs_branding_module], env=environ)
 
     for root, dirs, files in os.walk('src'):
@@ -704,33 +837,73 @@ def main():
         all_mods.append(existing_backend_module.upper())
 
     backend_mods_upper = [x.upper for x in backend_modules]
+    identifier_backlist = ["system"]
 
-    util.specialize_template("modules.h.template", os.path.join("src", "modules.h"), {
-        '{{{module_includes}}}': '\n'.join(['#include "modules/{0}/{0}.h"'.format(x.under) for x in backend_modules]),
-        '{{{module_defines}}}': '\n'.join(['#define MODULE_{}_AVAILABLE() {}'.format(x, "1" if x in backend_mods_upper else "0") for x in all_mods]),
-        '{{{module_extern_decls}}}': '\n'.join(['extern {} {};'.format(x.camel, x.under) for x in backend_modules]),
-    })
-
-    util.specialize_template("modules.cpp.template", os.path.join("src", "modules.cpp"), {
-        '{{{module_decls}}}': '\n'.join(['{} {};'.format(x.camel, x.under) for x in backend_modules]),
+    tfutil.specialize_template("modules.cpp.template", os.path.join("src", "modules.cpp"), {
+        '{{{imodule_extern_decls}}}': '\n'.join([f'extern IModule *const {x.under}_imodule;' for x in backend_modules]),
         '{{{imodule_count}}}': str(len(backend_modules)),
-        '{{{imodule_vector}}}': '\n    '.join(['imodules->push_back(&{});'.format(x.under) for x in backend_modules]),
-        '{{{module_init_config}}}': ',\n        '.join('{{"{0}", Config::Bool({0}.initialized)}}'.format(x.under) for x in backend_modules if not x.under.startswith("hidden_")),
+        '{{{imodule_vector}}}': '\n    '.join([f'imodules->push_back({x.under}_imodule);' for x in backend_modules]),
+        '{{{module_init_config}}}': ',\n        '.join(f'{{"{x.under}", Config::Bool({x.under}_imodule->initialized)}}' for x in backend_modules if not x.under.startswith("hidden_")),
     })
 
     util.log("Generating module_dependencies.h from module.ini", flush=True)
-    generate_module_dependencies_header('src/event_log_dependencies.ini', 'src/event_log_dependencies.h', None, backend_modules, all_mods)
-    generate_module_dependencies_header('src/web_dependencies.ini', 'src/web_dependencies.h', None, backend_modules, all_mods)
+
+    backend_module_instance_names = {}
+
     for backend_module in backend_modules:
         mod_path = os.path.join('src', 'modules', backend_module.under)
         info_path = os.path.join(mod_path, 'module.ini')
-        header_path = os.path.join(mod_path, 'module_dependencies.h')
-        generate_module_dependencies_header(info_path, header_path, backend_module, backend_modules, all_mods)
+        instance_name = backend_module.under
+
+        backend_module_instance_names[backend_module.space] = backend_module.under
+
+        if not os.path.exists(info_path):
+            print(f'Warning: {backend_module.under} has no module.ini file')
+        else:
+            config = configparser.ConfigParser()
+            config.read(info_path)
+
+            if config.has_section('Common'):
+                known_keys = set(['instancename'])
+                unknown_keys = set(config['Common'].keys()).difference(known_keys)
+
+                if len(unknown_keys) > 0:
+                    print(f"Module error: '{backend_module.under}/module.ini contains unknown keys {unknown_keys}  ", file=sys.stderr)
+                    sys.exit(1)
+
+                instance_name = config['Common'].get('InstanceName', instance_name)
+
+        if instance_name in identifier_backlist:
+            instance_name += '_'
+
+        backend_module_instance_names[backend_module.space] = instance_name
+
+        with open(os.path.join(mod_path, 'module.cpp'), 'w', encoding='utf-8') as f:
+            f.write('// WARNING: This file is generated.\n\n')
+            f.write(f'#include "{backend_module.under}.h"\n\n')
+            f.write(f'{backend_module.camel} {instance_name};\n\n')
+            f.write('// Enforce that all back-end modules implement the IModule interface. If you receive\n')
+            f.write("// an error like \"cannot convert 'MyModule*' to 'IModule*' in initialization\", you\n")
+            f.write('// have to add the IModule interface to your back-end module\'s class declaration:\n')
+            f.write('//\n')
+            f.write('// class MyModule final : public IModule\n')
+            f.write('// {\n')
+            f.write('//     // content here\n')
+            f.write('// }\n')
+            # To get global constants that are usable in other compilation units, they must be
+            # declared extern. Otherwise, they will be optimized away before reaching the linker.
+            f.write(f'extern IModule *const {backend_module.under}_imodule = &{instance_name};\n')
+
+    for backend_module in backend_modules:
+        mod_path = os.path.join('src', 'modules', backend_module.under)
+        info_path = os.path.join(mod_path, 'module.ini')
+        header_path_prefix = os.path.join(mod_path, 'module_')
+
+        generate_module_dependencies_header(info_path, header_path_prefix, backend_module, backend_modules, all_mods, backend_module_instance_names)
+
+    generate_module_dependencies_header('src/main_dependencies.ini', 'src/main_', None, backend_modules, all_mods, backend_module_instance_names)
 
     # Handle frontend modules
-    navbar_entries = []
-    content_entries = []
-    status_entries = []
     main_ts_entries = []
     pre_scss_paths = []
     post_scss_paths = []
@@ -757,20 +930,8 @@ def main():
             environ['PLATFORMIO_METADATA'] = metadata
 
             abs_branding_module = os.path.abspath(branding_module)
-            with ChangedDirectory(mod_path):
+            with tfutil.ChangedDirectory(mod_path):
                 subprocess.check_call([env.subst('$PYTHONEXE'), "-u", "prepare.py", abs_branding_module], env=environ)
-
-        if os.path.exists(os.path.join(mod_path, 'navbar.html')):
-            with open(os.path.join(mod_path, 'navbar.html'), 'r', encoding='utf-8') as f:
-                navbar_entries.append(f.read())
-
-        if os.path.exists(os.path.join(mod_path, 'content.html')):
-            with open(os.path.join(mod_path, 'content.html'), 'r', encoding='utf-8') as f:
-                content_entries.append(f.read())
-
-        if os.path.exists(os.path.join(mod_path, 'status.html')):
-            with open(os.path.join(mod_path, 'status.html'), 'r', encoding='utf-8') as f:
-                status_entries.append(f.read())
 
         if os.path.exists(os.path.join(mod_path, 'main.ts')) or os.path.exists(os.path.join(mod_path, 'main.tsx')):
             main_ts_entries.append(frontend_module.under)
@@ -801,8 +962,8 @@ def main():
                 api_suffix = type_.split("___")[0]
 
                 api_config_map_entries.append("'{}{}': module_{}.{},".format(api_path, api_suffix, module_counter, type_))
-                api_cache_entries.append("'{}{}': null as any,".format(api_path, api_suffix))
-                api_cache_entries.append("'{}{}_modified': null as any,".format(api_path, api_suffix))
+                api_cache_entries.append("'{}{}': undefined as any,".format(api_path, api_suffix))
+                api_cache_entries.append("'{}{}_modified': undefined as any,".format(api_path, api_suffix))
 
             if found_api_exports:
                 api_module = "module_{}".format(module_counter)
@@ -823,12 +984,26 @@ def main():
     translation = hyphenate_translation(translation)
 
     global missing_hyphenations
-    missing_hyphenations = sorted(set(missing_hyphenations) - allowed_missing)
-    missing_hyphenations = [x for x in missing_hyphenations if not x.startswith("___START_FRAGMENT___") and not x.endswith("___END_FRAGMENT___")]
     if len(missing_hyphenations) > 0:
         print("Missing hyphenations detected. Add those to hyphenations.py!")
-        for x in missing_hyphenations:
-            print("    {}".format(x))
+        dicts = None
+        try:
+            from pyphen import Pyphen
+            langs = {
+                'de': 'de_DE',
+                'en': 'en_US'
+            }
+            dicts = {k: Pyphen(lang=langs[k]) for k in missing_hyphenations.keys()}
+        except ImportError:
+            print("Pyphen not installed. Will not print hyphenation suggestions.")
+
+        for lang, lst in missing_hyphenations.items():
+            print("  {}".format(lang))
+            for x in lst:
+                if dicts is None:
+                    print("    {}".format(x))
+                else:
+                    print('    "{}",'.format(dicts[lang].inserted(x)))
 
     for path in glob.glob(os.path.join('web', 'src', 'ts', 'translation_*.ts')):
         os.remove(path)
@@ -842,7 +1017,7 @@ def main():
     translation_data = translation_data.replace('{{{manual_url}}}', manual_url)
     translation_data = translation_data.replace('{{{apidoc_url}}}', apidoc_url)
     translation_data = translation_data.replace('{{{firmware_url}}}', firmware_url)
-    util.write_file_if_different(os.path.join('web', 'src', 'ts', 'translation.json'), translation_data)
+    tfutil.write_file_if_different(os.path.join('web', 'src', 'ts', 'translation.json'), translation_data)
     del translation_data
 
     with open(os.path.join(branding_module, 'favicon.png'), 'rb') as f:
@@ -859,34 +1034,63 @@ def main():
         if color.endswith(';'):
             color = color[:-1]
 
-    util.specialize_template(os.path.join("web", "index.html.template"), os.path.join("web", "src", "index.html"), {
+    tfutil.specialize_template(os.path.join("web", "index.html.template"), os.path.join("web", "src", "index.html"), {
         '{{{favicon}}}': favicon,
-        '{{{logo_base64}}}': logo_base64,
-        '{{{navbar}}}': '\n                        '.join(navbar_entries),
-        '{{{content}}}': '\n                    '.join(content_entries),
-        '{{{status}}}': '\n                            '.join(status_entries),
         '{{{theme_color}}}': color
     })
 
-    util.specialize_template(os.path.join("web", "main.tsx.template"), os.path.join("web", "src", "main.tsx"), {
+    navbar = []
+    navbar_nesting = 0
+    navbar_group = None
+    navbar_mapping = []
+
+    for frontend_component in frontend_components:
+        if frontend_component[2] == 'Open':
+            navbar.append(f'<{frontend_component[1].camel}Navbar group_ref={{this.{frontend_component[1].under}_ref}}>')
+            navbar_nesting += 1
+            navbar_group = frontend_component
+        elif frontend_component[2] == 'Close':
+            navbar.append(f'</{frontend_component[1].camel}Navbar>')
+            navbar_nesting -= 1
+            navbar_group = None
+        else:
+            navbar.append(f'{"   " * navbar_nesting}<{frontend_component[1].camel}Navbar />')
+
+            if navbar_group != None:
+                navbar_mapping.append((frontend_component[1].under, f'{navbar_group[1].under}_ref'))
+
+    tfutil.specialize_template(os.path.join("web", "app.tsx.template"), os.path.join("web", "src", "app.tsx"), {
+        '{{{logo_base64}}}': logo_base64,
+        '{{{navbar_imports}}}': '\n'.join([f'import {{ {x.component.camel}Navbar }} from "./modules/{x.module.under}/main";' for x in frontend_components if x.mode != 'Close']),
+        '{{{navbar}}}': '\n                                    '.join(navbar),
+        '{{{navbar_refs}}}': '\n    '.join([f'{x.component.under}_ref = createRef();' for x in frontend_components if x.mode == 'Open']),
+        '{{{navbar_refs_mapping}}}': '\n            '.join([f'{repr(x[0])}: this.{x[1]},' for x in navbar_mapping]),
+        '{{{content_imports}}}': '\n'.join([f'import {{ {x.component.camel} }} from "./modules/{x.module.under}/main";' for x in frontend_components if x.mode == None]),
+        '{{{content}}}': '\n                            '.join([f'<{x.component.camel}{f" status_ref={{this.{x.component.under}_status_ref}}" if (x.component.space + " Status") in [y.component.space for y in frontend_status_components] else ""} />' for x in frontend_components if x.mode == None]),
+        '{{{status_imports}}}': '\n'.join([f'import {{ {x.component.camel} }} from "./modules/{x.module.under}/main";' for x in frontend_status_components]),
+        '{{{status}}}': '\n                                '.join([f'<{x.component.camel} ref={{this.{x.component.under}_ref}} />' for x in frontend_status_components]),
+        '{{{status_refs}}}': '\n    '.join([f'{x.component.under}_ref = createRef();' for x in frontend_status_components]),
+    })
+
+    tfutil.specialize_template(os.path.join("web", "main.tsx.template"), os.path.join("web", "src", "main.tsx"), {
         '{{{module_imports}}}': '\n'.join(['import * as {0} from "./modules/{0}/main";'.format(x) for x in main_ts_entries]),
         '{{{modules}}}': ', '.join([x for x in main_ts_entries]),
         '{{{preact_debug}}}': 'import "preact/debug";' if frontend_debug else ''
     })
 
-    util.specialize_template(os.path.join("web", "main.scss.template"), os.path.join("web", "src", "main.scss"), {
+    tfutil.specialize_template(os.path.join("web", "main.scss.template"), os.path.join("web", "src", "main.scss"), {
         '{{{module_pre_imports}}}': '\n'.join(['@import "{0}";'.format(x.replace('\\', '/')) for x in pre_scss_paths]),
         '{{{module_post_imports}}}': '\n'.join(['@import "{0}";'.format(x.replace('\\', '/')) for x in post_scss_paths])
     })
 
-    util.specialize_template(os.path.join("web", "api_defs.ts.template"), os.path.join("web", "src", "ts", "api_defs.ts"), {
+    tfutil.specialize_template(os.path.join("web", "api_defs.ts.template"), os.path.join("web", "src", "ts", "api_defs.ts"), {
         '{{{imports}}}': '\n'.join(api_imports),
         '{{{module_interface}}}': ',\n    '.join('{}: boolean'.format(x.under) for x in backend_modules),
         '{{{config_map_entries}}}': '\n    '.join(api_config_map_entries),
         '{{{api_cache_entries}}}': '\n    '.join(api_cache_entries),
     })
 
-    util.specialize_template(os.path.join("web", "branding.ts.template"), os.path.join("web", "src", "ts", "branding.ts"), {
+    tfutil.specialize_template(os.path.join("web", "branding.ts.template"), os.path.join("web", "src", "ts", "branding.ts"), {
         '{{{logo_base64}}}': logo_base64,
         '{{{branding}}}': branding,
     })
@@ -958,21 +1162,98 @@ def main():
 
     translation_str += '} as const\n'
 
-    util.specialize_template(os.path.join("web", "translation.tsx.template"), os.path.join("web", "src", "ts", "translation.tsx"), {
+    tfutil.specialize_template(os.path.join("web", "translation.tsx.template"), os.path.join("web", "src", "ts", "translation.tsx"), {
         '{{{translation}}}': translation_str,
     })
 
     # Check translation completeness
     util.log('Checking translation completeness')
 
-    with ChangedDirectory('web'):
+    with tfutil.ChangedDirectory('web'):
         subprocess.check_call([env.subst('$PYTHONEXE'), "-u", "check_translation_completeness.py"] + [x.under for x in frontend_modules])
 
     # Check translation override completeness
     util.log('Checking translation override completeness')
 
-    with ChangedDirectory('web'):
+    with tfutil.ChangedDirectory('web'):
         subprocess.check_call([env.subst('$PYTHONEXE'), "-u", "check_override_completeness.py"])
+
+    # Generate enums
+    for backend_module in backend_modules:
+        mod_path = os.path.join('src', 'modules', backend_module.under)
+
+        if not os.path.exists(mod_path) or not os.path.isdir(mod_path):
+            print("Backend module {} not found.".format(backend_module.space))
+        else:
+            for name in os.listdir(mod_path):
+                if not name.endswith(".enum"):
+                    continue
+
+                name_parts = name.split('.')
+
+                if len(name_parts) != 3:
+                    print('Error: Invalid enum file "{}" in backend {}'.format(name, mod_path))
+                    sys.exit(1)
+
+                enum_name = util.FlavoredName(name_parts[0]).get()
+                enum_values = []
+                enum_cases = []
+                value_number = -1
+                value_count = 0
+
+                with open(os.path.join(mod_path, name), 'r', encoding='utf-8') as f:
+                    for line in f.readlines():
+                        line = line.strip()
+
+                        if len(line) == 0 or line.startswith('#'):
+                            continue
+
+                        line_parts = line.split('=', 1)
+                        value_name = util.FlavoredName(line_parts[0].strip()).get()
+
+                        if len(line_parts) > 1:
+                            value_number = int(line_parts[1].strip())
+                        else:
+                            value_number += 1
+
+                        value_count += 1
+
+                        enum_values.append('    {0} = {1},\n'.format(value_name.camel, value_number))
+                        enum_cases.append('    case {0}::{1}: return "{2}";\n'.format(enum_name.camel, value_name.camel, value_name.space))
+
+                with open(os.path.join(mod_path, enum_name.under + '.enum.h'), 'w', encoding='utf-8') as f:
+                    f.write(f'// WARNING: This file is generated from "{name}"\n\n')
+                    f.write('#include <stdint.h>\n\n')
+                    f.write('#pragma once\n\n')
+                    f.write(f'enum class {enum_name.camel} : {name_parts[1]}_t {{\n')
+                    f.write(''.join(enum_values))
+                    f.write('};\n\n')
+                    f.write(f'#define {enum_name.upper}_COUNT {value_count}\n\n')
+                    f.write(f'const char *get_{enum_name.under}_name({enum_name.camel} value);\n')
+
+                with open(os.path.join(mod_path, enum_name.under + '.enum.cpp'), 'w', encoding='utf-8') as f:
+                    f.write(f'// WARNING: This file is generated from "{name}"\n\n')
+                    f.write(f'#include "{enum_name.under}.enum.h"\n\n')
+                    f.write(f'const char *get_{enum_name.under}_name({enum_name.camel} value)\n')
+                    f.write('{\n')
+                    f.write('    switch (value) {\n')
+                    f.write(''.join(enum_cases))
+                    f.write('    default: return "Unknown";\n')
+                    f.write('    }\n')
+                    f.write('}\n')
+
+                frontend_mod_path = os.path.join('web', 'src', 'modules', backend_module.under)
+
+                if os.path.exists(frontend_mod_path) and os.path.isdir(frontend_mod_path):
+                    with open(os.path.join(frontend_mod_path, enum_name.under + '.enum.ts'), 'w', encoding='utf-8') as f:
+                        f.write(f'// WARNING: This file is generated from "{name}"\n\n')
+                        f.write(f'export const enum {enum_name.camel} {{\n')
+                        f.write(''.join(enum_values))
+                        f.write('}\n')
+
+    if prepare_only:
+        print("Stopping build after prepare")
+        sys.exit(0)
 
     # Generate web interface
     util.log('Checking web interface dependencies')
@@ -1028,7 +1309,7 @@ def main():
                 if i == attempts - 1:
                     raise
 
-        with ChangedDirectory('web'):
+        with tfutil.ChangedDirectory('web'):
             npm_version = subprocess.check_output(['npm', '--version'], shell=sys.platform == 'win32', encoding='utf-8').strip()
 
             m = re.fullmatch(r'(\d+)\.\d+\.\d+', npm_version)
@@ -1088,7 +1369,7 @@ def main():
         except FileNotFoundError:
             pass
 
-        with ChangedDirectory('web'):
+        with tfutil.ChangedDirectory('web'):
             try:
                 subprocess.check_call([env.subst('$PYTHONEXE'), "-u", "build.py"] + ([] if not frontend_debug else ['--js-source-map', '--css-source-map', '--no-minify']))
             except subprocess.CalledProcessError as e:
@@ -1114,10 +1395,6 @@ def main():
 
         util.embed_data(util.gzip_compress(html_bytes), 'src', 'index_html', 'char')
         util.store_digest(index_html_digest, 'src', 'index_html', env=env)
-
-    util.log("Checking HTML ID usage")
-    with ChangedDirectory('web'):
-        subprocess.check_call([env.subst('$PYTHONEXE'), "-u", "check_id_usage.py"] + [x.under for x in frontend_modules])
 
     if web_only:
         print('Stopping build after web')

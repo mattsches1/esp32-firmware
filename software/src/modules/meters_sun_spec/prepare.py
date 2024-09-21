@@ -1,23 +1,9 @@
-import os
-import sys
-import importlib.util
-import importlib.machinery
+from collections import namedtuple
+import tinkerforge_util as tfutil
 
-software_dir = os.path.realpath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
-
-def create_software_module():
-    software_spec = importlib.util.spec_from_file_location('software', os.path.join(software_dir, '__init__.py'))
-    software_module = importlib.util.module_from_spec(software_spec)
-
-    software_spec.loader.exec_module(software_module)
-
-    sys.modules['software'] = software_module
-
-if 'software' not in sys.modules:
-    create_software_module()
+tfutil.create_parent_module(__file__, 'software')
 
 from software import util
-from collections import namedtuple
 
 ModelSpec = namedtuple('ModelSpec', 'model_name display_name_en display_name_de model_id is_meter_like is_supported')
 
@@ -40,12 +26,12 @@ model_specs = [
     ModelSpec('Serial Interface',                           'FIXME',                            'FIXME',                               17,    False, False),
     ModelSpec('Cellular Link',                              'FIXME',                            'FIXME',                               18,    False, False),
     ModelSpec('PPP Link',                                   'FIXME',                            'FIXME',                               19,    False, False),
-    ModelSpec('Inverter Single Phase Integer',              'Inverter Single Phase',            'Wechselrichter Einphasig',            101,   True,  True),
-    ModelSpec('Inverter Split Phase Integer',               'Inverter Split Phase',             'Wechselrichter Einphasig-Dreileiter', 102,   True,  True),
-    ModelSpec('Inverter Three Phase Integer',               'Inverter Three Phase',             'Wechselrichter Dreiphasig',           103,   True,  True),
-    ModelSpec('Inverter Single Phase Float',                'Inverter Single Phase',            'Wechselrichter Einphasig',            111,   True,  True),
-    ModelSpec('Inverter Split Phase Float',                 'Inverter Split Phase',             'Wechselrichter Einphasig-Dreileiter', 112,   True,  True),
-    ModelSpec('Inverter Three Phase Float',                 'Inverter Three Phase',             'Wechselrichter Dreiphasig',           113,   True,  True),
+    ModelSpec('Inverter Single Phase Integer',              'Inverter',                         'Wechselrichter',                      101,   True,  True),
+    ModelSpec('Inverter Split Phase Integer',               'Inverter',                         'Wechselrichter',                      102,   True,  True),
+    ModelSpec('Inverter Three Phase Integer',               'Inverter',                         'Wechselrichter',                      103,   True,  True),
+    ModelSpec('Inverter Single Phase Float',                'Inverter',                         'Wechselrichter',                      111,   True,  True),
+    ModelSpec('Inverter Split Phase Float',                 'Inverter',                         'Wechselrichter',                      112,   True,  True),
+    ModelSpec('Inverter Three Phase Float',                 'Inverter',                         'Wechselrichter',                      113,   True,  True),
     ModelSpec('Inverter Nameplate',                         'FIXME',                            'FIXME',                               120,   False, False),
     ModelSpec('Inverter Basic Settings',                    'FIXME',                            'FIXME',                               121,   False, False),
     ModelSpec('Inverter Measurements And Status',           'Inverter Measurements and Status', 'Wechselrichter Messwerte und Status', 122,   True,  False),
@@ -73,15 +59,15 @@ model_specs = [
     ModelSpec('Inverter HFRT Extended Curve',               'FIXME',                            'FIXME',                               144,   False, False),
     ModelSpec('Inverter Extended Settings',                 'FIXME',                            'FIXME',                               145,   False, False),
     ModelSpec('Inverter Multiple MPPT Extension',           'FIXME',                            'FIXME',                               160,   False, False),
-    ModelSpec('Meter Single Phase Integer',                 'Meter Single Phase ',              'Zähler Einphasig',                    201,   True,  True),
-    ModelSpec('Meter Split Phase Integer',                  'Meter Split Phase',                'Zähler Einphasig-Dreileiter',         202,   True,  True),
-    ModelSpec('Meter Wye Three Phase Integer',              'Meter Wye Three Phase',            'Zähler Stern-Dreiphasig',             203,   True,  True),
-    ModelSpec('Meter Delta Three Phase Integer',            'Meter Delta Three Phase',          'Zähler Delta-Dreiphasig',             204,   True,  True),
-    ModelSpec('Meter Single Phase Float',                   'Meter Single Phase',               'Zähler Einphasig',                    211,   True,  True),
-    ModelSpec('Meter Split Phase Float',                    'Meter Split Phase',                'Zähler Einphasig-Dreileiter',         212,   True,  True),
-    ModelSpec('Meter Wye Three Phase Float',                'Meter Wye Three Phase',            'Zähler Stern-Dreiphasig',             213,   True,  True),
-    ModelSpec('Meter Delta Three Phase Float',              'Meter Delta Three Phase',          'Zähler Delta-Dreiphasig',             214,   True,  True),
-    ModelSpec('Meter Secure',                               'Meter Secure',                     'Zähler Abgesichert',                  220,   True,  False),
+    ModelSpec('Meter Single Phase Integer',                 'Meter',                            'Zähler',                              201,   True,  True),
+    ModelSpec('Meter Split Phase Integer',                  'Meter',                            'Zähler',                              202,   True,  True),
+    ModelSpec('Meter Wye Three Phase Integer',              'Meter',                            'Zähler',                              203,   True,  True),
+    ModelSpec('Meter Delta Three Phase Integer',            'Meter',                            'Zähler',                              204,   True,  True),
+    ModelSpec('Meter Single Phase Float',                   'Meter',                            'Zähler',                              211,   True,  True),
+    ModelSpec('Meter Split Phase Float',                    'Meter',                            'Zähler',                              212,   True,  True),
+    ModelSpec('Meter Wye Three Phase Float',                'Meter',                            'Zähler',                              213,   True,  True),
+    ModelSpec('Meter Delta Three Phase Float',              'Meter',                            'Zähler',                              214,   True,  True),
+    ModelSpec('Meter Secure',                               'Meter (Secure)',                   'Zähler (Signiert)',                   220,   True,  False),
     ModelSpec('Irradiance',                                 'FIXME',                            'FIXME',                               302,   False, False),
     ModelSpec('Back of Module Temperature',                 'FIXME',                            'FIXME',                               303,   False, False),
     ModelSpec('Inclinometer',                               'FIXME',                            'FIXME',                               304,   False, False),
@@ -96,7 +82,7 @@ model_specs = [
     ModelSpec('Solar Module A',                             'FIXME',                            'FIXME',                               501,   False, False),
     ModelSpec('Solar Module B',                             'FIXME',                            'FIXME',                               502,   False, False),
     ModelSpec('Tracker Controller',                         'FIXME',                            'FIXME',                               601,   False, False),
-    ModelSpec('DER AC Measurements',                        'DER AC Measurements',              'DER AC Messwerte',                    701,   True,  False),
+    ModelSpec('DER AC Measurements',                        'AC Measurements',                  'AC-Messwerte',                        701,   True,  True),
     ModelSpec('DER Capacity',                               'FIXME',                            'FIXME',                               702,   False, False),
     ModelSpec('DER Enter Service',                          'FIXME',                            'FIXME',                               703,   False, False),
     ModelSpec('DER AC Controls',                            'FIXME',                            'FIXME',                               704,   False, False),
@@ -108,11 +94,11 @@ model_specs = [
     ModelSpec('DER High Frequency Trip',                    'FIXME',                            'FIXME',                               710,   False, False),
     ModelSpec('DER Frequency Droop',                        'FIXME',                            'FIXME',                               711,   False, False),
     ModelSpec('DER Watt-VAR',                               'FIXME',                            'FIXME',                               712,   False, False),
-    ModelSpec('DER Storage Capacity',                       'FIXME',                            'FIXME',                               713,   False, False),
-    ModelSpec('DER DC Measurements',                        'DER DC Measurements',              'DER DC Messwerte',                    714,   True,  False),
+    ModelSpec('DER Storage Capacity',                       'Storage Capacity',                 'Speicherkapazität',                   713,   True,  True),
+    ModelSpec('DER DC Measurements',                        'DC Measurements',                  'DC-Messwerte',                        714,   True,  True),
     ModelSpec('DER Control',                                'FIXME',                            'FIXME',                               715,   False, False),
     ModelSpec('Battery Base Deprecated',                    'FIXME',                            'FIXME',                               801,   False, False),
-    ModelSpec('Battery Base',                               'Battery Base',                     'Batterie Basis',                      802,   True,  False),
+    ModelSpec('Battery Base',                               'Battery',                          'Batterie',                            802,   True,  False),
     ModelSpec('Battery Lithium-Ion',                        'FIXME',                            'FIXME',                               803,   False, False),
     ModelSpec('Battery Lithium-Ion String',                 'FIXME',                            'FIXME',                               804,   False, False),
     ModelSpec('Battery Lithium-Ion Module',                 'FIXME',                            'FIXME',                               805,   False, False),
@@ -175,7 +161,7 @@ with open('sun_spec_model_id.cpp', 'w', encoding='utf-8') as f:
     f.write(f'const size_t sun_spec_model_specs_length = {len(model_specs)};\n')
 
 for lang in translation_values:
-    util.specialize_template(f'../../../web/src/modules/meters_sun_spec/translation_{lang}.tsx.template', f'../../../web/src/modules/meters_sun_spec/translation_{lang}.tsx', {
+    tfutil.specialize_template(f'../../../web/src/modules/meters_sun_spec/translation_{lang}.tsx.template', f'../../../web/src/modules/meters_sun_spec/translation_{lang}.tsx', {
         '{{{models}}}': ',\n            '.join(translation_values[lang]),
     })
 

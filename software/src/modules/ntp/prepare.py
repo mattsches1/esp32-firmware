@@ -1,28 +1,11 @@
-#!/usr/bin/env python3
-
 import sys
-import argparse
 import json
 import os
 import datetime
 from collections import OrderedDict
+import tinkerforge_util as tfutil
 
-import sys
-import importlib.util
-import importlib.machinery
-
-software_dir = os.path.realpath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
-
-def create_software_module():
-    software_spec = importlib.util.spec_from_file_location('software', os.path.join(software_dir, '__init__.py'))
-    software_module = importlib.util.module_from_spec(software_spec)
-
-    software_spec.loader.exec_module(software_module)
-
-    sys.modules['software'] = software_module
-
-if 'software' not in sys.modules:
-    create_software_module()
+tfutil.create_parent_module(__file__, 'software')
 
 from software import util
 
@@ -105,6 +88,8 @@ if generated_db_version >= installed_db_version:
     util.log("Skipping timezone database generation. Installed version {} is not newer than last generated version {}".format(installed_db_version, generated_db_version))
     sys.exit(0)
 
+print("Generating timezone database: Installed version {} is newer than last generated version {}".format(installed_db_version, generated_db_version))
+
 timezones = OrderedDict(sorted(make_timezones_dict().items(), key=lambda x: x[0]))
 
 nested_dict = OrderedDict()
@@ -123,13 +108,13 @@ for name, tz in timezones.items():
 
 generate("global", nested_dict)
 
-util.specialize_template("timezones.c.template", "timezones.c", {
+tfutil.specialize_template("timezones.c.template", "timezones.c", {
     '{{{generated_comment}}}': "/*\n{};{}\n*/".format(installed_db_version, datetime.datetime.utcnow().isoformat()),
     '{{{table_inits}}}': "\n\n".join(inits)
 })
 
 
-util.specialize_template("../../../web/src/modules/ntp/timezones.ts.template", "../../../web/src/modules/ntp/timezones.ts", {
+tfutil.specialize_template("../../../web/src/modules/ntp/timezones.ts.template", "../../../web/src/modules/ntp/timezones.ts", {
     '{{{generated_comment}}}': "/*\n{};{}\n*/".format(installed_db_version, datetime.datetime.utcnow().isoformat()),
     '{{{json}}}': json.dumps(empty_nested_dict, indent=4)
 })

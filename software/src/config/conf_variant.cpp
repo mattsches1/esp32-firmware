@@ -1,3 +1,22 @@
+/* esp32-firmware
+ * Copyright (C) 2020-2024 Erik Fleckstein <erik@tinkerforge.com>
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the
+ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+ * Boston, MA 02111-1307, USA.
+ */
+
 #include "config/private.h"
 
 Config::ConfVariant::Val::Val() : e(Empty{}) {}
@@ -159,4 +178,84 @@ const char *Config::ConfVariant::getVariantName() const
 #ifdef __GNUC__
     __builtin_unreachable();
 #endif
+}
+
+Config::ConfVariant::ConfVariant(ConfVariant &&cpy) {
+    if (tag != Tag::EMPTY)
+        destroyUnionMember();
+
+    switch (cpy.tag) {
+        case ConfVariant::Tag::EMPTY:
+            new(&val.e) Empty(std::move(cpy.val.e));
+            break;
+        case ConfVariant::Tag::STRING:
+            new(&val.s) ConfString(std::move(cpy.val.s));
+            break;
+        case ConfVariant::Tag::FLOAT:
+            new(&val.f) ConfFloat(std::move(cpy.val.f));
+            break;
+        case ConfVariant::Tag::INT:
+            new(&val.i) ConfInt(std::move(cpy.val.i));
+            break;
+        case ConfVariant::Tag::UINT:
+            new(&val.u) ConfUint(std::move(cpy.val.u));
+            break;
+        case ConfVariant::Tag::BOOL:
+            new(&val.b) ConfBool(std::move(cpy.val.b));
+            break;
+        case ConfVariant::Tag::ARRAY:
+            new(&val.a) ConfArray(std::move(cpy.val.a));
+            break;
+        case ConfVariant::Tag::OBJECT:
+            new(&val.o) ConfObject(std::move(cpy.val.o));
+            break;
+        case ConfVariant::Tag::UNION:
+            new(&val.un) ConfUnion(std::move(cpy.val.un));
+            break;
+    }
+    this->tag = cpy.tag;
+    this->updated = cpy.updated;
+
+    cpy.tag = ConfVariant::Tag::EMPTY;
+}
+
+Config::ConfVariant &Config::ConfVariant::operator=(ConfVariant &&cpy) {
+    if (tag != Tag::EMPTY)
+        destroyUnionMember();
+
+    switch (cpy.tag) {
+        case ConfVariant::Tag::EMPTY:
+            new(&val.e) Empty(std::move(cpy.val.e));
+            break;
+        case ConfVariant::Tag::STRING:
+            new(&val.s) ConfString(std::move(cpy.val.s));
+            break;
+        case ConfVariant::Tag::FLOAT:
+            new(&val.f) ConfFloat(std::move(cpy.val.f));
+            break;
+        case ConfVariant::Tag::INT:
+            new(&val.i) ConfInt(std::move(cpy.val.i));
+            break;
+        case ConfVariant::Tag::UINT:
+            new(&val.u) ConfUint(std::move(cpy.val.u));
+            break;
+        case ConfVariant::Tag::BOOL:
+            new(&val.b) ConfBool(std::move(cpy.val.b));
+            break;
+        case ConfVariant::Tag::ARRAY:
+            new(&val.a) ConfArray(std::move(cpy.val.a));
+            break;
+        case ConfVariant::Tag::OBJECT:
+            new(&val.o) ConfObject(std::move(cpy.val.o));
+            break;
+        case ConfVariant::Tag::UNION:
+            new(&val.un) ConfUnion(std::move(cpy.val.un));
+            break;
+    }
+    this->tag = cpy.tag;
+    this->updated = cpy.updated;
+
+    cpy.tag = ConfVariant::Tag::EMPTY;
+
+    return *this;
 }

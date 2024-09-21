@@ -19,14 +19,13 @@
 
 #pragma once
 
+#include <stdint.h>
+
+#include "module.h"
+#include "config.h"
 #include "imeter.h"
 #include "meter_generator.h"
 #include "meter_value_availability.h"
-
-#include <stdint.h>
-
-#include "config.h"
-#include "module.h"
 #include "value_history.h"
 #include "meter_value_id.h"
 #include "tools.h"
@@ -36,17 +35,19 @@
 // The MQTT send buffer is 2K on a WARP1 -> 2048/21 ~ 97,5.
 #define METERS_MAX_VALUES_PER_METER 96
 
-#define INDEX_CACHE_POWER         0
-#define INDEX_CACHE_ENERGY_IMPORT 1
-#define INDEX_CACHE_ENERGY_IMEXSUM 2
-#define INDEX_CACHE_ENERGY_EXPORT 3
-#define INDEX_CACHE_SINGLE_VALUES_COUNT 4
+#define METERS_MAX_FILTER_VALUES 7
 
-#define INDEX_CACHE_CURRENT_N  0
-#define INDEX_CACHE_CURRENT_L1 1
-#define INDEX_CACHE_CURRENT_L2 2
-#define INDEX_CACHE_CURRENT_L3 3
-#define INDEX_CACHE_CURRENT_COUNT 4
+#define INDEX_CACHE_POWER_REAL     0
+#define INDEX_CACHE_POWER_VIRTUAL  1
+#define INDEX_CACHE_ENERGY_IMPORT  2
+#define INDEX_CACHE_ENERGY_IMEXSUM 3
+#define INDEX_CACHE_ENERGY_EXPORT  4
+#define INDEX_CACHE_SINGLE_VALUES_COUNT 5
+
+#define INDEX_CACHE_CURRENT_L1 0
+#define INDEX_CACHE_CURRENT_L2 1
+#define INDEX_CACHE_CURRENT_L3 2
+#define INDEX_CACHE_CURRENT_COUNT 3
 
 class Meters final : public IModule
 {
@@ -63,10 +64,24 @@ public:
         _max        = 7,
     };
 
+    struct value_combiner_filter_data {
+        uint8_t input_pos[METERS_MAX_FILTER_VALUES];
+        uint8_t output_pos;
+    };
+
+    struct value_combiner_filter {
+        void (*fn)(const value_combiner_filter_data *filter_data, size_t base_values_length, const float *base_values, float *extra_values);
+        const char *name;
+        MeterValueID input_ids[METERS_MAX_FILTER_VALUES];
+        MeterValueID output_ids[METERS_MAX_FILTER_VALUES];
+    };
+    static_assert(METERS_MAX_VALUES_PER_METER <= 256, "Increase size of input_id_count and output_id_count");
+
     Meters(){}
     void pre_setup() override;
     void setup() override;
     void register_urls() override;
+    void pre_reboot() override;
 
     void register_meter_generator(MeterClassID meter_class, MeterGenerator *generator);
     IMeter *get_meter(uint32_t slot);
@@ -75,20 +90,22 @@ public:
     bool meter_is_fresh(uint32_t slot, micros_t max_age_us);
     bool meter_has_value_changed(uint32_t slot, micros_t max_age_us);
 
-    MeterValueAvailability get_values(uint32_t slot, const Config **values, micros_t max_age = 0_usec);
-    MeterValueAvailability get_value_by_index(uint32_t slot, uint32_t index, float *value, micros_t max_age = 0_usec);
-    MeterValueAvailability get_power(uint32_t slot, float *power_w, micros_t max_age = 0_usec);
-    MeterValueAvailability get_energy_import(uint32_t slot, float *total_import_kwh, micros_t max_age = 0_usec);
-    MeterValueAvailability get_energy_imexsum(uint32_t slot, float *total_imexsum_kwh, micros_t max_age = 0_usec);
-    MeterValueAvailability get_energy_export(uint32_t slot, float *total_export_kwh, micros_t max_age = 0_usec);
-    //uint32_t get_currents(uint32_t slot, float currents[INDEX_CACHE_CURRENT_COUNT], micros_t max_age = 0_usec);
+    MeterValueAvailability get_values(uint32_t slot, const Config **values, micros_t max_age = 0_us);
+    MeterValueAvailability get_value_by_index(uint32_t slot, uint32_t index, float *value, micros_t max_age = 0_us);
+    MeterValueAvailability get_power_real(uint32_t slot, float *power_w, micros_t max_age = 0_us);
+    MeterValueAvailability get_power_virtual(uint32_t slot, float *power_w, micros_t max_age = 0_us);
+    MeterValueAvailability get_energy_import(uint32_t slot, float *total_import_kwh, micros_t max_age = 0_us);
+    MeterValueAvailability get_energy_imexsum(uint32_t slot, float *total_imexsum_kwh, micros_t max_age = 0_us);
+    MeterValueAvailability get_energy_export(uint32_t slot, float *total_export_kwh, micros_t max_age = 0_us);
+    MeterValueAvailability get_currents(uint32_t slot, float currents[INDEX_CACHE_CURRENT_COUNT], micros_t max_age = 0_us);
 
     void update_value(uint32_t slot, uint32_t index, float new_value);
     void update_all_values(uint32_t slot, const float new_values[]);
     void update_all_values(uint32_t slot, const Config *new_values);
+    void finish_update(uint32_t slot);
     void declare_value_ids(uint32_t slot, const MeterValueID value_ids[], uint32_t value_id_count);
 
-    bool get_cached_power_index(uint32_t slot, uint32_t *index);
+    bool get_cached_real_power_index(uint32_t slot, uint32_t *index);
 
     void fill_index_cache(uint32_t slot, size_t value_count, const MeterValueID value_ids[], uint32_t index_cache[]);
 
@@ -111,6 +128,10 @@ private:
 
         IMeter *meter;
 
+        size_t base_value_count;
+        uint32_t value_combiner_filters_bitmask;
+        const value_combiner_filter_data *value_combiner_filters_data;
+
         // Caches must be initialized to UINT32_MAX in setup().
         uint32_t index_cache_single_values[INDEX_CACHE_SINGLE_VALUES_COUNT];
         uint32_t index_cache_currents[INDEX_CACHE_CURRENT_COUNT];
@@ -118,7 +139,6 @@ private:
         ConfigRoot config_union;
         ConfigRoot state;
         ConfigRoot errors;
-        ConfigRoot reset;
         ConfigRoot last_reset;
 
         ValueHistory power_history;
@@ -128,6 +148,7 @@ private:
     IMeter *new_meter_of_class(MeterClassID meter_class, uint32_t slot, Config *state, Config *errors);
 
     MeterValueAvailability get_single_value(uint32_t slot, uint32_t kind, float *value, micros_t max_age_us);
+    void apply_filters(MeterSlot &meter_slot, size_t base_value_count, const float *base_values);
 
     float live_samples_per_second();
 
@@ -154,6 +175,11 @@ private:
     int samples_last_interval = 0;
     uint32_t begin_last_interval = 0;
     uint32_t end_last_interval = 0;
+
+    // For reproducable screenshots, the ScreenshotDataFaker injects values into the power_history of the first meter.
+#ifdef SCREENSHOT_DATA_FAKER_PRO
+    friend class ScreenshotDataFaker;
+#endif
 };
 
 extern uint32_t meters_find_id_index(const MeterValueID value_ids[], uint32_t value_id_count, MeterValueID id);

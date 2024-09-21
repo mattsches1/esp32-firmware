@@ -17,15 +17,16 @@
  * Boston, MA 02111-1307, USA.
  */
 
-import { h, Fragment } from "preact";
+import { h } from "preact";
 import { __ } from "../../ts/translation";
-import { AutomationActionID } from "../automation/automation_defs";
-import { AutomationAction } from "../automation/types";
+import { AutomationActionID } from "../automation/automation_action_id.enum";
+import { AutomationAction, InitResult } from "../automation/types";
 import { InputSelect } from "../../ts/components/input_select";
 import { InputFloat } from "../../ts/components/input_float";
 import { InputNumber } from "../../ts/components/input_number";
 import { FormRow } from "../../ts/components/form_row";
 import * as util from "../../ts/util";
+import * as API from "../../ts/api";
 import { Collapse } from "react-bootstrap";
 
 export type EvseAutomationAction = [
@@ -40,11 +41,14 @@ export type EvseLedAutomationAction = [
     {
         indication: number;
         duration: number;
+        color_h: number;
+        color_s: number;
+        color_v: number;
     },
 ];
 
 function get_set_current_table_children(action: EvseAutomationAction) {
-    return __("evse.automation.automation_action_text")((action[1].current / 1000).toLocaleString());
+    return __("evse.automation.automation_action_text")(util.toLocaleFixed(action[1].current / 1000, 3));
 }
 
 function get_set_current_edit_children(action: EvseAutomationAction, on_action: (action: AutomationAction) => void) {
@@ -55,32 +59,30 @@ function get_set_current_edit_children(action: EvseAutomationAction, on_action: 
     ];
 
     return [
-        <>
-            <FormRow label="">
-                <InputSelect
-                    items={items}
-                    value={action[1].current === 0 ? "0" : action[1].current === 32000 ? "32000" : "6000"}
-                    onValue={(v) => {
-                        on_action(util.get_updated_union(action, {current: parseInt(v)}));
-                    }} />
-            </FormRow>
-            <Collapse in={action[1].current !== 0 && action[1].current !== 32000}>
-                    <div>
-                    <FormRow label={__("evse.automation.allowed_charging_current")}>
-                        <InputFloat
-                            digits={3}
-                            min={6000}
-                            max={32000}
-                            unit="A"
-                            value={action[1].current}
-                            onValue={(v) => {
-                                on_action(util.get_updated_union(action, {current: v}));
-                            }}
-                        />
-                    </FormRow>
-                </div>
-            </Collapse>
-        </>,
+        <FormRow label="">
+            <InputSelect
+                items={items}
+                value={action[1].current === 0 ? "0" : action[1].current === 32000 ? "32000" : "6000"}
+                onValue={(v) => {
+                    on_action(util.get_updated_union(action, {current: parseInt(v)}));
+                }} />
+        </FormRow>,
+        <Collapse in={action[1].current !== 0 && action[1].current !== 32000}>
+                <div>
+                <FormRow label={__("evse.automation.allowed_charging_current")}>
+                    <InputFloat
+                        digits={3}
+                        min={6000}
+                        max={32000}
+                        unit="A"
+                        value={action[1].current}
+                        onValue={(v) => {
+                            on_action(util.get_updated_union(action, {current: v}));
+                        }}
+                    />
+                </FormRow>
+            </div>
+        </Collapse>,
     ];
 }
 
@@ -93,34 +95,46 @@ function new_set_current_config(): AutomationAction {
     ];
 }
 
+function hsvToHex(x: {color_h: number, color_s: number, color_v: number}) {
+    let hsv: [number, number, number] = [x.color_h / 359, x.color_s / 255, x.color_v / 255]
+    let rgb = util.hsvToRgb(...hsv);
+    return util.rgbToHex(...rgb);
+}
+
+function hexToHsv(hex: string) {
+    let rgb = util.hexToRgb(hex);
+    let hsv = util.rgbToHsv(rgb.r, rgb.g, rgb.b);
+    return {color_h: Math.round(hsv[0] * 359), color_s: Math.round(hsv[1] * 255), color_v: Math.round(hsv[2] * 255)};
+}
+
 function get_led_table_children(action: EvseLedAutomationAction) {
-    let indication = "";
+    let indication_text = "";
     switch (action[1].indication) {
         case 0:
-            indication = __("evse.automation.led_indication_off");
+            indication_text = __("evse.automation.led_indication_off");
             break;
 
         case 255:
-            indication = __("evse.automation.led_indication_on");
+            indication_text = __("evse.automation.led_indication_on");
             break;
 
         case 1001:
-            indication = __("evse.automation.led_indication_blinking");
+            indication_text = __("evse.automation.led_indication_blinking");
             break;
 
         case 1002:
-            indication = __("evse.automation.led_indication_flickering");
+            indication_text = __("evse.automation.led_indication_flickering");
             break;
 
         case 1003:
-            indication = __("evse.automation.led_indication_breathing");
+            indication_text = __("evse.automation.led_indication_breathing");
             break;
     }
     if (action[1].indication > 2000 && action[1].indication < 2011) {
-        indication = __("evse.automation.led_indication_error")(action[1].indication - 2000);
+        indication_text = __("evse.automation.led_indication_error")(action[1].indication - 2000);
     }
 
-    return __("evse.automation.automation_led_action_text")(indication, action[1].duration);
+    return __("evse.automation.automation_led_action_text")(action[1].indication, indication_text, action[1].duration, API.hasFeature("rgb_led") ? hsvToHex(action[1]) : "");
 }
 
 function get_led_edit_children(action: EvseLedAutomationAction, on_action: (action: AutomationAction) => void) {
@@ -136,7 +150,7 @@ function get_led_edit_children(action: EvseLedAutomationAction, on_action: (acti
         items.push([String(2000 + i), __("evse.automation.led_indication_error")(i)]);
     }
 
-    return [<>
+    let result = [
         <FormRow label={__("evse.automation.indication")}>
             <InputSelect
                 items={items}
@@ -144,7 +158,7 @@ function get_led_edit_children(action: EvseLedAutomationAction, on_action: (acti
                 onValue={(v) => {
                     on_action(util.get_updated_union(action, {indication: parseInt(v)}));
                 }} />
-        </FormRow>
+        </FormRow>,
         <FormRow label={ __("evse.automation.led_duration")}>
             <InputNumber
                 min={1}
@@ -155,7 +169,22 @@ function get_led_edit_children(action: EvseLedAutomationAction, on_action: (acti
                     on_action(util.get_updated_union(action, {duration: v * 1000}));
                 }} />
         </FormRow>
-    </>];
+    ];
+
+    if (API.hasFeature("rgb_led")) {
+        result.push(
+            <FormRow label={__("evse.automation.color")}>
+                <input class="form-control" type="color" value={hsvToHex(action[1])} onInput={(event) => {
+                    // Get current color value from the HTML element and create new config
+                    //let hsv_scaled = {color_h: hsv[0] * 359, color_s: hsv[1] * 255, color_v: hsv[2] * 255};
+                    let hsv = hexToHsv((event.target as HTMLInputElement).value.toString())
+                    on_action(util.get_updated_union(action, hsv));
+                }} />
+            </FormRow>
+        )
+    }
+
+    return result;
 }
 
 function new_led_config(): AutomationAction {
@@ -164,11 +193,14 @@ function new_led_config(): AutomationAction {
         {
             duration: 1000,
             indication: 0,
+            color_h: 0,
+            color_s: 0,
+            color_v: 0,
         },
     ];
 }
 
-export function init() {
+export function init(): InitResult {
     return {
         action_components: {
             [AutomationActionID.SetCurrent]: {

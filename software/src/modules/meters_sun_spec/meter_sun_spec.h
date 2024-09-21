@@ -19,14 +19,13 @@
 
 #pragma once
 
-#include "model_parser.h"
-
 #include <stdint.h>
 
-#include "config.h"
 #include "modules/meters/imeter.h"
 #include "modules/meters_modbus_tcp/generic_modbus_tcp_client.h"
 #include "modules/meters_modbus_tcp/modbus_tcp_tools.h"
+#include "config.h"
+#include "model_parser.h"
 
 #if defined(__GNUC__)
     #pragma GCC diagnostic push
@@ -41,6 +40,7 @@ public:
 
     [[gnu::const]] MeterClassID get_class() const override;
     void setup(const Config &ephemeral_config) override;
+    void pre_reboot() override;
 
     bool supports_power()         override {return true;}
     bool supports_energy_import() override {return true;}
@@ -75,11 +75,17 @@ private:
     bool read_allowed = false;
     bool values_declared = false;
 
+    String manufacturer_name;
+    String model_name;
+    String serial_number;
     uint16_t model_id;
+    uint16_t model_instance;
     size_t scan_base_address_index;
     ScanState scan_state;
     ScanState scan_state_next;
     ModbusDeserializer scan_deserializer;
+    bool scan_device_found;
+    uint16_t scan_model_counter;
 
     uint32_t quirks = 0;
     MetersSunSpecParser *model_parser;

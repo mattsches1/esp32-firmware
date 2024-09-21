@@ -19,24 +19,23 @@
 
 #pragma once
 
-#include "bindings/bricklet_evse.h"
-
-#include "config.h"
 #include "device_module.h"
-#include "evse_bricklet_firmware_bin.embedded.h"
-#include "../evse_common/evse_common.h"
+#include "config.h"
+#include "bindings/bricklet_evse.h"
+#include "modules/evse_common/evse_common.h"
 
 class EVSE final : public DeviceModule<TF_EVSE,
-                                       evse_bricklet_firmware_bin_data,
-                                       evse_bricklet_firmware_bin_length,
                                        tf_evse_create,
                                        tf_evse_get_bootloader_mode,
                                        tf_evse_reset,
-                                       tf_evse_destroy>, public IEvseBackend {
+                                       tf_evse_destroy>,
+                   public IEvseBackend
+{
 public:
     EVSE();
 
     // IModule implementation (inherited through DeviceModule and IEvseBackend)
+    void pre_init() override;
     void pre_setup() override;
     void setup() override {}; // Override empty: Base method sets initialized to true, but we want EvseCommon to decide this.
     void register_urls() override {this->DeviceModule::register_urls();};
@@ -44,6 +43,9 @@ public:
 
 protected:
     // IEvseBackend implementation
+    bool is_initialized() override { return initialized; }
+    void set_initialized(bool initialized) override { this->initialized = initialized; }
+
     void post_setup() override {};
     void post_register_urls() override;
 
@@ -76,10 +78,22 @@ protected:
     int get_charging_slot_default(uint8_t slot, uint16_t *ret_max_current, bool *ret_enabled, bool *ret_clear_on_disconnect) override;
     int set_charging_slot_default(uint8_t slot, uint16_t current, bool enabled, bool clear_on_disconnect) override;
 
-    String get_evse_debug_header() override;
-    String get_evse_debug_line() override;
+    [[gnu::const]] size_t get_debug_header_length() const override;
+    void get_debug_header(StringBuilder *sb) override;
+    [[gnu::const]] size_t get_debug_line_length() const override;
+    void get_debug_line(StringBuilder *sb) override;
     void update_all_data() override;
     //End IEvseBackend implementation
+
+    // PhaseSwitcherBackend implementation
+    uint32_t get_phase_switcher_priority()                           override {return 4;}
+    bool phase_switching_capable()                                   override {return false;}
+    bool can_switch_phases_now(bool wants_3phase)                    override {return false;}
+    bool requires_cp_disconnect()                                    override {return false;}
+    bool get_is_3phase()                                             override {return true;}
+    PhaseSwitcherBackend::SwitchingState get_phase_switching_state() override {return PhaseSwitcherBackend::SwitchingState::Ready;} // Don't report an error when phase_switching_capable() is false.
+    bool switch_phases_3phase(bool wants_3phase)                     override {return false;}
+    bool is_external_control_allowed()                               override {return false;}
 
     ConfigRoot user_calibration;
 };

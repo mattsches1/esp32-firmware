@@ -13,17 +13,24 @@ let x = {
             "config_host": "Host",
             "config_host_invalid": "Host is invalid",
             "config_port": "Port",
+            "config_port_muted": "typically 502",
             "config_device_address": "Device address",
+            "config_serial_number": "Serial number",
+            "config_unique_id": "Unique ID",
+            "config_unique_id_muted": "optional; manufacturer, model, serial number",
             "config_model_id": "Model",
             "config_model_id_select": "Select...",
+            "config_model_instance": "Model instance",
 
             "scan_title": "Device search",
+            "scan_title_muted": "first device address, last device address",
             "scan": "Start search",
             "scan_results": "Discovered devices",
             "scan_log": "Log",
+            "scan_log_file": "SunSpec-scan-log",
 
             "model_no_supported": "Not supported",
-            "model_other_preferred": /*SFN*/(slot: number|"?") => "Modell " + slot + " preferred"/*NF*/,
+            "model_other_preferred": /*SFN*/(slot: number|"?") => "Model " + slot + " preferred"/*NF*/,
             {{{models}}}
         },
         "script": {

@@ -19,12 +19,11 @@
 
 #pragma once
 
-#include "config.h"
-
 #include <stdint.h>
 #include <vector>
 
 #include "module.h"
+#include "config.h"
 #include "tools.h"
 
 class Debug final : public IModule
@@ -52,12 +51,20 @@ private:
     ConfigRoot state_slow;
     ConfigRoot state_hwm;
 
+    Config state_spi_bus_prototype;
+    Config state_hwm_prototype;
+
     std::vector<TaskHandle_t> task_handles;
-    bool show_hwm_changes = false;
+
+    uint32_t run_max = 0;
+    micros_t last_run = 0_us;
 
     micros_t last_state_update;
     uint32_t integrity_check_runs = 0;
     uint32_t integrity_check_runtime_sum = 0;
     uint32_t integrity_check_runtime_max = 0;
     bool     integrity_check_print_errors = true;
+    bool     internal_heap_valid = true;
+    bool     psram_heap_valid = true;
+    bool     check_psram_next = false;
 };

@@ -4,12 +4,6 @@ let x = {
     "charge_manager": {
         "status": {
             "charge_manager": "Lastmanagement"
-        },
-        "navbar": {
-            "charge_manager": "Wallboxen"
-        },
-        "content": {
-            "charge_manager": "Wallboxen"
         }
     },
     "ethernet": {
@@ -17,22 +11,19 @@ let x = {
             "enable_desc": "Der Energy Manager verbindet sich beim Start automatisch zum konfigurierten Netzwerk"
         }
     },
-    "event_log": {
-        "content": {
-            "debug_report_desc_muted": "kompletter Report aller Statusinformationen des Energy Managers außer Passwörtern"
-        }
-    },
-    "firmware_update": {
+    "system": {
         "content": {
             "factory_reset_modal_text": <>Hiermit wird die gesamte Konfiguration auf den Werkszustand zurückgesetzt. <b>Diese Aktion kann nicht rückgängig gemacht werden!</b> Der Energy Manager öffnet dann wieder einen eigenen WLAN-Access-Point mit dem Netzwerknamen (SSID) und der Passphrase aus der beiliegenden Betriebsanleitung. Fortfahren?</>,
             "reboot_desc": "",
             "config_reset_modal_text": "",
             "factory_reset_desc": "löscht die gesamte Konfiguration",
             "config_reset_desc": ""
-        },
+        }
+    },
+    "firmware_update": {
         "script": {
-            "no_info_page": "Firmware-Datei ist beschädigt oder für WARP Charger (Firmware-Info-Seite fehlt)",
-            "wrong_firmware_type": "Firmware-Datei passt nicht zum Energy Manager"
+            "install_state_19": "Firmware-Datei ist beschädigt oder für WARP1 Charger (Firmware-Info-Seite fehlt)",
+            "install_state_21": "Firmware-Datei passt nicht zum Energy Manager"
         }
     },
     "network": {
@@ -58,6 +49,11 @@ let x = {
     "meters": {
         "status": {
             "power_history": "Leistungsverlauf"
+        }
+    },
+    "power_manager": {
+        "content": {
+            "cm_requirements_warning": "Keine kontrollierten Wallboxen eingetragen. Um das PV-Überschussladen zu nutzen, müssen alle angeschlossenen Wallboxen im Lastmanagement als kontrollierte Wallboxen eingetragen sein."
         }
     }
 }

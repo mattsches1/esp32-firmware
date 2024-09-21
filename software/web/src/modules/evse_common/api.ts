@@ -49,7 +49,7 @@ export interface low_level_state {
     temperature?: number;
     phases_current?: number;
     phases_requested?: number;
-    phases_status?: number;
+    phases_state?: number;
     dc_fault_pins?: number;
     dc_fault_sensor_type?: number;
 }
@@ -102,9 +102,6 @@ export interface start_charging {
 export interface stop_charging {
 
 }
-
-export type debug_header = string;
-export type debug = string;
 
 export interface reflash {
 
@@ -161,6 +158,14 @@ export interface button_configuration {
 
 export interface ev_wakeup {
     enabled: boolean;
+}
+
+export interface phase_auto_switch {
+    enabled: boolean;
+}
+
+export interface phases_connected {
+    phases: number;
 }
 
 export interface control_pilot_disconnect {

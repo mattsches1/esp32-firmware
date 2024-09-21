@@ -18,18 +18,21 @@
  */
 
 #include "meters_pv_faker.h"
+
 #include "module_dependencies.h"
+#include "meter_pv_faker.h"
 
 #include "gcc_warnings.h"
 
 void MetersPvFaker::pre_setup()
 {
     config_prototype = Config::Object({
-        {"display_name", Config::Str("", 0, 32)},
-        {"topic",       Config::Str("", 0, 128)},
-        {"peak_power",  Config::Uint32(30*1000)},  // watt
-        {"zero_at_lux", Config::Uint32(100)},      // lux
-        {"peak_at_lux", Config::Uint32(105*1000)}, // lux
+        {"display_name",  Config::Str("", 0, 32)},
+        {"topic",         Config::Str("", 0, 128)},
+        {"limiter_topic", Config::Str("", 0, 128)},
+        {"peak_power",    Config::Uint32(30*1000)},  // watt
+        {"zero_at_lux",   Config::Uint32(100)},      // lux
+        {"peak_at_lux",   Config::Uint32(105*1000)}, // lux
     });
 
     meters.register_meter_generator(get_class(), this);

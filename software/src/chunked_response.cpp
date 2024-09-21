@@ -23,6 +23,9 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "event_log_prefix.h"
+#include "main_dependencies.h"
+
 void QueuedChunkedResponse::begin(bool success)
 {
     call([this, success]{internal->begin(success); return true;});
@@ -40,6 +43,14 @@ bool QueuedChunkedResponse::write_impl(const char *buf, size_t buf_size)
 
 void QueuedChunkedResponse::end(String error)
 {
+    {
+        std::lock_guard<std::mutex> guard(mutex);
+
+        if (has_ended) {
+            return;
+        }
+    }
+
     call([this, &error]{internal->end(error); is_running = false; return true;});
 
     {
@@ -54,15 +65,23 @@ void QueuedChunkedResponse::end(String error)
 
 String QueuedChunkedResponse::wait()
 {
-    std::unique_lock<std::mutex> lock(mutex, std::defer_lock_t());
+    std::unique_lock<std::mutex> lock(mutex, std::defer_lock_t()); // don't lock immediatly
 
     while (is_running) {
         lock.lock();
 
         if (!condition.wait_for(lock, std::chrono::milliseconds(timeout_ms), [this]{return have_function;})) {
-            lock.unlock();
+            String error = "condition timeout, no function";
 
-            return "timeout";
+            internal->end(error);
+
+            end_error = error;
+            has_ended = true;
+
+            lock.unlock();
+            condition.notify_one();
+
+            return end_error;
         }
 
         result = function();
@@ -76,7 +95,11 @@ String QueuedChunkedResponse::wait()
     }
 
     lock.lock();
-    condition.wait(lock, [this]{return has_ended;});
+
+    if (!condition.wait_for(lock, std::chrono::seconds(10), [this]{return has_ended;})) {
+        end_error = "condition timeout, not ended";
+    }
+
     lock.unlock();
 
     return end_error;
@@ -85,7 +108,19 @@ String QueuedChunkedResponse::wait()
 bool QueuedChunkedResponse::call(std::function<bool(void)> local_function)
 {
     std::unique_lock<std::mutex> lock(mutex);
-    condition.wait(lock, [this]{return !have_result;});
+
+    if (!condition.wait_for(lock, std::chrono::seconds(10), [this]{return !have_result || has_ended;})) {
+        lock.unlock();
+        logger.printfln("Condition timeout, has result or not ended");
+
+        return false;
+    }
+
+    if (has_ended) {
+        lock.unlock();
+
+        return false;
+    }
 
     function = local_function;
     have_function = true;
@@ -94,7 +129,19 @@ bool QueuedChunkedResponse::call(std::function<bool(void)> local_function)
     condition.notify_one();
 
     lock.lock();
-    condition.wait(lock, [this]{return have_result;});
+
+    if (!condition.wait_for(lock, std::chrono::seconds(10), [this]{return have_result || has_ended;})) {
+        lock.unlock();
+        logger.printfln("Condition timeout, no result or did not ended");
+
+        return false;
+    }
+
+    if (has_ended) {
+        lock.unlock();
+
+        return false;
+    }
 
     bool local_result = result;
     have_result = false;

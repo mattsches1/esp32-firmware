@@ -82,10 +82,6 @@ body {
   line-height: 1.2;
 }
 
-.feather {
-  vertical-align: middle;
-}
-
 .form-label {
     font-size: 1.25rem;
     line-height: 1.2;
@@ -122,6 +118,10 @@ body {
 
 .custom-alert {
     margin-bottom: 0;
+}
+
+.custom-alert .close {
+    padding-top: 0.5rem;
 }
 
 .sidebar-sticky {
@@ -185,11 +185,6 @@ body {
   color: #333;
 }
 
-.sidebar .nav-link .feather {
-  margin-right: 8px;
-  color: #333;
-}
-
 .sidebar .nav-link.active {
   color: var(--primary);
 }
@@ -198,25 +193,11 @@ body {
     .sidebar .nav-link:hover {
         color: var(--primary);
     }
-
-
-    .sidebar .nav-link:hover .feather {
-    color: var(--primary);
-    }
-}
-
-.sidebar .nav-link.active .feather {
-  color: inherit;
 }
 
 .sidebar .nav-link.disabled {
     font-weight: 500;
     color: #AAA;
-  }
-
-.sidebar .nav-link.disabled .feather {
-  margin-right: 4px;
-  color: #AAA;
 }
 
 .sidebar-heading {
@@ -344,16 +325,8 @@ body {
     display: inline-block;
 }
 
-.navbar-dark .navbar-toggler-icon {
-    background: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='30'%3E%3Cpath stroke='rgba(255, 255, 255, 1)' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3E%3C/svg%3E");
-}
-
 .navbar-dark .navbar-toggler:hover {
     background-color: #5a6268
-}
-
-.feather-trash-2 {
-    vertical-align: top !important;
 }
 
 .custom-file-label {
@@ -457,11 +430,6 @@ body {
     border-left-color: var(--link);
 }
 
-
-#status_wifi_sta_rssi .feather {
-    vertical-align: bottom;
-}
-
 @keyframes shake {
   0% {
     transform: translate(0);
@@ -506,23 +474,6 @@ body {
     }
 }
 
-.status-meter-chart {
-    position: relative;
-    aspect-ratio: 1.33333;
-}
-
-@include media-breakpoint-up(md) {
-    .status-meter-chart {
-        position: relative;
-        aspect-ratio: 2.5;
-    }
-}
-
-.meter-chart {
-    position: relative;
-    aspect-ratio: 1.5;
-}
-
 .status-meters-chart {
     position: relative;
     aspect-ratio: 1.33333;
@@ -531,7 +482,7 @@ body {
 @include media-breakpoint-up(md) {
     .status-meters-chart {
         position: relative;
-        aspect-ratio: 2.5;
+        aspect-ratio: 3;
     }
 }
 
@@ -555,7 +506,7 @@ body {
 @include media-breakpoint-up(md) {
     .em-energy-analysis-status-chart {
         position: relative;
-        aspect-ratio: 2.5;
+        aspect-ratio: 3;
     }
 }
 
@@ -647,4 +598,20 @@ table ul {
 
 .list-group-item {
     padding: 0.75rem;
+}
+
+// Use modal-width-auto as dialog class for a modal that always has the width of it's content, even < 576px viewport width.
+// These are bootstrap's modal-dialog(-centered) with the media query removed and a max-width of max-content.
+.modal-dialog.modal-width-auto {
+    max-width: max-content !important;
+    margin: $modal-dialog-margin-y-sm-up auto;
+}
+
+.modal-dialog.modal-width-auto.modal-dialog-centered {
+    min-height: subtract(100%, $modal-dialog-margin-y-sm-up * 2);
+
+    &::before {
+      height: subtract(100vh, $modal-dialog-margin-y-sm-up * 2);
+      height: min-content;
+    }
 }

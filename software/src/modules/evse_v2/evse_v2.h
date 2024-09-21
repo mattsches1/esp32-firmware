@@ -19,20 +19,36 @@
 
 #pragma once
 
-#include "bindings/bricklet_evse_v2.h"
-
-#include "config.h"
 #include "device_module.h"
-#include "evse_v2_bricklet_firmware_bin.embedded.h"
-#include "../evse_common/evse_common.h"
+#include "config.h"
+#include "modules/evse_common/evse_common.h"
+#include "bindings/bricklet_evse_v2.h"
+#include "module_available.h"
+
+#if MODULE_AUTOMATION_AVAILABLE()
+#include "modules/automation/automation_backend.h"
+#endif
+
+#define EVSEV2_PHASES_INFO_1P_CAR_MASK (1 << 0)
+
+struct EVSEV2MeterData {
+    bool phases_active[3];
+    bool phases_connected[3];
+    uint8_t meter_type;
+    float power;
+    float currents[3];
+    uint32_t error_count[6];
+};
 
 class EVSEV2 final : public DeviceModule<TF_EVSEV2,
-                                         evse_v2_bricklet_firmware_bin_data,
-                                         evse_v2_bricklet_firmware_bin_length,
                                          tf_evse_v2_create,
                                          tf_evse_v2_get_bootloader_mode,
                                          tf_evse_v2_reset,
-                                         tf_evse_v2_destroy>, public IEvseBackend
+                                         tf_evse_v2_destroy>,
+                     public IEvseBackend
+#if MODULE_AUTOMATION_AVAILABLE()
+                   , public IAutomationBackend
+#endif
 {
 public:
     EVSEV2();
@@ -42,10 +58,14 @@ public:
     void pre_setup() override;
     void setup() override {}; // Override empty: Base method sets initialized to true, but we want EvseCommon to decide this.
     void register_urls() override {this->DeviceModule::register_urls();};
+    void register_events() override;
     void loop() override {this->DeviceModule::loop();};
 
 protected:
     // IEvseBackend implementation
+    bool is_initialized() override { return initialized; }
+    void set_initialized(bool initialized) override { this->initialized = initialized; }
+
     void post_setup() override;
     void post_register_urls() override;
 
@@ -73,27 +93,32 @@ protected:
     int get_charging_slot_default(uint8_t slot, uint16_t *ret_max_current, bool *ret_enabled, bool *ret_clear_on_disconnect) override;
     int set_charging_slot_default(uint8_t slot, uint16_t current, bool enabled, bool clear_on_disconnect) override;
 
-    String get_evse_debug_header() override;
-    String get_evse_debug_line() override;
+    [[gnu::const]] size_t get_debug_header_length() const override;
+    void get_debug_header(StringBuilder *sb) override;
+    [[gnu::const]] size_t get_debug_line_length() const override;
+    void get_debug_line(StringBuilder *sb) override;
 
-// To allow the evse_v2_meter module to get/set energy meter values
+    // PhaseSwitcherBackend implementation
+    uint32_t get_phase_switcher_priority() override {return 12;}
+    bool phase_switching_capable() override;
+    bool can_switch_phases_now(bool wants_3phase) override;
+    bool requires_cp_disconnect() override {return false;}
+    bool get_is_3phase() override;
+    PhaseSwitcherBackend::SwitchingState get_phase_switching_state() override;
+    bool switch_phases_3phase(bool wants_3phase) override;
+    bool is_external_control_allowed() override;
+
+// To allow the meters_evse_v2 module to get/set energy meter values
 public:
-    bool action_triggered(Config *config, void *data);
     void update_all_data() override;
     // End IEvseBackend implementation
 
+#if MODULE_AUTOMATION_AVAILABLE()
+    bool has_triggered(const Config *conf, void *data) override;
+#endif
     uint16_t get_all_energy_meter_values(float *ret_values);
     bool reset_energy_meter_relative_energy();
     uint8_t get_energy_meter_type();
-
-    struct meter_data {
-        bool phases_active[3];
-        bool phases_connected[3];
-        uint8_t meter_type;
-        float power;
-        float currents[3];
-        uint32_t error_count[6];
-    };
 
 private:
     ConfigRoot reset_dc_fault_current_state;
@@ -103,6 +128,10 @@ private:
     ConfigRoot button_configuration_update;
     ConfigRoot ev_wakeup;
     ConfigRoot ev_wakeup_update;
+    ConfigRoot phase_auto_switch;
+    ConfigRoot phase_auto_switch_update;
+    ConfigRoot phases_connected;
+    ConfigRoot phases_connected_update;
     ConfigRoot control_pilot_disconnect;
     ConfigRoot control_pilot_disconnect_update;
     ConfigRoot gp_output;

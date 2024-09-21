@@ -57,13 +57,13 @@ def temp_file():
             print('Failed to clean up temp file {}'.format(name))
 
 def run(args):
-    return subprocess.check_output(args, env=dict(os.environ, LC_ALL="en_US.UTF-8")).decode("utf-8").split("\n")
+    return subprocess.check_output(args, env=dict(os.environ, LC_ALL="en_US.UTF-8", LANG="C", LANGUAGE="en")).decode("utf-8").split("\n")
 
-def esptool(args):
-    return run(["python3", "./esptool/esptool.py", *args])
+def esptool(args, override_port=None):
+    return run(["python3", "./esptool/esptool.py", "--port", PORT if override_port is None else override_port, *args])
 
-def espefuse(args):
-    return run(["python3", "./esptool/espefuse.py", *args])
+def espefuse(args, override_port=None):
+    return run(["python3", "./esptool/espefuse.py", "--port", PORT if override_port is None else override_port, *args])
 
 colors = {"off":"\x1b[00m",
           "blue":   "\x1b[34m",
@@ -137,8 +137,8 @@ def wifi(ssid, passphrase):
 def get_new_uid():
     return int(urllib.request.urlopen('https://stagingwww.tinkerforge.com/uid', timeout=15).read())
 
-def check_if_esp_is_sane_and_get_mac(ignore_flash_errors=False):
-    output = esptool(['--port', PORT, 'flash_id']) # flash_id to get the flash size
+def check_if_esp_is_sane_and_get_mac(ignore_flash_errors=False, allowed_revision=3, override_port=None):
+    output = esptool(['flash_id'], override_port=override_port) # flash_id to get the flash size
     chip_type = None
     chip_revision = None
     flash_size = None
@@ -169,7 +169,7 @@ def check_if_esp_is_sane_and_get_mac(ignore_flash_errors=False):
             mac = mac_match.group(1)
 
     for name, val, expected in [("chip type", chip_type, "ESP32-D0WD-V3"),
-                                ("chip revision", chip_revision, 3),
+                                ("chip revision", chip_revision, allowed_revision),
                                 ("crystal", crystal, "40MHz"),
                                 ("flash_size", flash_size, "16MB" if not ignore_flash_errors else None)]:
         if expected is not None and val != expected:
@@ -178,13 +178,13 @@ def check_if_esp_is_sane_and_get_mac(ignore_flash_errors=False):
     return mac
 
 def get_esp_mac():
-    esptool(['--port', PORT, 'read_mac'])
+    esptool(['read_mac'])
 
 def get_espefuse_tasks_with_two_int_format():
     have_to_set_voltage_fuses = False
     have_to_set_block_3 = False
 
-    output = espefuse(['--port', PORT, 'dump'])
+    output = espefuse(['dump'])
 
     def parse_regs(line, regs):
         match = re.search(r'([0-9a-f]{8}\s?)' * regs, line)
@@ -240,11 +240,11 @@ def get_espefuse_tasks_with_two_int_format():
     return have_to_set_voltage_fuses, have_to_set_block_3, passphrase, uid
 
 
-def get_espefuse_tasks():
+def get_espefuse_tasks(override_port=None):
     have_to_set_voltage_fuses = False
     have_to_set_block_3 = False
 
-    output = espefuse(['--port', PORT, 'dump'])
+    output = espefuse(['dump'], override_port=override_port)
 
     def parse_regs(line, regs):
         match = re.search(r'([0-9a-f]{8}\s?)' * regs, line)
@@ -343,7 +343,7 @@ def handle_voltage_fuses(set_voltage_fuses):
         return
 
     print("Burning flash voltage eFuse to 3.3V")
-    espefuse(["--port", PORT, "set_flash_voltage", "3.3V", "--do-not-confirm"])
+    espefuse(["set_flash_voltage", "3.3V", "--do-not-confirm"])
 
 def handle_block3_fuses(set_block_3, uid, passphrase):
     if not set_block_3:
@@ -413,14 +413,14 @@ def handle_block3_fuses(set_block_3, uid, passphrase):
             f.write(binary)
 
         print("Burning UID and Wifi passphrase eFuses")
-        espefuse(["--port", PORT, "burn_block_data", "BLOCK3", name, "--do-not-confirm"])
+        espefuse(["burn_block_data", "BLOCK3", name, "--do-not-confirm"])
 
     return uid, '-'.join(wifi_passphrase)
 
 def handle_block3_fuses_with_two_int_format(set_block_3, uid):
     if not set_block_3:
         print("Block 3 eFuses already set. UID: {}".format(uid))
-        return uid 
+        return uid
 
     print("UID: " + uid)
 
@@ -449,12 +449,12 @@ def handle_block3_fuses_with_two_int_format(set_block_3, uid):
             f.write(binary)
 
         print("Burning UID eFuses")
-        espefuse(["--port", PORT, "burn_block_data", "BLOCK3", name, "--do-not-confirm"])
+        espefuse(["burn_block_data", "BLOCK3", name, "--do-not-confirm"])
 
     return uid
 
 def erase_flash():
-    output = '\n'.join(esptool(["--port", PORT, "erase_flash"]))
+    output = '\n'.join(esptool(["erase_flash"]))
 
     if "Chip erase completed successfully" not in output:
         fatal_error("Failed to erase flash.",
@@ -462,15 +462,14 @@ def erase_flash():
                     output)
 
 def flash_firmware(path, reset=True):
-    output = "\n".join(esptool(["--port", PORT,
-                                    "--baud", "921600",
-                                    "--before", "default_reset",
-                                    "--after", "hard_reset" if reset else "no_reset",
-                                    "write_flash",
-                                    "--flash_mode", "dio",
-                                    "--flash_freq", "40m",
-                                    "--flash_size", "16MB",
-                                    "0x1000", path]))
+    output = "\n".join(esptool(["--baud", "921600",
+                                "--before", "default_reset",
+                                "--after", "hard_reset" if reset else "no_reset",
+                                "write_flash",
+                                "--flash_mode", "dio",
+                                "--flash_freq", "40m",
+                                "--flash_size", "16MB",
+                                "0x1000", path]))
 
     if "Hash of data verified." not in output:
         fatal_error("Failed to flash firmware.",
@@ -497,11 +496,11 @@ def wait_for_wifi(ssid, timeout_s):
 def blink_thread_fn(rgbs, stop_event):
     while not stop_event.is_set():
         for rgb in rgbs:
-            rgb.set_rgb_value(0,127,0)
-            time.sleep(0.2)
+            rgb.set_rgb_value(0,63,0)
+            time.sleep(0.5)
         for rgb in rgbs:
             rgb.set_rgb_value(0,0,0)
-            time.sleep(0.2)
+            time.sleep(0.5)
 
 def now():
     return datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc).isoformat()
@@ -509,11 +508,9 @@ def now():
 def my_input(s, color_fn=green):
     return input(color_fn(s) + " ")
 
-uids = set()
-
 Enum = namedtuple('Enum', 'uid hardware_version firmware_version device_identifier position')
 
-def cb_enumerate(uid, connected_uid, position, hardware_version, firmware_version,
+def cb_enumerate(uids, uid, connected_uid, position, hardware_version, firmware_version,
                  device_identifier, enumeration_type):
     if enumeration_type == IPConnection.ENUMERATION_TYPE_DISCONNECTED:
         print("")
@@ -522,10 +519,9 @@ def cb_enumerate(uid, connected_uid, position, hardware_version, firmware_versio
     uids.add(Enum(uid, hardware_version, firmware_version, device_identifier, position))
 
 def enumerate_devices(ipcon):
-    global uids
     uids = set()
     # Register Enumerate Callback
-    ipcon.register_callback(IPConnection.CALLBACK_ENUMERATE, cb_enumerate)
+    ipcon.register_callback(IPConnection.CALLBACK_ENUMERATE, lambda *args: cb_enumerate(uids, *args))
 
     start = time.time()
     while time.time() - start < 10:

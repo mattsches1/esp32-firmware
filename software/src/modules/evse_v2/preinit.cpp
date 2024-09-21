@@ -1,18 +1,32 @@
-#include "Arduino.h"
+/* esp32-firmware
+ * Copyright (C) 2022-2024 Erik Fleckstein <erik@tinkerforge.com>
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the
+ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+ * Boston, MA 02111-1307, USA.
+ */
 
+#include <Arduino.h>
 #include <stdint.h>
 #include <string.h>
+#include <LittleFS.h>
 
-#include "LittleFS.h"
-
+#include "event_log_prefix.h"
+#include "module_dependencies.h"
 #include "bindings/hal_common.h"
 #include "bindings/bricklet_evse_v2.h"
-#include "modules/esp32_ethernet_brick/hal_arduino_esp32_ethernet_brick/hal_arduino_esp32_ethernet_brick.h"
-
 #include "tools.h"
-#include "api.h"
-
-#include "module_dependencies.h"
 
 #define BUTTON_MIN_PRESS_THRES 10000
 #define BUTTON_MAX_PRESS_THRES 30000
@@ -26,13 +40,36 @@ extern int8_t green_led_pin;
 
 void evse_v2_button_recovery_handler()
 {
-    if (!esp32_ethernet_brick.initHAL())
+#if MODULE_ESP32_BRICK_AVAILABLE()
+    auto esp_brick = esp32_brick;
+#elif MODULE_ESP32_ETHERNET_BRICK_AVAILABLE()
+    auto esp_brick = esp32_ethernet_brick;
+#else
+    #warning "Using EVSE module without ESP32 Brick or ESP32 Ethernet Brick module. Pre-init will not work!"
+    return;
+#endif
+
+    if (!esp_brick.initHAL())
         return;
+
+    defer {
+        esp_brick.destroyHAL();
+    };
 
     TF_EVSEV2 evse;
     int result = tf_evse_v2_create(&evse, nullptr, &hal);
     if (result != TF_E_OK)
         return;
+
+    defer {
+        tf_evse_v2_destroy(&evse);
+    };
+
+    uint32_t evse_uptime = 0;
+    tf_evse_v2_get_low_level_state(&evse, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, &evse_uptime);
+    if (evse_uptime > 10000) {
+        tf_evse_v2_set_indicator_led(&evse, 2005, 3000, 60, 255, 255, nullptr);
+    }
 
     uint32_t start = millis();
 
@@ -113,9 +150,6 @@ void evse_v2_button_recovery_handler()
         tf_evse_v2_set_data_storage(&evse, DATA_STORE_PAGE_RECOVERY, buf);
     }
 
-    tf_evse_v2_destroy(&evse);
-    tf_hal_destroy(&hal);
-
     switch (stage) {
         // Stage 0 - User can't reach the web interface anymore. Remove network configuration and disable http_auth.
         case 0:
@@ -123,15 +157,39 @@ void evse_v2_button_recovery_handler()
 
             mount_or_format_spiffs();
 #if MODULE_USERS_AVAILABLE()
-            if (api.restorePersistentConfig("users/config", &users.config)) {
-                users.config.get("http_auth_enabled")->updateBool(false);
-                api.writeConfig("users/config", &users.config);
+            {
+                // We can't use api.restorePersistent config here,
+                // as we are before users module's pre_setup.
+                // users.config is not yet initialized so we can't
+                // use it to guesstimate the required memory to give
+                // ArduinoJson to parse the config.
+                String path = API::getLittleFSConfigPath("users/config");
+                if (LittleFS.exists(path)) {
+                    DynamicJsonDocument doc(4096);
+                    DeserializationError error = DeserializationError::Ok;
+                    {
+                        auto file = LittleFS.open(path, "r");
+                        error = deserializeJson(doc, file);
+                    }
+
+                    if (error != DeserializationError::Ok) {
+                        logger.printfln("Failed to reset HTTP authentication! %s", error.c_str());
+                    } else {
+                        doc["http_auth_enabled"] = false;
+                        auto file = LittleFS.open(path, "w");
+                        serializeJson(doc, file);
+                    }
+                }
             }
 #endif
 
             api.removeConfig("ethernet/config");
             api.removeConfig("wifi/sta_config");
             api.removeConfig("wifi/ap_config");
+            // Reset network config in case the hostname is broken or the web interface listen port is changed.
+            // Browsers block HTTP on "unsafe" ports:
+            // https://superuser.com/questions/188058/which-ports-are-considered-unsafe-by-chrome
+            api.removeConfig("network/config");
             LittleFS.end();
             logger.printfln("Stage 0 done");
             break;
@@ -145,10 +203,10 @@ void evse_v2_button_recovery_handler()
             break;
         // Stage 2 - ESP still crashed. Format data partition. (This also removes tracked charges and the username file)
         case 2:
-#if MODULE_FIRMWARE_UPDATE_AVAILABLE()
+#if MODULE_SYSTEM_AVAILABLE()
             logger.printfln("Running stage 2: Formatting data partition");
             mount_or_format_spiffs();
-            factory_reset(false);
+            system_.factory_reset(false);
             logger.printfln("Stage 2 done");
 #endif
             break;

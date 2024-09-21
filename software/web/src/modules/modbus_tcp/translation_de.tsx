@@ -46,29 +46,29 @@ let x = {
                         <td>Firmware-Version Major</td>
                         <td>uint32</td>
                         <td>---</td>
-                        <td>Beispielsweise 2 für Firmware 2.0.8-​63218f23</td>
+                        <td>Beispielsweise 2 für Firmware 2.4.0+66558ade</td>
                     </tr>
                     <tr>
                         <td>4</td>
                         <td>Firmware-Version Minor</td>
                         <td>uint32</td>
                         <td>---</td>
-                        <td>Beispielsweise 0 für Firmware 2.0.8-​63218f23</td>
+                        <td>Beispielsweise 4 für Firmware 2.4.0+66558ade</td>
                     </tr>
                     <tr>
                         <td>6</td>
                         <td>Firmware-Version Patch</td>
                         <td>uint32</td>
                         <td>---</td>
-                        <td>Beispielsweise 8 für Firmware 2.0.8-​63218f23</td>
+                        <td>Beispielsweise 0 für Firmware 2.4.0+66558ade</td>
                     </tr>
                     <tr>
                         <td>8</td>
                         <td>Zeitstempel der Firmware</td>
                         <td>uint32</td>
                         <td>---</td>
-                        <td>Unix-Timestamp des Zeitpunktes an dem eine Firmware gebaut wurde. Beispielsweise 0x63218f23 für
-                            Firmware 2.0.8-​63218f23 (in Dezimal 1663143715), entspricht dem 14. September 2022 08:21:55 UTC.</td>
+                        <td>Unix-Timestamp des Zeitpunktes an dem eine Firmware gebaut wurde. Beispielsweise 0x66558ADE für
+                            Firmware 2.4.0+66558ade (in Dezimal 1716882142), entspricht dem 28. Mai 2024 07:42:22 UTC.</td>
                     </tr>
                     <tr>
                         <td>10</td>
@@ -76,7 +76,7 @@ let x = {
                         <td>uint32</td>
                         <td>---</td>
                         <td>Dekodierte Form der Base58-UID, die für Standard-Hostnamen, -SSID usw. genutzt wird. Zum Beispiel
-                            185460 für X8A</td>
+                            185460 für X8A.</td>
                     </tr>
                     <tr>
                         <td>12</td>
@@ -136,7 +136,7 @@ let x = {
                         <td>Ladedauer (s)</td>
                         <td>uint32</td>
                         <td>evse</td>
-                        <td>Dauer des laufenden Ladevorgangs in Sekunden. Auch ohne Zeitsynchronisierung verfügbar</td>
+                        <td>Dauer des laufenden Ladevorgangs in Sekunden. Auch ohne Zeitsynchronisierung verfügbar.</td>
                     </tr>
                     <tr>
                         <td>1010</td>
@@ -147,9 +147,9 @@ let x = {
                             der Stromgrenzen aller Ladeslots.</td>
                     </tr>
                     <tr>
-                        <td>1012 bis 1052</td>
+                        <td>1012 bis 1050</td>
                         <td>Ladestromgrenzen (mA)</td>
-                        <td>uint32 (x20)</td>
+                        <td>uint32 (20x)</td>
                         <td>evse</td>
                         <td>Aktueller Wert der Ladestromgrenzen in Milliampere. 0xFFFFFFFF falls eine Stromgrenze nicht aktiv
                             ist. 0 falls eine Stromgrenze blockiert. Sonst zwischen 6000 (6A) und 32000 (32A).</td>
@@ -165,6 +165,10 @@ let x = {
                                 <li>1: SDM72 (nur WARP1)</li>
                                 <li>2: SDM630</li>
                                 <li>3: SDM72 V2</li>
+                                <li>4: SDM72CTM</li>
+                                <li>5: SDM630MCT V2</li>
+                                <li>6: DSZ15DZMOD</li>
+                                <li>7: DEM4A</li>
                             </ul>
                         </td>
                     </tr>
@@ -173,7 +177,7 @@ let x = {
                         <td>Ladeleistung (W)</td>
                         <td>float32</td>
                         <td>meter</td>
-                        <td>Die aktuelle Ladeleistung in Watt</td>
+                        <td>Die aktuelle Ladeleistung in Watt.</td>
                     </tr>
                     <tr>
                         <td>2004</td>
@@ -187,21 +191,21 @@ let x = {
                         <td>relative Energie (kWh)</td>
                         <td>float32</td>
                         <td>meter</td>
-                        <td>Die geladene Energie seit dem letzten Reset. (siehe Holding Register 2000)</td>
+                        <td>Die geladene Energie seit dem letzten Reset (siehe Holding Register 2000).</td>
                     </tr>
                     <tr>
                         <td>2008</td>
                         <td>Energie des Ladevorgangs</td>
                         <td>float32</td>
                         <td>meter</td>
-                        <td>Die während des laufenden Ladevorgangs geladene Energie</td>
+                        <td>Die während des laufenden Ladevorgangs geladene Energie.</td>
                     </tr>
                     <tr>
-                        <td>2100 bis 2270</td>
+                        <td>2100 bis 2268</td>
                         <td>weitere Stromzähler-Werte</td>
-                        <td>float32 (x85)</td>
+                        <td>float32 (85x)</td>
                         <td>all_values</td>
-                        <td>Siehe <a href="https://www.warp-charger.com/api.html#meter_all_values">API-Dokumentation</a></td>
+                        <td>Siehe <a href="https://docs.warp-charger.com/docs/mqtt_http/api_reference/meter/#meter_all_values_any">API-Dokumentation</a></td>
                     </tr>
                     <tr>
                         <td>3000</td>
@@ -211,9 +215,9 @@ let x = {
                         <td>Noch nicht implementiert!</td>
                     </tr>
                     <tr>
-                        <td>4000</td>
+                        <td>4000 bis 4009</td>
                         <td>ID des letzten NFC-Tags</td>
-                        <td>uint32 (x5)</td>
+                        <td>uint8 (20x)</td>
                         <td>nfc</td>
                         <td>Die ID des zuletzt erkannten NFC-Tags als ASCII-kodierter Hex-String.</td>
                     </tr>
@@ -238,7 +242,7 @@ let x = {
                         <td>uint32</td>
                         <td>---</td>
                         <td>Startet die Wallbox (bzw. den ESP-Brick) neu, um beispielsweise Konfigurationsänderungen
-                            anzuwenden. Password 0x012EB007</td>
+                            anzuwenden. Passwort: 0x012EB007</td>
                     </tr>
                     <tr>
                         <td>1000</td>
@@ -246,7 +250,7 @@ let x = {
                         <td>uint32</td>
                         <td>evse</td>
                         <td><strong>Veraltet. Stattdessen Coil 1000 verwenden!</strong> 0 zum Blockieren des Ladevorgangs; ein
-                            Wert ungleich 0 zum Freigeben</td>
+                            Wert ungleich 0 zum Freigeben.</td>
                     </tr>
                     <tr>
                         <td>1002</td>
@@ -260,15 +264,17 @@ let x = {
                         <td>Front-LED-Blinkmuster</td>
                         <td>uint32</td>
                         <td>evse</td>
-                        <td>Steuert die LED des Tasters in der Wallbox-Front. <ul>
+                        <td>
+                            Steuert die LED des Tasters in der Wallbox-Front.
+                            <ul>
                                 <li>-1: EVSE kontrolliert LED</li>
                                 <li>0: LED aus</li>
-                                <li>1-254: LED gedimmt</li>
+                                <li>1 bis 254: LED gedimmt</li>
                                 <li>255: LED an</li>
                                 <li>1001: bekanntes NFC-Tag erkannt</li>
                                 <li>1002: unbekanntes NFC-Tag erkannt</li>
                                 <li>1003: NFC-Tag notwendig</li>
-                                <li>2001-2010: Fehlerblinken 1-10</li>
+                                <li>2001 bis 2010: Fehlerblinken 1 bis 10 mal</li>
                             </ul>
                         </td>
                     </tr>
@@ -278,14 +284,14 @@ let x = {
                         <td>uint32</td>
                         <td>evse</td>
                         <td>Die Dauer in Millisekunden für die das in Register 1004 gesetzte Blinkmuster angezeigt werden soll.
-                            Maximal 65535ms werden unterstützt.</td>
+                            Maximal 65535 ms werden unterstützt.</td>
                     </tr>
                     <tr>
                         <td>2000</td>
                         <td>Relative Energie zurücksetzen</td>
                         <td>uint32</td>
                         <td>meter</td>
-                        <td>Setzt den relativen Energiewert zurück (Input Register 2006). Password 0x3E12E5E7</td>
+                        <td>Setzt den relativen Energiewert zurück (Input Register 2006). Passwort: 0x3E12E5E7</td>
                     </tr>
                     <tr>
                         <td>3000</td>
@@ -329,7 +335,7 @@ let x = {
                         <td>Feature "all_values" verfügbar</td>
                         <td>bool</td>
                         <td>---</td>
-                        <td>Der verbaute Stromzähler kann weitere Messwerte auslesen. </td>
+                        <td>Der verbaute Stromzähler kann weitere Messwerte auslesen.</td>
                     </tr>
                     <tr>
                         <td>4</td>
@@ -343,7 +349,7 @@ let x = {
                         <td>Feature "nfc" verfügbar</td>
                         <td>bool</td>
                         <td>---</td>
-                        <td>Ein NFC-Bricklet ist verbaut und aktiv.</td>
+                        <td>Ein NFC Bricklet ist verbaut und aktiv.</td>
                     </tr>
                     <tr>
                         <td>2100</td>
@@ -399,8 +405,8 @@ let x = {
                         <td>Ladefreigabe</td>
                         <td>bool</td>
                         <td>evse</td>
-                        <td>false bzw. 0 zum Blockieren des Ladevorgangs. true bzw. 1 zum Freigeben. (Identisch zu Holding
-                            Register 1000)</td>
+                        <td>false bzw. 0 zum Blockieren des Ladevorgangs. true bzw. 1 zum Freigeben. Identisch zu Holding
+                            Register 1000.</td>
                     </tr>
                     <tr>
                         <td>1001</td>
@@ -412,7 +418,6 @@ let x = {
                             und der evse/[start/stop]_charging-API verwendet wird.</td>
                     </tr>
                 </tbody>
-
             </>
         },
         "script": {

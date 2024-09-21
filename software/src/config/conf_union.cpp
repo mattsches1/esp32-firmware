@@ -1,3 +1,22 @@
+/* esp32-firmware
+ * Copyright (C) 2020-2024 Erik Fleckstein <erik@tinkerforge.com>
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the
+ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+ * Boston, MA 02111-1307, USA.
+ */
+
 #include "config/private.h"
 
 bool Config::ConfUnion::slotEmpty(size_t i)
@@ -41,17 +60,22 @@ Config::ConfUnion::ConfUnion(const Config &val, uint8_t tag, uint8_t prototypes_
     idx = nextSlot<Config::ConfUnion>(union_buf, union_buf_size);
 
     auto *slot = this->getSlot();
-    slot->val = val;
     slot->tag = tag;
     slot->prototypes_len = prototypes_len;
     slot->prototypes = prototypes;
+    slot->val = val;
 }
 
 Config::ConfUnion::ConfUnion(const ConfUnion &cpy)
 {
     idx = nextSlot<Config::ConfUnion>(union_buf, union_buf_size);
 
-    // If cpy->inUse is false, it is okay that we don't mark this slot as inUse.
+    // We have to mark this slot as in use here:
+    // This union could contain a nested union that will be copied over
+    // The inner union's copy constructor then takes the first free slot, i.e.
+    // ours if we don't mark it as inUse first.
+    this->getSlot()->prototypes = cpy.getSlot()->prototypes;
+
 
     // this->getSlot() is evaluated before the RHS of the assignment is copied over.
     // This results in the LHS pointing to a deallocated array if copying the RHS
@@ -63,6 +87,9 @@ Config::ConfUnion::ConfUnion(const ConfUnion &cpy)
 
 Config::ConfUnion::~ConfUnion()
 {
+    if (idx == std::numeric_limits<decltype(idx)>::max())
+        return;
+
     auto *slot = this->getSlot();
     slot->val = *Config::Null();
     slot->tag = 0;
@@ -78,5 +105,18 @@ Config::ConfUnion &Config::ConfUnion::operator=(const ConfUnion &cpy)
 
     *this->getSlot() = *cpy.getSlot();
 
+
+    return *this;
+}
+
+
+Config::ConfUnion::ConfUnion(ConfUnion &&cpy) {
+    this->idx = cpy.idx;
+    cpy.idx = std::numeric_limits<decltype(idx)>::max();
+}
+
+Config::ConfUnion &Config::ConfUnion::operator=(ConfUnion &&cpy) {
+    this->idx = cpy.idx;
+    cpy.idx = std::numeric_limits<decltype(idx)>::max();
     return *this;
 }

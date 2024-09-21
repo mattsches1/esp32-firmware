@@ -19,9 +19,8 @@
 
 #pragma once
 
-#include "config.h"
-
 #include "module.h"
+#include "config.h"
 
 class IRtcBackend
 {
@@ -29,10 +28,11 @@ public:
     IRtcBackend() {}
     virtual ~IRtcBackend() {}
 
-    virtual void set_time(const timeval &time) = 0;
-    virtual void set_time(const tm &time) = 0;
+    // Override exactly one of the set_time functions!
+    virtual void set_time(const timeval &time);
+    virtual void set_time(const tm &time);
+
     virtual struct timeval get_time() = 0;
-    virtual bool update_system_time() = 0;
     virtual void reset() = 0;
 };
 
@@ -58,6 +58,4 @@ public:
     void set_time(const timeval &_time);
     timeval get_time();
     bool update_system_time();
-
-    bool action_triggered(Config *config, void *data);
 };

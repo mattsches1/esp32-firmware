@@ -20,9 +20,10 @@
 import * as util from "../../ts/util";
 
 import { h, Context, Fragment } from "preact";
-import { useContext, useState } from "preact/hooks";
+import { useId, useContext, useState } from "preact/hooks";
 import { JSXInternal } from "preact/src/jsx";
 import { Button } from "react-bootstrap";
+import { Progress } from "./progress";
 import { __ } from "../../ts/translation";
 
 interface InputFileProps extends Omit<JSXInternal.HTMLAttributes<HTMLInputElement>,  "class" | "id" | "type" | "onInput" | "accept"> {
@@ -33,6 +34,7 @@ interface InputFileProps extends Omit<JSXInternal.HTMLAttributes<HTMLInputElemen
     browse: string
     select_file: string
     upload: string,
+    uploading?: string,
     url: string,
     contentType?: string
     timeout_ms?: number
@@ -43,7 +45,7 @@ export function InputFile(props: InputFileProps) {
     const [file, setFile] = useState<File>(null);
     const [uploading, setUploading] = useState(false);
     const [progress, setProgress] = useState(0);
-    const id = !props.idContext ? util.useId() : useContext(props.idContext);
+    const id = !props.idContext ? useId() : useContext(props.idContext);
 
     const upload = async () => {
         if(props.onUploadStart && !await props.onUploadStart(file))
@@ -81,12 +83,8 @@ export function InputFile(props: InputFileProps) {
             </div>
         </div>
         <div hidden={!uploading}>
-            <div class="form-progress mb-1">
-                <div class="progress-bar form-control progress-bar-no-transition"
-                    role="progressbar" style={"padding: 0; width: " + (progress * 100) + "%"} aria-valuenow={progress * 100} aria-valuemin={0}
-                    aria-valuemax={100}>{Math.round(progress * 100) + "%"}</div>
-            </div>
-            <label>{__("component.input_file.uploading")}</label>
+            <Progress class="mb-1" progress={progress} />
+            <label class="mb-0">{props.uploading ? props.uploading : __("component.input_file.uploading")}</label>
         </div>
         </>
     );

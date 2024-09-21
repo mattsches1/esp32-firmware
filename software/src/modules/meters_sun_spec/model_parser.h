@@ -31,8 +31,11 @@
     #pragma GCC diagnostic ignored "-Weffc++"
 #endif
 
-#define SUN_SPEC_QUIRKS_ACC32_IS_INT32              (1u << 0)
-#define SUN_SPEC_QUIRKS_INVERTER_CURRENT_IS_INT16   (1u << 1)
+#define SUN_SPEC_QUIRKS_ACC32_IS_INT32                         (1u << 0)
+#define SUN_SPEC_QUIRKS_INVERTER_CURRENT_IS_INT16              (1u << 1)
+#define SUN_SPEC_QUIRKS_INTEGER_METER_POWER_FACTOR_IS_UNITY    (1u << 2)
+#define SUN_SPEC_QUIRKS_ACTIVE_POWER_IS_INVERTED               (1u << 3)
+#define SUN_SPEC_QUIRKS_INTEGER_INVERTER_POWER_FACTOR_IS_UNITY (1u << 4)
 
 class MetersSunSpecParser
 {
@@ -52,6 +55,8 @@ public:
 #endif
     struct ModelData {
         uint16_t model_id;
+        uint16_t model_length; // as specified in the model length register, excludes model ID and model length
+        uint16_t interesting_registers_count; // amount of interesting registers, including model ID and model length
         bool is_meter;
         bool read_twice;
         model_validator_fn validator;
@@ -73,6 +78,8 @@ public:
     bool parse_values(const uint16_t *const register_data[2], uint32_t quirks);
 
     bool must_read_twice();
+    uint32_t get_model_length();
+    uint32_t get_interesting_registers_count();
 
 private:
     MetersSunSpecParser() : meter_slot(0), model(nullptr) {}

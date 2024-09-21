@@ -18,10 +18,9 @@
  */
 
 #include "em_sdcard.h"
-#include "module_dependencies.h"
 
-#include "api.h"
-#include "task_scheduler.h"
+#include "event_log_prefix.h"
+#include "module_dependencies.h"
 
 #include "gcc_warnings.h"
 
@@ -41,7 +40,7 @@ void EMSDcard::pre_setup()
 
 void EMSDcard::setup()
 {
-    if (!energy_manager.initialized)
+    if (!em_common.initialized)
         return;
 
     update_sdcard_info();
@@ -57,14 +56,14 @@ void EMSDcard::register_urls()
 {
     api.addState("energy_manager/sdcard_state", &state);
 
-    api.addCommand("energy_manager/sdcard_format", Config::Confirm(), {Config::ConfirmKey()}, [this](String &result) {
+    api.addCommand("energy_manager/sdcard_format", Config::Confirm(), {Config::confirm_key}, [this](String &result) {
         if (!Config::Confirm()->get(Config::ConfirmKey())->asBool()) {
             result = "SD card format NOT initiated";
             return;
         }
 
-        logger.printfln("em_sdcard: Formatting SD card...");
-        if (!energy_manager.format_sdcard()) {
+        logger.printfln("Formatting SD card...");
+        if (!em_common.format_sdcard()) {
             result = "Format request failed";
             return;
         }
@@ -78,7 +77,7 @@ void EMSDcard::update_sdcard_info()
 {
     struct sdcard_info data;
 
-    if (energy_manager.get_sdcard_info(&data)) {
+    if (em_common.get_sdcard_info(&data)) {
         state.get("sd_status")->updateUint(data.sd_status);
         state.get("lfs_status")->updateUint(data.lfs_status);
         state.get("card_type")->updateUint(data.card_type);

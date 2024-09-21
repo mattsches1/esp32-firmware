@@ -24,11 +24,12 @@ let x = {
             "sta_enable_sta_desc": null,
             "sta_ssid": "Netzwerkname (SSID)",
             "sta_scan": "Netzwerksuche",
-            "sta_scanning": "Suche Netzwerke...",
             "sta_bssid": "BSSID",
             "sta_bssid_lock": "BSSID-Sperre",
             "sta_bssid_invalid": "Die BSSID muss aus sechs Gruppen mit jeweils einer zweistelligen Hexadezimalzahl, getrennt durch einen Doppelpunkt, bestehen. Zum Beispiel 01:23:45:67:89:AB",
             "sta_bssid_lock_desc": "Verbindet sich nur zur konfigurierten BSSID. Bei Einsatz mehrerer Access Points und/oder Repeater mit demselben Netzwerknamen wird so immer derselbe AP oder Repeater verwendet.",
+            "sta_enable_11b": "Empfangsoptimierung",
+            "sta_enable_11b_desc": <>Verwendet den veralteten, langsamen 802.11b-Modus für etwas höhere Reichweite. <strong>Dieser verlangsamt auch andere Geräte, die zum WLAN verbunden sind</strong>, kann aber die Empfangsqualität und Robustheit der Verbindung leicht verbessern.</>,
             "sta_passphrase": "Passphrase",
 
             "ap_settings": "WLAN-Access-Point",
@@ -74,7 +75,6 @@ let x = {
         "script": {
             "scan_wifi_init_failed": "Suche nach Netzwerken fehlgeschlagen. Konnte Scan nicht starten.",
             "scan_wifi_results_failed": "Suche nach Netzwerken fehlgeschlagen. Konnte Ergebnisse nicht abholen.",
-            "select_ap": "Gefundene Netzwerke",
             "no_ap_found": "Kein Netzwerk gefunden.",
             "hidden_ap": "[Versteckter AP]",
 

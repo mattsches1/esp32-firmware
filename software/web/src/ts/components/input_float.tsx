@@ -20,7 +20,7 @@
 import * as util from "../util";
 
 import { h, Context, Fragment } from "preact";
-import { useContext, useRef, useState } from "preact/hooks";
+import { useId, useContext, useRef, useState } from "preact/hooks";
 import { Button, ButtonGroup } from "react-bootstrap";
 import { Minus, Plus } from "react-feather";
 import { __ } from "../translation";
@@ -29,9 +29,11 @@ interface InputFloatReadonlyProps {
     idContext?: Context<string>;
     value: number;
     digits: number;
-    unit: string;
+    unit?: string;
     class?: string;
     invalidFeedback?: string
+    required?: boolean
+    disabled?: boolean
 }
 
 interface InputFloatProps extends InputFloatReadonlyProps {
@@ -58,7 +60,7 @@ function fractional_number_localization_check() {
 let fractional_numbers_require_localization = fractional_number_localization_check();
 
 export function InputFloat(props: InputFloatProps | InputFloatReadonlyProps) {
-    const id = !props.idContext ? util.useId() : useContext(props.idContext);
+    const id = !props.idContext ? useId() : useContext(props.idContext);
 
     let pow10 = Math.pow(10, props.digits);
 
@@ -113,8 +115,8 @@ export function InputFloat(props: InputFloatProps | InputFloatReadonlyProps) {
                ref={input}
                step={1/pow10}
                // Don't set min/max: this is already enforced in setTarget.
-               //min={'min' in props ? floatMin : undefined}
-               //max={'max' in props ? floatMax : undefined}
+               min={(props.required && 'min' in props) ? floatMin : undefined}
+               max={(props.required && 'max' in props) ? floatMax : undefined}
                onInput={'onValue' in props ? (e) => setInputInFlight((e.target as HTMLInputElement).value) : undefined}
                // onfocusout is not triggered if a user submits the form by pressing enter
                onKeyDown={(e: KeyboardEvent) => {
@@ -123,40 +125,47 @@ export function InputFloat(props: InputFloatProps | InputFloatReadonlyProps) {
                }}
                onfocusout={'onValue' in props ? () => sendInFlight() : undefined}
                value={value}
-               disabled={!('onValue' in props)}
+               disabled={!('onValue' in props) || props.disabled}
                inputMode="decimal"
-               style="min-width: 5em;"/>
-    <div class="input-group-append">
-        <div class={"form-control input-group-text" + ('showMinMax' in props ? " d-none d-sm-block" : "")}>
-            {this.props.unit}
+               style="min-width: 5em;"
+               required={props.required}/>
+    {'unit' in props || 'onValue' in props ?
+        <div class="input-group-append">
+            {'unit' in props ?
+                <div class={"form-control input-group-text" + ('showMinMax' in props ? " d-none d-sm-block" : "")}>
+                    {this.props.unit}
+                </div>
+                : undefined
+            }
+            {'onValue' in props && !props.disabled ?
+                <>
+                    <Button variant="primary"
+                            className="form-control px-1"
+                            style="margin-right: .125rem !important;"
+                            onClick={() => {
+                                let v = props.value;
+                                let target = (v % pow10 === 0) ? (v - pow10) : (v - (v % pow10));
+
+                                setTarget(target);
+                            }}>
+                        <Minus/>
+                    </Button>
+                    <Button variant="primary"
+                            className="form-control px-1 rounded-right"
+                            onClick={() => {
+                                let v = props.value;
+                                let target = (v - (v % pow10)) + pow10;
+
+                                setTarget(target);
+                            }}>
+                        <Plus/>
+                    </Button>
+                </>
+                : undefined
+            }
         </div>
-        {'onValue' in props ?
-            <>
-                <Button variant="primary"
-                        className="form-control px-1"
-                        style="margin-right: .125rem !important;"
-                        onClick={() => {
-                            let v = props.value;
-                            let target = (v % pow10 === 0) ? (v - pow10) : (v - (v % pow10));
-
-                            setTarget(target);
-                        }}>
-                    <Minus/>
-                </Button>
-                <Button variant="primary"
-                        className="form-control px-1 rounded-right"
-                        onClick={() => {
-                            let v = props.value;
-                            let target = (v - (v % pow10)) + pow10;
-
-                            setTarget(target);
-                        }}>
-                    <Plus/>
-                </Button>
-            </>
-            : <></>
-        }
-    </div>
+        : undefined
+    }
     {!('onValue' in props) || !props.showMinMax ? null :
         <ButtonGroup className="flex-wrap">
             <Button variant="primary"

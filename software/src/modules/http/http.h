@@ -19,15 +19,23 @@
 
 #pragma once
 
-#include "config.h"
-
 #include "module.h"
-#include "api.h"
+#include "config.h"
+#include "modules/api/api.h"
 #include "tools.h"
+#include "module_available.h"
+
+#if MODULE_AUTOMATION_AVAILABLE()
+#include "modules/automation/automation_backend.h"
+#endif
 
 bool custom_uri_match(const char *ref_uri, const char *in_uri, size_t len);
 
-class Http final : public IAPIBackend
+class Http final : public IModule,
+                   public IAPIBackend
+#if MODULE_AUTOMATION_AVAILABLE()
+                 , public IAutomationBackend
+#endif
 {
 public:
     Http(){}
@@ -38,13 +46,38 @@ public:
     // IAPIBackend implementation
     void addCommand(size_t commandIdx, const CommandRegistration &reg) override;
     void addState(size_t stateIdx, const StateRegistration &reg) override;
-    void addRawCommand(size_t rawCommandIdx, const RawCommandRegistration &reg) override;
     void addResponse(size_t responseIdx, const ResponseRegistration &reg) override;
     bool pushStateUpdate(size_t stateIdx, const String &payload, const String &path) override;
     bool pushRawStateUpdate(const String &payload, const String &path) override;
     WantsStateUpdate wantsStateUpdate(size_t stateIdx) override;
     WebServerRequestReturnProtect api_handler_get(WebServerRequest req);
     WebServerRequestReturnProtect api_handler_put(WebServerRequest req);
+
+    WebServerRequestReturnProtect automation_trigger_handler(WebServerRequest req);
+
+#if MODULE_AUTOMATION_AVAILABLE()
+    enum class HttpTriggerActionResult {
+        WrongUrl,
+        WrongMethod,
+        WrongPayloadLength,
+        FailedToReceivePayload,
+        WrongPayload,
+        OK,
+    };
+
+    struct HttpTrigger {
+        WebServerRequest &req;
+        const String &uri_suffix;
+        std::unique_ptr<char[]> payload;
+        bool payload_receive_failed;
+        HttpTriggerActionResult most_specific_error;
+    };
+
+    bool has_triggered(const Config *conf, void *data) override;
+#endif
+
+private:
+    WebServerRequestReturnProtect run_response(WebServerRequest req, ResponseRegistration &reg);
 
     Ownership response_ownership;
 };

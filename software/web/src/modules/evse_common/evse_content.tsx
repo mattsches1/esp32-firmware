@@ -20,7 +20,7 @@
 
 import * as util from "../../ts/util";
 import * as API from "../../ts/api";
-import { h, Component, Fragment } from "preact";
+import { h, Component, Fragment, RefObject } from "preact";
 import { Button } from "react-bootstrap";
 import { CollapsedSection } from "../../ts/components/collapsed_section";
 import { DebugLogger } from "../../ts/components/debug_logger";
@@ -34,14 +34,20 @@ import { PageHeader } from "../../ts/components/page_header";
 import { SubPage } from "../../ts/components/sub_page";
 import { __, translate_unchecked } from "../../ts/translation";
 import { EVSE_SLOT_EXTERNAL, EVSE_SLOT_AUTOMATION } from "./api";
-import { OutputFloat } from "../../ts/components/output_float";
+import { EVSEStatus } from "./evse_status";
+import { NavbarItem } from "../../ts/components/navbar_item";
+import { BatteryCharging } from "react-feather";
+
+export function EVSENavbar() {
+    return <NavbarItem name="evse" title={__("evse.navbar.evse")} symbol={<BatteryCharging />} hidden={!API.hasModule("evse_v2") && !API.hasModule("evse")} />;
+}
 
 let toDisplayCurrent = (x: number) => util.toLocaleFixed(x / 1000.0, 3) + " A"
 
-export class EVSE extends Component<{}, {}> {
+export class EVSE extends Component<{status_ref?: RefObject<EVSEStatus>}, {}> {
     override render(props: {}, s: {}) {
         if (!util.render_allowed() || !API.hasFeature("evse"))
-            return (<></>);
+            return <SubPage name="evse" />;
 
         let state = API.get('evse/state');
         let ll_state = API.get('evse/low_level_state');
@@ -49,6 +55,7 @@ export class EVSE extends Component<{}, {}> {
         let slots = API.get('evse/slots');
         let user_calibration = API.get('evse/user_calibration');
 
+        let is_evse_v1 = hardware_cfg.evse_version >= 10;
         let is_evse_v2 = hardware_cfg.evse_version >= 20;
         let is_evse_v3 = hardware_cfg.evse_version >= 30;
 
@@ -61,7 +68,7 @@ export class EVSE extends Component<{}, {}> {
         let contactor_error = state.error_state == 4 && ((!is_evse_v3 && state.contactor_error != 4)
                                                            || (is_evse_v3 && (state.contactor_error & 1) == 0));
 
-        return <SubPage>
+        return <SubPage name="evse">
             <PageHeader title={__("evse.content.status")} />
                     <FormRow label={__("evse.content.iec_state")}>
                         <IndicatorGroup
@@ -97,15 +104,15 @@ export class EVSE extends Component<{}, {}> {
                                 class="mb-1 col px-1"
                                 value={(state.contactor_state & 1) == 1 ? 1 : 0}
                                 items={[
-                                    ["secondary", __("evse.content.contactor_not_live")],
-                                    ["primary", __("evse.content.contactor_live")]
+                                    ["secondary", __("evse.content.contactor_not_live")(is_evse_v3)],
+                                    ["primary", __("evse.content.contactor_live")(is_evse_v3)]
                                 ]}/>
                             <IndicatorGroup
                                 class="mb-1 col px-1"
                                 value={(state.contactor_state & 2) == 2 ? 1 : 0}
                                 items={[
-                                    ["secondary", __("evse.content.contactor_not_live")],
-                                    ["primary", __("evse.content.contactor_live")]
+                                    ["secondary", __("evse.content.contactor_not_live")(is_evse_v3)],
+                                    ["primary", __("evse.content.contactor_live")(is_evse_v3)]
                                 ]}/>
                             <IndicatorGroup
                                 class="mb-1 col-auto px-1"
@@ -299,7 +306,7 @@ export class EVSE extends Component<{}, {}> {
                     }
 
                     <FormSeparator heading={__("evse.content.debug")}/>
-                    <DebugLogger prefix="evse" debugHeader="evse/debug_header" debug="evse/debug" translationPrefix="evse"/>
+                    <DebugLogger translationPrefix="evse" />
 
                     <CollapsedSection label={__("evse.content.low_level_state")}>
                         <FormRow label={__("evse.content.led_state")}>
@@ -363,7 +370,7 @@ export class EVSE extends Component<{}, {}> {
                                 </div>
                             </FormRow>)
                          : (util.range(ll_state.gpio.length / 4).map(i =>
-                                <FormRow key={i} label={i == 0 ? __("evse.content.gpios") : ""} label_muted={translate_unchecked(`evse.content.gpio_names_${i}`)}>
+                                <FormRow key={i} label={i == 0 ? __("evse.content.gpios") : ""} label_muted={translate_unchecked(`evse.content.evse_v${is_evse_v3 ? 3 : 2}_gpio_names_${i}`)}>
                                     <div class="row mx-n1">
                                         {ll_state.gpio.slice(i*4, i*4+4).map((x, j) => (
                                             <IndicatorGroup vertical key={j} class="mb-1 col-3 px-1"
@@ -384,7 +391,7 @@ export class EVSE extends Component<{}, {}> {
                         {!is_evse_v3 ? undefined :
                         <>
                             <FormRow label={__("evse.content.temperature")}>
-                                <OutputFloat value={ll_state.temperature} digits={2} scale={2} unit="°C"/>
+                                <InputText value={util.toLocaleFixed(ll_state.temperature / 100, 2) + " °C"} />
                             </FormRow>
 
                             <FormRow label={__("evse.content.phases_current")}>
@@ -395,8 +402,8 @@ export class EVSE extends Component<{}, {}> {
                                 <InputText value={ll_state.phases_requested}/>
                             </FormRow>
 
-                            <FormRow label={__("evse.content.phases_status")}>
-                                <InputText value={ll_state.phases_status}/>
+                            <FormRow label={__("evse.content.phases_state")}>
+                                <InputText value={ll_state.phases_state}/>
                             </FormRow>
                         </>
                         }
@@ -418,12 +425,6 @@ export class EVSE extends Component<{}, {}> {
                         }
 
                         <FormRow label={__("evse.content.reset_description")} label_muted={__("evse.content.reset_description_muted")}>
-                            {!is_evse_v3 ? undefined :
-                                <div class="input-group pb-2">
-                                    <Button variant="primary" className="form-control rounded-right mr-2" onClick={() => API.call('evse/debug_switch_to_one_phase', {}, "")}>{__("evse.content.switch_to_one_phase")}</Button>
-                                    <Button variant="primary" className="form-control rounded-left" onClick={() => API.call('evse/debug_switch_to_three_phases', {}, "")}>{__("evse.content.switch_to_three_phases")}</Button>
-                                </div>
-                            }
                             <div class="input-group pb-2">
                                 <Button variant="primary" className="form-control rounded-right mr-2" onClick={() => API.call('evse/reset', {}, "")}>{__("evse.content.reset_evse")}</Button>
                                 <Button variant="primary" className="form-control rounded-left" onClick={() => API.call('evse/reflash', {}, "")}>{__("evse.content.reflash_evse")}</Button>
@@ -433,7 +434,7 @@ export class EVSE extends Component<{}, {}> {
                             }
                         </FormRow>
 
-                        {is_evse_v2 ? undefined :
+                        {(is_evse_v1 && !is_evse_v2) ?
                             <>
                             <FormSeparator heading={__("evse.content.user_calibration_description")}/>
                             <FormRow label={__("evse.content.user_calibration")}>
@@ -470,7 +471,7 @@ export class EVSE extends Component<{}, {}> {
                                         timeout_ms={10 * 1000}
                                         onUploadSuccess={() => {}}
                                         onUploadError={error => {
-                                            util.add_alert("firmware_update_failed","alert-danger", __("evse.script.user_calibration_upload_failed"), error.toString());
+                                            util.add_alert("firmware_update_failed", "danger", __("evse.script.user_calibration_upload_failed"), error.toString());
                                         }}/>
                             </FormRow>
 
@@ -496,6 +497,7 @@ export class EVSE extends Component<{}, {}> {
                                 <InputText value={user_calibration.resistance_880.join(", ")}/>
                             </FormRow>
                             </>
+                            : undefined
                         }
 
 

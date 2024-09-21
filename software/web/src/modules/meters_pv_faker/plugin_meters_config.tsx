@@ -20,7 +20,7 @@
 import { h, ComponentChildren } from "preact";
 import { __ } from "../../ts/translation";
 import * as util from "../../ts/util";
-import { MeterClassID } from "../meters/meters_defs";
+import { MeterClassID } from "../meters/meter_class_id.enum";
 import { MeterConfig  } from "../meters/types";
 import { FormRow     } from "../../ts/components/form_row";
 import { InputText   } from "../../ts/components/input_text";
@@ -31,6 +31,7 @@ export type PvFakerMetersConfig = [
     {
         display_name: string;
         topic: string;
+        limiter_topic: string;
         peak_power: number;
         zero_at_lux: number;
         peak_at_lux: number;
@@ -59,6 +60,13 @@ export function init() {
                             maxLength={32}
                             value={config[1].topic}
                             onValue={(v) => {on_config(util.get_updated_union(config, {topic: v}));}}
+                        />
+                    </FormRow>,
+                    <FormRow label={__("meters_pv_faker.content.limiter_topic")}>
+                        <InputText
+                            maxLength={32}
+                            value={config[1].limiter_topic}
+                            onValue={(v) => {on_config(util.get_updated_union(config, {limiter_topic: v}));}}
                         />
                     </FormRow>,
                     <FormRow label={__("meters_pv_faker.content.peak_power")}>

@@ -18,41 +18,22 @@
  */
 
 #include "rtc_bricklet.h"
-#include "module_dependencies.h"
 
-#include "build.h"
 #include <ctime>
+
+#include "event_log_prefix.h"
+#include "module_dependencies.h"
+#include "build.h"
+#include "real_time_clock_v2_bricklet_firmware_bin.embedded.h"
 
 #include "gcc_warnings.h"
 
-bool RtcBricklet::update_system_time()
-{
-    // We have to make sure, we don't try to update the system clock
-    // while NTP also sets the clock.
-    // To prevent this, we skip updating the system clock if NTP
-    // did update it while we were fetching the current time from the RTC.
-
-    uint32_t count;
-    {
-        std::lock_guard<std::mutex> lock{ntp.mtx};
-        count = ntp.sync_counter;
-    }
-
-    struct timeval t = this->get_time();
-    if (t.tv_sec == 0 && t.tv_usec == 0)
-        return false;
-
-    {
-        std::lock_guard<std::mutex> lock{ntp.mtx};
-        if (count != ntp.sync_counter)
-            // NTP has just updated the system time. We assume that this time is more accurate the the RTC's.
-            return false;
-
-        settimeofday(&t, nullptr);
-        ntp.set_synced();
-    }
-    return true;
-}
+RtcBricklet::RtcBricklet(): DeviceModule(real_time_clock_v2_bricklet_firmware_bin_data,
+                                         real_time_clock_v2_bricklet_firmware_bin_length,
+                                         "rtc",
+                                         "Real Time Clock 2.0",
+                                         "RTC",
+                                         [this](){this->setup_rtc();}) {}
 
 void RtcBricklet::setup()
 {
@@ -62,7 +43,8 @@ void RtcBricklet::setup()
         return;
 }
 
-void RtcBricklet::register_urls() {
+void RtcBricklet::register_urls()
+{
     if (!device_found)
         return;
 
@@ -88,20 +70,11 @@ void RtcBricklet::set_time(const tm &date_time)
         logger.printfln("Setting RTC to %04u-%02u-%02u %02u:%02u:%02u (wd %i) failed with code %i", year, mon, day, hour, min, sec, wday, ret);
 }
 
-void RtcBricklet::set_time(const timeval &time)
-{
-    struct tm date_time;
-    gmtime_r(&time.tv_sec, &date_time);
-
-    set_time(date_time);
-}
-
 struct timeval RtcBricklet::get_time()
 {
     int64_t ts;
     int ret = tf_real_time_clock_v2_get_timestamp(&device, &ts);
-    if (ret)
-    {
+    if (ret) {
         logger.printfln("Reading RTC failed with code %i", ret);
         struct timeval tmp;
         tmp.tv_sec = 0;
@@ -113,11 +86,13 @@ struct timeval RtcBricklet::get_time()
     time.tv_usec = static_cast<suseconds_t>(ts % 1000) * 1000;
     time.tv_sec  = static_cast<time_t>(ts / 1000);
 
+    // Unix timestamps start at 1970-01-01, the RTC starts at year 00 (i.e. 2000). Add the unix timestamp of 2000-01-01 00:00:00
     time.tv_sec += 946684800;
 
+    // Allow time to be 24h older than the build timestamp,
+    // in case the RTC is set by hand to test something.
     // FIXME not Y2038-safe
-    if (time.tv_sec < static_cast<time_t>(build_timestamp() - 14 * 3600))
-    {
+    if (time.tv_sec < static_cast<time_t>(build_timestamp() - 24 * 3600)) {
         struct timeval tmp;
         tmp.tv_sec = 0;
         tmp.tv_usec = 0;

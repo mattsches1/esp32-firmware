@@ -117,7 +117,7 @@
 - Don't allow empty client ID in MQTT
 
 2022-01-10: 1.3.3 (d365e548)
-- Add waking up chargers that already charged once  (charge management)
+- Add waking up chargers that already charged once (charge management)
 - Allow firmware update if vehicle state is error
 - Make web interface usable for screens with 320 to 360 px width
 - Warn when activating authentication that a password reset can only be done by resetting to factory defaults
@@ -377,11 +377,10 @@
 - Improve WiFi reception by disabling HT40 mode and 11b
 - Make energy meter initialization more robust
 - Fix charge manager distribution log access if verbose not requested
-- Make static IP configuration of Ethernet interface more reliable
 - Fix removal of controlled charger in charge manager sub-page
 - Improve translations
 - Update timezone database
-- Log connection duration when Ethernet, WiFi, MQTT or WireGuard connection is lost
+- Log connection duration when WiFi, MQTT or WireGuard connection is lost
 - Reset energy meter only once if requested via Modbus TCP
 - Make sure action requests are never ignored if requested via Modbus TCP
 - Fix broken status page links if charge manager config is changed but not applied
@@ -478,7 +477,7 @@
 - Check that entered IP addresses are not network or broadcast addresses
 - Improve Translations
 - Improve WebSocket connection establishment reliability and performance
-- Fix reverse proxy support.
+- Fix reverse proxy support
 - Don't draw zero line outside plot area
 
 2023-12-21: 2.1.90 (96c641c6)
@@ -486,16 +485,15 @@
 - Add automation
 - Add WPA Enterprise EAP-TLS, EAP-PEAP and EAP-TTLS support
 - Add SunSpec meter/inverter support
-- Rework meter handling. Support 2 energy meters. Add meters API.
+- Rework meter handling. Support 2 energy meters. Add meters API
 - Add configurable API meter
 - Add resettable import/export energy values
 - Use import energy for charge tracker etc. Switch over when factory resetting or removing all tracked charges
 - Add API to restart charge limits
 - Add event log message when meter becomes stuck or unreachable
-- Add warning to event log if ethernet and WiFi station are used at the same time
 - Improve translations
 - Improve charge manager packet burst robustness
-- Improve performance when sendings lots of data over MQTT
+- Improve performance when sending lots of data over MQTT
 - Improve WiFi softAP performance while connecting to WiFi network
 - Improve error feedback in web interface forms
 - Separate Contactor/PE errors
@@ -534,3 +532,108 @@
 - Make SunSpec discovery process more robust against connection loss
 - Fix HTTP API causing errors if receiving payload is slow
 - Update timezone database
+
+2024-04-05: 2.3.0 (a2116460)
+- Add MQTTS and MQTT over WS(S) support
+- Add HTTP automation trigger
+- Add modal for WiFi scan results
+- SunSpec: Support multiple devices in one register set
+- SunSpec: Support multiple instances of the same model in one device
+- SunSpec: Improve boot scan robustness
+- SunSpec: Fix power factor scaling
+- WiFi Enterprise: Fix EAP-TLS connections with client key
+- Fix low entropy of boot ID
+- Don't attempt to repair tracked charge if meter reported exactly 0 kWh before and after the charge
+- Fix automatic channel selection of soft AP
+- Fix phases not being shown as active if phase current is over threshold but negative (grid feed)
+- Reduce charge manager control cycle to 5 seconds
+- Double charge manager current margin if exactly one charger is active
+- Print module in event log messages
+- Reorganize web interface menu structure
+- Split charge management settings in chargers and settings subpages
+- Unify label/content split of status and other subpages
+- Show placeholder if RTC time is not set
+- Show disabled automation actions
+- Improve translations
+
+2024-05-28: 2.4.0 (4c292c70)
+- Add PV excess charging
+- Add SMA Speedwire as new meter type
+- Add Modbus TCP as new meter type
+- Add more meter history plot zoom levels
+- SunSpec: Add support for DER models 701, 713 and 714
+- SunSpec: Add quirk for inverted SolarEdge power values
+- SunSpec: Improve Sungrow compatibility
+- SunSpec: Remove misleading phase information from model names
+- SunSpec: Improve discovery robustness
+- Allow to re-enable 802.11b mode to improve WiFi reception
+- Fix NTP server configuration via DHCP
+- Fix showing 0 W on status page if no data is available
+- Fix duplicated charge mode switching not immediately allowing charge start
+- Fix EVSE LED API names
+- Fix MQTT showing as deactivated before first connection attempt
+- Fix missing Modbus TCP discrete input for (unimplemented!) cp_disconnect
+- Fix WiFi scan not showing as completed if no WiFi was found
+- Fix automatic web interface reload on firmware version change
+- Fix reported WiFi reception quality when not connected
+- Fix EVSE LED automation action
+- Don't require login before sending main page to Safari
+- Reset charge limit targets if overridden with "unlimited"
+- Update default NTP servers
+- Improve NTP sync speed
+- Don't overwrite fresh NTP synced time with probably older RTC time
+- Improve web server robustness
+- Disable gratuitous ARP
+- Disable trusting sender of IP packets for ARP
+- Disable TLS elliptic curves smaller than the required default of 256
+- Improve translations
+- Document new meter types used in Modbus TCP input register 2000
+- Improve Modbus TCP documented register ranges and types
+
+2024-07-24: 2.4.1 (2b99ba4c)
+- Add support for more Modbus TCP devices: Alpha ESS SMILE, Shelly Pro (3)EM
+- Fix Sungrow register table
+- Allow charging in fast mode if PV excess meter values are not available
+- Fix charge manager ramp-up phase
+- Improve Modbus TCP register table documentation
+- Fix web server hanging forever if wait for energy analysis data timed out
+- Close network connections before reboot
+- Fix charge limits energy override
+- Generate some meter values if energy meter does not report them
+- Fix MQTT errors sometimes not being reported to event log
+- Fix charge tracker percentage used calculation
+- Fix charge log PDF title
+- Speed up charge log PDF generation
+- Fix meter value overflows
+- Improve CP/PE measurement (through EVSE Bricklet firmware 2.1.10)
+
+2024-08-29: 2.4.2 (60ada225)
+- Add configurable time that NFC tags are ignored for after authorizing a charge start
+- Add front panel LED blink on ESP restart
+- Sign firmware updates
+- Fix charge manager allocating more than 32 A to a charger
+- Fix PDF generation of empty charge logs
+- Fix focus loss when starting to edit device display name
+- Fix localization of names of downloaded files
+- Fix long SSIDs overflowing the web interface layout
+- Show error message if recovery page failed to start factory reset
+- Fix MQTT automation rules with prefix
+- Fix missing power graph for Victron Energy GX grid meter
+- Fix certificate upload
+
+2024-09-03: 2.5.0 (864e61a0)
+- Add firmware update check and download
+- Add remote access
+
+2024-09-06: 2.6.0 (9d8169d3)
+- Rewrite charge manager: Manage phases individually
+- Add dynamic load management
+- Support PV excess charging with more than one charger
+
+2024-09-19: 2.6.1 (<unknown>)
+- Add support for more Modbus TCP devices: GoodWe Hybrid Inverter
+- Fix remote access registration with Safari
+- Improve remote access registration UI
+- Improve add meter modal UI
+- Only show meter plot on status page if meter is connected
+- Fix charge manager not detecting vehicle as full if charge did start with an A -> C transition (through EVSE Bricklet firmware 2.1.12)

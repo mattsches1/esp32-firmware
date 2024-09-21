@@ -11,10 +11,12 @@ let x = {
             "available_current": "Available current"
         },
         "navbar": {
-            "charge_manager": null
+            "charge_manager_settings": "Charge management",
+            "charge_manager_chargers": "Chargers"
         },
         "content": {
-            "charge_manager": null,
+            "charge_manager_settings": "Charge management",
+            "charge_manager_chargers": "Chargers",
             "enable_charge_manager": "Charge management mode",
             "enable_charge_manager_muted": <><a href="{{{manual_url}}}">see manual for details</a></>,
             "enable_watchdog": "Watchdog enabled",
@@ -23,7 +25,7 @@ let x = {
             "verbose": "Current distribution log enabled",
             "verbose_desc": "Creates log entries whenever current is redistributed",
             "default_available_current": "Default available current",
-            "default_available_current_muted": "will be used after charge manager reboot",
+            "default_available_current_muted": "will be used after charge manager reboot if dynamic load management is not enabled",
             "default_available_current_invalid": "The default available current can at most be the maximum total current.",
             "maximum_available_current": "Maximum total current",
             "maximum_available_current_muted": "Maximum allowed current of all chargers in total. This is usually the rated current of the common supply line.",
@@ -49,19 +51,33 @@ let x = {
 
             "table_charger_name": "Display name",
             "table_charger_host": "Host",
+            "table_charger_rotation": "Phase rotation",
 
             "add_charger_title": "Add charger",
             "add_charger_name": "Display name",
             "add_charger_host": "IP address or hostname",
             "add_charger_found": "Discovered chargers",
             "add_charger_count": /*SFN*/(x: number, max: number) => x + " of " + max + " chargers configured"/*NF*/,
+            "add_charger_rotation": "Phase rotation",
+            "charger_rotation_help": <>The chargers connection from the perspective of the grid or PV meter or the other chargers. Usually only positive sequence rotations are used.<br/><br/>A charger that only uses the grid phase L2 is then connected with the phase rotation L231.<br/><br/>If the rotation of some or all chargers is known, more vehicles can be charged in parallel and PV and grid limits can be maxed out: A charger with unknown phase rotation is assumed to be active on all three phases even if it is only charging on one phase.</>,
+            "rotation_0": "Unknown",
+            "rotation_1": "L123",
+            "rotation_2": "L132",
+            "rotation_3": "L231",
+            "rotation_4": "L213",
+            "rotation_5": "L321",
+            "rotation_6": "L312",
+            "rotation_right": "positive sequence",
+            "rotation_left": "negative sequence",
+            "add_charger_rotation_select": "Select...",
 
             "edit_charger_title": "Edit charger",
             "edit_charger_name": "Display name",
             "edit_charger_host": "IP address or hostname",
+            "edit_charger_rotation": "Phase rotation",
 
-            "multi_broadcast_modal_title": "Reserved, multi- or broadcast ip addresses found",
-            "multi_broadcast_modal_body": "These reserved, multi- or broadcast ip addresses were detected: ",
+            "multi_broadcast_modal_title": "Reserved, multi- or broadcast IP address(es) found",
+            "multi_broadcast_modal_body": "These reserved, multi- or broadcast IP addresses were detected: ",
             "multi_broadcast_modal_body_end": "Are you sure that you want to save the settings?",
             "multi_broadcast_modal_save": "Yes",
             "multi_broadcast_modal_cancel": "Cancel",
@@ -70,12 +86,51 @@ let x = {
             "scan_error_2": "Charge management disabled",
 
             "mode_disabled": "Disabled",
-            "mode_manager": "Charge manager",
+            "mode_manager": "Charge manager / PV excess charging",
             "mode_managed": "Externally controlled",
 
             "managed_boxes": "Managed chargers",
 
-            "host_exists": "Host already exists"
+            "host_exists": "Host already exists",
+
+            "charge_manager_settings_reset_modal_text": "Resetting the list of controlled chargers also deletes the charge manager configuration. Continue?",
+            "charge_manager_chargers_reset_modal_text": "Resetting the charge manager configuration also deletes the list of controlled chargers. Continue?",
+
+            "header_load_management": "Dynamic load management",
+            "dlm_enabled": "Enable dynamic load management",
+            "dlm_enabled_desc": "Adjusts the power consumption of controlled chargers to avoid exceeding the maximum allowed current on any phase of the grid connection.",
+            "dlm_meter_slot_grid_currents": "Energy meter",
+            "dlm_meter_slot_grid_currents_select": "Select...",
+            "dlm_meter_slot_grid_currents_none": "No power meter configured",
+            "dlm_meter_slot_grid_currents_missing_values": "directional phase currents are missing",
+            "dlm_current_limit": "Grid current limit",
+            "dlm_current_limit_muted": "connection's fuse rating",
+            "dlm_largest_consumer_current": "Largest consumer current",
+            "dlm_largest_consumer_current_muted": "per phase",
+            "dlm_largest_consumer_current_help": "The largest sudden rise in current draw to be expected at the meter, that the dynamic load management must be able to compensate for quickly (< 30 seconds). Could be caused by a water heater or heat pump for example. The managed chargers do not have to be taken into account here.",
+            "dlm_safety_margin_pct": "Additional safety margin",
+            "dlm_safety_margin_pct_muted": "Usually no additional margin is necessary.",
+            "dlm_safety_margin_pct_help": "The load management will calculate a safety margin based on the grid current limit and the largest consumer current. This setting can be used to increase the safety marging above the calculated value.",
+
+            "managed_disabled": "Charge management settings will be ignored: Charger only controls itself or is controlled externally.",
+
+            "charge_manager_debug": "Debug",
+            "protocol": "Energy Manager Protocol",
+            "debug_description": "Create protocol",
+            "debug_description_muted": "for diagnosing issues",
+            "debug_start": "Start",
+            "debug_stop": "Stop + Download",
+
+            "internal_state": "Internal state",
+
+            "peak_current": "Short-term allowed peak current",
+            "peak_current_muted": "Overload that is compensated by the load management within 30 seconds. 140 % of the Grid current limit.",
+
+            "expected_peak_current": "Expected peak current",
+            "expected_peak_current_muted": "Short-term expected peak current including the additional safety margin.",
+
+            "target_constant_current": "Target constant current",
+            "target_constant_current_muted": "Chargers will be throttled if this current is exceeded to make sure the largest consumer will not exceed the expected peak current."
         },
         "automation": {
           "charge_manager_wd": "Charge manager watchdog triggered",
@@ -119,8 +174,8 @@ let x = {
             "charge_state_blocked_by_other_box": "Blocked",
             "charge_state_blocked_by_other_box_details": "Error with another charger",
 
-            "ampere_allocated": "A allocated",
-            "ampere_supported": "A supported",
+            "ampere_allocated": "allocated",
+            "ampere_supported": "supported",
 
             "last_update_prefix": "Unavailable for",
             "last_update_suffix": "",
@@ -131,9 +186,9 @@ let x = {
 
             "scan_failed": "Scan failed",
 
-            "mode_explainer_0": "This WARP Charger is not part of a charge management group.",
+            "mode_explainer_0": "This WARP Charger is not part of a charge management group. PV excess charging is disabled.",
             "mode_explainer_1": "This WARP Charger is part of a charge management group with other WARP Chargers and/or a WARP Energy Manager. Another device controls this group to make sure the configured current is never exceeded.",
-            "mode_explainer_2": "This WARP Charger controls a charge management group with othter WARP Chargers to make sure the configured current is never exceeded."
+            "mode_explainer_2": "This WARP Charger either uses the PV excess charging or controls a charge management group with other WARP Chargers to make sure the configured current is never exceeded."
         }
     }
 }

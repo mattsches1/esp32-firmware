@@ -22,28 +22,21 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "event_log_prefix.h"
+#include "main_dependencies.h"
+#include "modules.h"
 #include "index_html.embedded.h"
-
 #include "bindings/hal_common.h"
-#include "api.h"
-#include "event_log.h"
-#include "task_scheduler.h"
-#include "web_server.h"
 #include "build.h"
-#include "module.h"
-#include "modules_main.h"
 #include "tools.h"
 
 #include "gcc_warnings.h"
 
 BootStage boot_stage = BootStage::STATIC_INITIALIZATION;
 
-struct loop_chain {
-    struct loop_chain *next;
-    IModule *imodule;
-};
-
-static struct loop_chain *loop_chain = nullptr;
+static IModule **loop_chain = nullptr;
+static size_t loop_chain_size = 0;
+static size_t loop_chain_head = 0;
 
 static bool is_module_loop_overridden(const IModule *imodule) {
 #if defined(__GNUC__)
@@ -80,8 +73,6 @@ int8_t button_pin = -1;
 
 ConfigRoot modules;
 
-bool firmware_update_allowed = true;
-
 static bool is_safari(const String &user_agent) {
     return user_agent.indexOf("Safari/") >= 0 &&
            user_agent.indexOf("Version/") >= 0 &&
@@ -101,13 +92,13 @@ static WebServerRequestReturnProtect send_index_html(WebServerRequest &request) 
     return request.send(200, "text/html; charset=utf-8", index_html_data, index_html_length);
 }
 
-static void register_default_urls(void) {
+static void register_default_urls() {
     server.on_HTTPThread("/", HTTP_GET, [](WebServerRequest request) {
         return send_index_html(request);
     });
 
     api.addCommand("reboot", Config::Null(), {}, []() {
-        trigger_reboot("API");
+        trigger_reboot("API", 1000);
     }, true);
 
     api.addState("info/modules", &modules);
@@ -119,16 +110,13 @@ static void register_default_urls(void) {
 
     server.onNotAuthorized_HTTPThread([](WebServerRequest request) {
         if (request.uri() == "/") {
-            // Safari does not support an unauthenticated login page and an authenticated main page on the same url,
-            // as it does not proactively send the credentials if the same url is known to have an unauthenticated
-            // version.
-            if (is_safari(request.header("User-Agent"))) {
-                return request.requestAuthentication();
-            }
-
             return send_index_html(request);
         } else if (request.uri() == "/login_state") {
-            // Same reasoning as above. If we don't force Safari, it does not send credentials, which breaks the login_state check.
+            // Force Safari to send credentials proactively.
+            // This still is broken for the ws:// handler,
+            // however there seems to be no way to force safari to proactively send credentials for it.
+            // See https://bugs.webkit.org/show_bug.cgi?id=80362
+            // Pressing cancel instead of logging in works at least on macOS.
             if (is_safari(request.header("User-Agent"))) {
                 return request.requestAuthentication();
             }
@@ -146,31 +134,108 @@ static void register_default_urls(void) {
     server.on_HTTPThread("/login_state", HTTP_GET, [](WebServerRequest request) {
         return request.send(200, "text/plain", "Logged in");
     });
-
-    api.registerDebugUrl();
 }
 
-void setup(void) {
+#define PRE_REBOOT_MAX_DURATION (5 * 60 * 1000)
+
+static const char *pre_reboot_message = "Pre-reboot stage lasted longer than five minutes";
+
+#if !MODULE_WATCHDOG_AVAILABLE()
+
+static void pre_reboot_task(void *arg)
+{
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wold-style-cast"
+    // portTICK_PERIOD_MS expands to an old style cast.
+    vTaskDelay(PRE_REBOOT_MAX_DURATION / portTICK_PERIOD_MS);
+#pragma GCC diagnostic pop
+
+    esp_system_abort(pre_reboot_message);
+}
+
+static void task_creation_failed(int error_code)
+{
+    char msg[48];
+    msg[0] = 0;
+    snprintf(msg, ARRAY_SIZE(msg), "Failed to create pre-reboot task: %i", error_code);
+    esp_system_abort(msg);
+}
+
+#endif
+
+static void pre_reboot_helper()
+{
+    std::vector<IModule *> imodules;
+    modules_get_imodules(&imodules);
+
+    for (IModule *imodule : imodules) {
+        imodule->pre_reboot();
+    }
+
+    delay(1500);
+}
+
+static void pre_reboot()
+{
+    boot_stage = BootStage::PRE_REBOOT;
+
+    if (running_in_main_task()) {
+#if MODULE_WATCHDOG_AVAILABLE()
+        watchdog.add("pre_reboot", pre_reboot_message, PRE_REBOOT_MAX_DURATION, 0, true);
+#else
+        auto err = xTaskCreatePinnedToCore(
+            pre_reboot_task,
+            "pre_reboot_task",
+            640,
+            nullptr,
+            ESP_TASK_PRIO_MAX,
+            nullptr,
+            1);
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wold-style-cast"
+#pragma GCC diagnostic ignored "-Wuseless-cast"
+        // pdPASS expands to an old-style cast that is also useless
+        if (err != pdPASS) {
+            task_creation_failed(err);
+        }
+#pragma GCC diagnostic pop
+#endif
+
+        pre_reboot_helper();
+    }
+    else {
+        if (task_scheduler.await(pre_reboot_helper, PRE_REBOOT_MAX_DURATION) == TaskScheduler::AwaitResult::Timeout) {
+            esp_system_abort(pre_reboot_message);
+        }
+    }
+}
+
+#if MODULE_WATCHDOG_AVAILABLE()
+static int watchdog_handle;
+#endif
+
+void setup()
+{
     set_main_task_handle();
 
     boot_stage = BootStage::PRE_INIT;
+
+    // Technically the serial console is already active, because the ESP's ROM bootloader prints some messages.
+    // However if BUILD_MONITOR_SPEED is not the ROM bootloader's preferred speed, this call will change the speed.
     Serial.begin(BUILD_MONITOR_SPEED);
 
-    logger.pre_init();
-
-    logger.printfln("    **** TINKERFORGE " BUILD_DISPLAY_NAME_UPPER " V%s ****", build_version_full_str());
-    logger.printfln("         %uK RAM SYSTEM   %u HEAP BYTES FREE", ESP.getHeapSize() / 1024, ESP.getFreeHeap());
-    logger.printfln("READY.");
-
-    logger.printfln("Last reset reason was: %s", tf_reset_reason());
+    config_pre_init();
 
     std::vector<IModule *> imodules;
     modules_get_imodules(&imodules);
 
-    config_pre_init();
-
     for (IModule *imodule : imodules) {
         imodule->pre_init();
+    }
+
+    if (esp_register_shutdown_handler(pre_reboot) != ESP_OK) {
+        logger.printfln("Failed to register reboot handler");
     }
 
     if (!mount_or_format_spiffs()) {
@@ -179,19 +244,11 @@ void setup(void) {
 
     boot_stage = BootStage::PRE_SETUP;
 
-    task_scheduler.pre_setup();
-    api.pre_setup();
-    logger.pre_setup();
-
     for (IModule *imodule : imodules) {
         imodule->pre_setup();
     }
 
     boot_stage = BootStage::SETUP;
-
-    // Setup task scheduler before API: The API setup can run migrations that want to start tasks.
-    task_scheduler.setup();
-    api.setup();
 
     for (IModule *imodule : imodules) {
         imodule->setup();
@@ -200,16 +257,12 @@ void setup(void) {
     modules = modules_get_init_config();
 
     logger.post_setup();
-
     config_post_setup();
-
-    server.start();
+    server.post_setup();
 
     boot_stage = BootStage::REGISTER_URLS;
 
     register_default_urls();
-    logger.register_urls();
-    task_scheduler.register_urls();
 
     for (IModule *imodule : imodules) {
         imodule->register_urls();
@@ -222,27 +275,45 @@ void setup(void) {
     }
 
     // Ignore non-overridden empty loop functions.
-    // Add all overridden loop functions to a circular list for round-robin execution.
-    struct loop_chain **next_chain_ptr = &loop_chain;
     for (IModule *imodule : imodules) {
         if (is_module_loop_overridden(imodule)) {
-            *next_chain_ptr = static_cast<struct loop_chain *>(malloc(sizeof(struct loop_chain)));
-            (*next_chain_ptr)->imodule = imodule;
-            next_chain_ptr = &(*next_chain_ptr)->next;
+            ++loop_chain_size;
         }
     }
-    *next_chain_ptr = loop_chain; // Close loop. Overwrites loop_chain with itself if the loop is empty.
+
+    // Add all overridden loop functions to a circular list for round-robin execution.
+    if (loop_chain_size > 0) {
+        loop_chain = static_cast<IModule **>(malloc(sizeof(IModule*) * loop_chain_size));
+        size_t loop_chain_used = 0;
+        for (IModule *imodule : imodules) {
+            if (is_module_loop_overridden(imodule)) {
+                loop_chain[loop_chain_used] = imodule;
+                ++loop_chain_used;
+            }
+        }
+    }
+
+#if MODULE_WATCHDOG_AVAILABLE()
+    watchdog_handle = watchdog.add("main_loop", "Main thread blocked", 30000, 0, true);
+#endif
 
     boot_stage = BootStage::LOOP;
 }
 
-void loop(void) {
+void loop() {
+#if MODULE_WATCHDOG_AVAILABLE()
+    watchdog.reset(watchdog_handle);
+#endif
+
     tf_hal_tick(&hal, 0);
-    task_scheduler.loop();
+    task_scheduler.custom_loop();
 
     // Round-robin for modules' loop functions, to prioritize HAL ticks and scheduler.
     if (loop_chain != nullptr) {
-        loop_chain->imodule->loop();
-        loop_chain = loop_chain->next;
+        loop_chain[loop_chain_head]->loop();
+        loop_chain_head = loop_chain_head + 1;
+        if (loop_chain_head >= loop_chain_size) {
+            loop_chain_head = 0;
+        }
     }
 }

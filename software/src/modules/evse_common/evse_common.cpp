@@ -18,12 +18,16 @@
  */
 
 #include "evse_common.h"
+
+#include <LittleFS.h>
+
+#include "event_log_prefix.h"
 #include "module_dependencies.h"
 
-extern EvseCommon evse_common;
 extern uint32_t local_uid_num;
 
-EvseCommon::EvseCommon() {
+EvseCommon::EvseCommon()
+{
 #if MODULE_EVSE_AVAILABLE()
     backend = &evse;
 #elif MODULE_EVSE_V2_AVAILABLE()
@@ -141,7 +145,9 @@ void EvseCommon::pre_setup()
 
     automation.register_trigger(
         AutomationTriggerID::EVSEExternalCurrentWd,
-        *Config::Null()
+        *Config::Null(),
+        nullptr,
+        false
     );
 
     automation.register_action(
@@ -187,6 +193,11 @@ bool EvseCommon::apply_slot_default(uint8_t slot, uint16_t current, bool enabled
 
 void EvseCommon::apply_defaults()
 {
+    if (should_factory_reset_bricklets) {
+        this->factory_reset();
+        should_factory_reset_bricklets = false;
+    }
+
     // Maybe this is the first start-up after updating the EVSE to firmware 2.1.0 (or higher)
     // (Or the first start-up at all)
     // Make sure, that the charging slot defaults are the expected ones.
@@ -256,12 +267,6 @@ void EvseCommon::apply_defaults()
     }
 }
 
-#if MODULE_AUTOMATION_AVAILABLE()
-    bool trigger_action(Config *cfg, void *data) {
-        return evse_common.action_triggered(cfg, data);
-    }
-#endif
-
 void EvseCommon::setup()
 {
     api.restorePersistentConfig("evse/meter_config", &meter_config);
@@ -277,16 +282,18 @@ void EvseCommon::setup()
 
     setup_evse();
 
-    if (!backend->initialized)
+    if (!backend->is_initialized())
         return;
 
     // Get all data once before announcing the EVSE feature.
     backend->update_all_data();
     api.addFeature("evse");
 
+    debug_protocol.register_backend(backend);
+
 #if MODULE_AUTOMATION_AVAILABLE()
     task_scheduler.scheduleOnce([this]() {
-        automation.trigger_action(AutomationTriggerID::ChargerState, nullptr, trigger_action);
+        automation.trigger(AutomationTriggerID::ChargerState, nullptr, this);
     }, 0);
 #endif
 
@@ -294,16 +301,20 @@ void EvseCommon::setup()
         backend->update_all_data();
     }, 0, 250);
 
+#if MODULE_POWER_MANAGER_AVAILABLE()
+    power_manager.register_phase_switcher_backend(backend);
+#endif
+
     backend->post_setup();
     initialized = true;
 }
 
 #if MODULE_AUTOMATION_AVAILABLE()
-bool EvseCommon::action_triggered(Config *config, void *data)
+bool EvseCommon::has_triggered(const Config *conf, void *data)
 {
-    Config *cfg = (Config*)config->get();
-    uint32_t *states = (uint32_t*)data;
-    switch (config->getTag<AutomationTriggerID>()) {
+    const Config *cfg = static_cast<const Config *>(conf->get());
+    uint32_t *states = (uint32_t *)data;
+    switch (conf->getTag<AutomationTriggerID>()) {
         case AutomationTriggerID::ChargerState:
         {
             uint32_t tmp_states[2] = {0};
@@ -319,7 +330,7 @@ bool EvseCommon::action_triggered(Config *config, void *data)
             break;
 
         case AutomationTriggerID::EVSEExternalCurrentWd:
-        return true;
+            return true;
 
         default:
             return false;
@@ -334,16 +345,23 @@ void EvseCommon::setup_evse()
     }
 
     this->apply_defaults();
-    backend->initialized = true;
+    backend->set_initialized(true);
 }
 
 void EvseCommon::register_urls()
 {
 #if MODULE_CM_NETWORKING_AVAILABLE()
-    cm_networking.register_client([this](uint16_t current, bool cp_disconnect_requested) {
+    cm_networking.register_client([this](uint16_t current, bool cp_disconnect_requested, int8_t phases_requested) {
+        if (!this->management_enabled.get("enabled")->asBool())
+            return;
+
         set_managed_current(current);
 
         backend->set_control_pilot_disconnect(cp_disconnect_requested, nullptr);
+        auto phases = backend->get_is_3phase() ? 3 : 1;
+        if (phases_requested != 0 && phases != phases_requested) {
+            backend->switch_phases_3phase(phases_requested == 3);
+        }
     });
 
     task_scheduler.scheduleWithFixedDelay([this](){
@@ -367,7 +385,9 @@ void EvseCommon::register_urls()
             slots.get(CHARGING_SLOT_CHARGE_MANAGER)->get("max_current")->asUint(),
             supported_current,
             management_enabled.get("enabled")->asBool(),
-            backend->get_control_pilot_disconnect()
+            backend->get_control_pilot_disconnect(),
+            backend->get_is_3phase() ? 3 : 1,
+            backend->phase_switching_capable() && backend->can_switch_phases_now(!backend->get_is_3phase())
         );
     }, 1000, 1000);
 
@@ -407,26 +427,6 @@ void EvseCommon::register_urls()
             backend->set_charging_slot_max_current(CHARGING_SLOT_AUTOSTART_BUTTON, 32000);
     }, true);
 
-#if MODULE_WS_AVAILABLE()
-    server.on("/evse/start_debug", HTTP_GET, [this](WebServerRequest request) {
-        last_debug_keep_alive = millis();
-        check_debug();
-        ws.pushRawStateUpdate(backend->get_evse_debug_header(), "evse/debug_header");
-        debug = true;
-        return request.send(200);
-    });
-
-    server.on("/evse/continue_debug", HTTP_GET, [this](WebServerRequest request) {
-        last_debug_keep_alive = millis();
-        return request.send(200);
-    });
-
-    server.on("/evse/stop_debug", HTTP_GET, [this](WebServerRequest request){
-        debug = false;
-        return request.send(200);
-    });
-#endif
-
     api.addState("evse/external_current", &external_current);
     api.addCommand("evse/external_current_update", &external_current_update, {}, [this](){
         this->last_external_update = millis();
@@ -439,9 +439,6 @@ void EvseCommon::register_urls()
     }, false);
 
     api.addState("evse/management_current", &management_current);
-    api.addCommand("evse/management_current_update", &management_current_update, {}, [this](){
-        set_managed_current(management_current_update.get("current")->asUint());
-    }, false);
 
     api.addState("evse/boost_mode", &boost_mode);
     api.addCommand("evse/boost_mode_update", &boost_mode_update, {}, [this](){
@@ -589,26 +586,26 @@ void EvseCommon::register_urls()
     backend->post_register_urls();
 
 #if MODULE_AUTOMATION_AVAILABLE()
-    if (automation.is_trigger_active(AutomationTriggerID::ChargerState)) {
+    if (automation.has_task_with_trigger(AutomationTriggerID::ChargerState)) {
         event.registerEvent("evse/state", {}, [this](const Config *cfg) {
             // we need this since not only iec state changes trigger this api event.
             static uint32_t last_state = 0;
             uint32_t state_now = cfg->get("charger_state")->asUint();
             uint32_t states[2] = {last_state, state_now};
             if (last_state != state_now) {
-                automation.trigger_action(AutomationTriggerID::ChargerState, (void *)states, &trigger_action);
+                automation.trigger(AutomationTriggerID::ChargerState, (void *)states, this);
                 last_state = state_now;
             }
             return EventResult::OK;
         });
     }
 
-    if (automation.is_trigger_active(AutomationTriggerID::EVSEExternalCurrentWd)) {
+    if (automation.has_task_with_trigger(AutomationTriggerID::EVSEExternalCurrentWd)) {
         task_scheduler.scheduleWithFixedDelay([this](){
             static bool was_triggered = false;
             const bool elapsed = deadline_elapsed(last_external_update + 30000);
             if (external_enabled.get("enabled")->asBool() && elapsed && !was_triggered) {
-                automation.trigger_action(AutomationTriggerID::EVSEExternalCurrentWd, nullptr, &trigger_action);
+                automation.trigger(AutomationTriggerID::EVSEExternalCurrentWd, nullptr, this);
                 was_triggered = true;
             } else if (!elapsed) {
                 was_triggered = false;
@@ -620,17 +617,6 @@ void EvseCommon::register_urls()
     api.addCommand("evse/automation_current_update", &automation_current_update, {}, [this](){
         backend->set_charging_slot_max_current(CHARGING_SLOT_AUTOMATION, automation_current_update.get("current")->asUint());
     }, false); //TODO: should this be an action?
-#endif
-}
-
-void EvseCommon::loop()
-{
-#if MODULE_WS_AVAILABLE()
-    static uint32_t last_debug = 0;
-    if (debug && deadline_elapsed(last_debug + 50)) {
-        last_debug = millis();
-        ws.pushRawStateUpdate(backend->get_evse_debug_line(), "evse/debug");
-    }
 #endif
 }
 
@@ -663,7 +649,7 @@ uint32_t EvseCommon::get_charger_meter()
 
 MeterValueAvailability EvseCommon::get_charger_meter_power(float *power, micros_t max_age)
 {
-    return meters.get_power(this->get_charger_meter(), power, max_age);
+    return meters.get_power_real(this->get_charger_meter(), power, max_age);
 }
 
 MeterValueAvailability EvseCommon::get_charger_meter_energy(float *energy, micros_t max_age)
@@ -772,15 +758,7 @@ bool EvseCommon::get_management_enabled()
     return management_enabled.get("enabled")->asBool();
 }
 
-void EvseCommon::check_debug()
+uint32_t EvseCommon::get_evse_version()
 {
-    task_scheduler.scheduleOnce([this](){
-        if (deadline_elapsed(last_debug_keep_alive + 60000) && debug)
-        {
-            logger.printfln("Debug log creation canceled because no continue call was received for more than 60 seconds.");
-            debug = false;
-        }
-        else if (debug)
-            check_debug();
-    }, 10000);
+    return hardware_configuration.get("evse_version")->asUint();
 }

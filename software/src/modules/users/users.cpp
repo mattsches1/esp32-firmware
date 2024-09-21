@@ -18,19 +18,14 @@
  */
 #include "users.h"
 
-#include "LittleFS.h"
-
-#include "task_scheduler.h"
-
-#include "api.h"
-#include "task_scheduler.h"
-#include "tools.h"
-#include "module_dependencies.h"
-
-#include "digest_auth.h"
 #include <cmath>
-
 #include <memory>
+#include <LittleFS.h>
+
+#include "event_log_prefix.h"
+#include "module_dependencies.h"
+#include "tools.h"
+#include "digest_auth.h"
 
 #define USERNAME_FILE "/users/all_usernames"
 
@@ -198,6 +193,100 @@ void Users::pre_setup()
         return "";
     }};
     add.set_permit_null_updates(false);
+
+    modify = ConfigRoot{Config::Object({
+        {"id", Config::Uint(256, 0, 256)}, // 256 is used as marker value that the ID was not written
+        {"roles", Config::Uint32(0)},
+        {"current", Config::Uint(32000 + 1, 0, 32000 + 1)}, // 32000 + 1 is also a marker value
+        {"display_name", Config::Str("___MARKER___VALUE___", 0, USERNAME_LENGTH)},
+        {"username", Config::Str("___MARKER___VALUE___", 0, USERNAME_LENGTH)},
+        {"digest_hash", Config::Str("___MARKER___VALUE___", 0, 32)},
+    }), [this](Config &modify, ConfigSource source) -> String {
+        auto id = modify.get("id")->asUint();
+        auto roles = modify.get("roles")->asUint();
+        auto current = modify.get("current")->asUint();
+        auto display_name = modify.get("display_name")->asString();
+        auto username = modify.get("username")->asString();
+        auto digest_hash = modify.get("digest_hash")->asString();
+
+        bool id_passed = id < 256 ;
+        bool roles_passed = roles != 0;
+        bool current_passed = current < 32000 + 1;
+        bool display_name_passed = display_name != "___MARKER___VALUE___";
+        bool username_passed = username != "___MARKER___VALUE___";
+        bool digest_hash_passed = digest_hash != "___MARKER___VALUE___";
+
+        if (!id_passed)
+            return "Can't modify user. User ID is null or missing.";
+
+        // Only allow modification of display name for anonymous.
+
+        if (id == 0) {
+            if (username_passed)
+                return "Can't modify anonymous user. Username needs to be null or missing.";
+            if (digest_hash_passed)
+                return "Can't modify anonymous user. Digest_hash needs to be null or missing.";
+            if (roles_passed)
+                return "Can't modify anonymous user. Roles need to be null or missing.";
+            if (current_passed)
+                return "Can't modify anonymous user. Current need to be null or missing.";
+        }
+
+        Config *user = nullptr;
+        for(int i = 0; i < config.get("users")->count(); ++i) {
+            if (config.get("users")->get(i)->get("id")->asUint() == id) {
+                user = (Config *)config.get("users")->get(i);
+                break;
+            }
+        }
+
+        if (user == nullptr) {
+            return "Can't modify user. User with this ID not found.";
+        }
+
+        if (username_passed
+            && !digest_hash_passed
+            && user->get("username")->asString() != username
+            && !user->get("digest_hash")->asString().isEmpty()) {
+            return "Changing the username without updating the digest hash is not allowed!";
+        }
+
+        for(int i = 0; i < config.get("users")->count(); ++i) {
+            if (config.get("users")->get(i)->get("id")->asUint() == id)
+                continue;
+
+            if (config.get("users")->get(i)->get("username")->asString() == username) {
+                return "Can't modify user. Another user with the same username already exists.";
+            }
+        }
+
+        {
+            char other_name[33] = {0};
+            File f = LittleFS.open(USERNAME_FILE, "r");
+            for(size_t i = 0; i < f.size(); i += USERNAME_ENTRY_LENGTH) {
+                if ((i / USERNAME_ENTRY_LENGTH) == id)
+                    continue;
+
+                f.seek(i);
+                f.read((uint8_t *) other_name, USERNAME_LENGTH);
+                if (username == other_name)
+                    return "Can't modify user. A user with this username already has tracked charges.";
+            }
+        }
+
+        if (!roles_passed)
+            modify.get("roles")->updateUint(user->get("roles")->asUint());
+        if (!current_passed)
+            modify.get("current")->updateUint(user->get("current")->asUint());
+        if (!display_name_passed)
+            modify.get("display_name")->updateString(user->get("display_name")->asString());
+        if (!username_passed)
+            modify.get("username")->updateString(user->get("username")->asString());
+        if (!digest_hash_passed)
+            modify.get("digest_hash")->updateString(user->get("digest_hash")->asString());
+
+        return "";
+    }};
 
     remove = ConfigRoot{Config::Object({
         {"id", Config::Uint8(0)}
@@ -390,11 +479,11 @@ void Users::search_next_free_user()
     config.get("next_user_id")->updateUint(user_id);
 }
 
-int Users::get_display_name(uint8_t user_id, char *ret_buf)
+size_t Users::get_display_name(uint8_t user_id, char *ret_buf)
 {
     for (auto &cfg : config.get("users")) {
         if (cfg.get("id")->asUint() == user_id) {
-            String s = cfg.get("display_name")->asString();
+            const String &s = cfg.get("display_name")->asString();
             strncpy(ret_buf, s.c_str(), 32);
             return min(s.length(), 32u);
         }
@@ -443,83 +532,8 @@ void Users::register_urls()
         }});
     }
 
-    api.addRawCommand("users/modify", [this](char *c, size_t s) -> String {
-        StaticJsonDocument<96> doc;
-
-        DeserializationError error = deserializeJson(doc, c, s);
-
-        if (error) {
-            return String("Failed to deserialize string: ") + error.c_str();
-        }
-
-        const char * const expected_keys[] = {
-            "id",
-            "roles",
-            "current",
-            "display_name",
-            "username",
-            "digest_hash"
-        };
-
-        auto obj = doc.as<JsonObjectConst>();
-
-        for (JsonPairConst kv : obj) {
-            bool found = false;
-            for(int i = 0; i < ARRAY_SIZE(expected_keys); ++i) {
-                if (kv.key() != expected_keys[i])
-                    continue;
-
-                found = true;
-                break;
-            }
-            if (!found)
-                return String("JSON object has unknown key '") + kv.key().c_str() + "'.\n";
-        }
-
-        if (doc["id"] != nullptr && !doc["id"].is<uint32_t>())
-            return "[\"id\"]JSON node was not an unsigned integer.";
-
-        if (doc["roles"] != nullptr && !doc["roles"].is<uint32_t>())
-            return "[\"roles\"]JSON node was not an unsigned integer.";
-
-        if (doc["current"] != nullptr && !doc["current"].is<uint32_t>())
-            return "[\"current\"]JSON node was not an unsigned integer.";
-
-        if (doc["display_name"] != nullptr && !doc["display_name"].is<String>())
-            return "[\"display_name\"]JSON node was not a string.";
-
-        if (doc["username"] != nullptr && !doc["username"].is<String>())
-            return "[\"username\"]JSON node was not a string.";
-
-        if (doc["digest_hash"] != nullptr && !doc["digest_hash"].is<String>())
-            return "[\"digest_hash\"]JSON node was not a string.";
-
-        if (doc["display_name"] != nullptr && doc["display_name"].as<String>().length() > USERNAME_LENGTH)
-            return String("[\"display_name\"]String of maximum length ") + USERNAME_LENGTH + " was expected, but got " + doc["display_name"].as<String>().length();
-
-        if (doc["username"] != nullptr && doc["username"].as<String>().length() > USERNAME_LENGTH)
-            return String("[\"username\"]String of maximum length ") + USERNAME_LENGTH + " was expected, but got " + doc["username"].as<String>().length();
-
-        if (doc["digest_hash"] != nullptr && doc["digest_hash"].as<String>().length() > 32)
-            return String("[\"digest_hash\"]String of maximum length 32 was expected, but got ") + doc["digest_hash"].as<String>().length();
-
-        if (doc["current"] != nullptr && doc["current"].as<uint32_t>() > 32000)
-            return String("[\"current\"]Unsigned integer value ") + doc["current"].as<uint32_t>() + " was more than the allowed maximum of 32000";
-
-        if (doc["id"] == nullptr)
-            return "Can't modify user. User ID is null or missing.";
-
-        uint8_t id = doc["id"].as<uint8_t>();
-        if (id == 0) {
-            if (doc["username"] != nullptr)
-                return "Username needs to be empty.";
-            if (doc["roles"] != nullptr)
-                return "Roles need to be empty.";
-            if (doc["current"] != nullptr)
-                return "Current needs to be empty.";
-            if (doc["digest_hash"] != nullptr)
-                return "Digest_hash needs to be empty.";
-        }
+    api.addCommand("users/modify", &modify, {"digest_hash"}, [this](String &result){
+        auto id = modify.get("id")->asUint();
 
         Config *user = nullptr;
         for(int i = 0; i < config.get("users")->count(); ++i) {
@@ -529,66 +543,32 @@ void Users::register_urls()
             }
         }
 
+        // Validity was already checked, but we have to search the user config anyway.
         if (user == nullptr) {
-            return "Can't modify user. User with this ID not found.";
+            result = "Can't modify user. User with this ID not found.";
         }
 
-        // The digest hash is calculated with the username and password.
-        if (doc["username"] != nullptr
-         && doc["digest_hash"] == nullptr
-         && user->get("username")->asString() != doc["username"]
-         && !user->get("digest_hash")->asString().isEmpty()) {
-            return "Changing the username without updating the digest hash is not allowed!";
-        }
-
-        for(int i = 0; i < config.get("users")->count(); ++i) {
-            if (config.get("users")->get(i)->get("id")->asUint() == id)
-                continue;
-
-            if (config.get("users")->get(i)->get("username")->asString() == doc["username"]) {
-                return "Can't modify user. Another user with the same username already exists.";
-            }
-        }
-
-        char username[33] = {0};
-        File f = LittleFS.open(USERNAME_FILE, "r");
-        for(size_t i = 0; i < f.size(); i += USERNAME_ENTRY_LENGTH) {
-            if ((i / USERNAME_ENTRY_LENGTH) == id)
-                continue;
-
-            f.seek(i);
-            f.read((uint8_t *) username, USERNAME_LENGTH);
-            if (doc["username"].as<String>() == username)
-                return "Can't modify user. A user with this username already has tracked charges.";
-        }
-
-        if (doc["roles"] != nullptr)
-            user->get("roles")->updateUint((uint32_t) doc["roles"]);
-
-        bool display_name_changed = false;
-        if (doc["display_name"] != nullptr)
-            display_name_changed = user->get("display_name")->updateString(doc["display_name"]);
-
-        bool username_changed = false;
-        if (doc["username"] != nullptr)
-            username_changed = user->get("username")->updateString(doc["username"]);
-
-        if (doc["current"] != nullptr)
-            user->get("current")->updateUint((uint32_t) doc["current"]);
-
-        if (doc["digest_hash"] != nullptr)
-            user->get("digest_hash")->updateString(doc["digest_hash"]);
+        user->get("roles")->updateUint(modify.get("roles")->asUint());
+        user->get("current")->updateUint(modify.get("current")->asUint());
+        bool display_name_changed = user->get("display_name")->updateString(modify.get("display_name")->asString());
+        bool username_changed = user->get("username")->updateString(modify.get("username")->asString());
+        user->get("digest_hash")->updateString(modify.get("digest_hash")->asString());
 
         String err = this->config.validate(ConfigSource::API);
         if (!err.isEmpty())
-            return err;
+            result = err;
 
         API::writeConfig("users/config", &config);
 
         if (display_name_changed || username_changed)
             this->rename_user(user->get("id")->asUint(), user->get("username")->asString(), user->get("display_name")->asString());
 
-        return "";
+        modify.get("id")->updateUint(256);
+        modify.get("roles")->updateUint(0);
+        modify.get("current")->updateUint(32000 + 1);
+        modify.get("display_name")->updateString("___MARKER___VALUE___");
+        modify.get("username")->updateString("___MARKER___VALUE___");
+        modify.get("digest_hash")->updateString("___MARKER___VALUE___");
     }, true);
 
     api.addState("users/config", &config, {"digest_hash"});
@@ -663,9 +643,13 @@ void Users::register_urls()
             return request.send(507);
         }
 
-        File f = LittleFS.open(USERNAME_FILE, "r");
+        size_t read = 0;
 
-        size_t read = f.read((uint8_t *)buf.get(), len);
+        {
+            File f = LittleFS.open(USERNAME_FILE, "r");
+            read = f.read((uint8_t *)buf.get(), len);
+        }
+
         return request.send(200, "application/octet-stream", buf.get(), read);
     });
 
@@ -700,15 +684,14 @@ void Users::remove_from_username_file(uint8_t user_id)
     }
 
     this->rename_user(user_id, "", "");
-    if (config.get("next_user_id")->asUint() == 0)
-    {
+    if (config.get("next_user_id")->asUint() == 0) {
         config.get("next_user_id")->updateUint(user_id);
         API::writeConfig("users/config", &config);
     }
 }
 
 // Only returns true if the triggered action was a charge start.
-bool Users::trigger_charge_action(uint8_t user_id, uint8_t auth_type, Config::ConfVariant auth_info, int action)
+bool Users::trigger_charge_action(uint8_t user_id, uint8_t auth_type, Config::ConfVariant auth_info, int action, micros_t deadtime_post_stop, micros_t deadtime_post_start)
 {
     bool user_enabled = get_user_slot()->get("active")->asBool();
     if (!user_enabled)
@@ -736,16 +719,16 @@ bool Users::trigger_charge_action(uint8_t user_id, uint8_t auth_type, Config::Co
     switch (iec_state) {
         case IEC_STATE_B: // State B: The user wants to start charging. If we already have a tracked charge, stop charging to allow switching to another user.
             if (charge_tracker.currentlyCharging()) {
-                if (action == TRIGGER_CHARGE_ANY || action == TRIGGER_CHARGE_STOP)
+                if ((action == TRIGGER_CHARGE_ANY || action == TRIGGER_CHARGE_STOP) && deadline_elapsed(last_charge_action_triggered + deadtime_post_start))
                     this->stop_charging(user_id, false);
                 return false;
             }
-            if (action == TRIGGER_CHARGE_ANY || action == TRIGGER_CHARGE_START)
+            if ((action == TRIGGER_CHARGE_ANY || action == TRIGGER_CHARGE_START) && deadline_elapsed(last_charge_action_triggered + deadtime_post_stop))
                 return this->start_charging(user_id, current_limit, auth_type, auth_info);
             return false;
         case IEC_STATE_C: // State C: The user wants to stop charging.
             // Debounce here a bit, an impatient user can otherwise accidentially trigger a stop if a start_charging takes too long.
-            if (tscs > 3000 && (action == TRIGGER_CHARGE_ANY || action == TRIGGER_CHARGE_STOP))
+            if (tscs > 3000 && (action == TRIGGER_CHARGE_ANY || action == TRIGGER_CHARGE_STOP) && deadline_elapsed(last_charge_action_triggered + deadtime_post_start))
                 this->stop_charging(user_id, false);
             return false;
         default: //Don't do anything in state A, D, and E/F
@@ -762,6 +745,8 @@ void Users::remove_username_file()
 
 bool Users::start_charging(uint8_t user_id, uint16_t current_limit, uint8_t auth_type, Config::ConfVariant auth_info)
 {
+    last_charge_action_triggered = now_us();
+
     if (charge_tracker.currentlyCharging())
         return false;
 
@@ -779,6 +764,8 @@ bool Users::start_charging(uint8_t user_id, uint16_t current_limit, uint8_t auth
 
 bool Users::stop_charging(uint8_t user_id, bool force, float meter_abs)
 {
+    last_charge_action_triggered = now_us();
+
     if (charge_tracker.currentlyCharging()) {
         UserSlotInfo info;
         bool success = read_user_slot_info(&info);

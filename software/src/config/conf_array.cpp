@@ -1,4 +1,26 @@
+/* esp32-firmware
+ * Copyright (C) 2020-2024 Erik Fleckstein <erik@tinkerforge.com>
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the
+ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+ * Boston, MA 02111-1307, USA.
+ */
+
 #include "config/private.h"
+
+#include "event_log_prefix.h"
+#include "main_dependencies.h"
 
 bool Config::ConfArray::slotEmpty(size_t i)
 {
@@ -19,8 +41,8 @@ Config *Config::ConfArray::get(uint16_t i)
 {
     auto *val = this->getVal();
     if (i >= val->size()) {
-        logger.printfln("Config index %u out of bounds (vector size %u, minElements %u maxElements %u)!", i, val->size(), this->getSlot()->minElements, this->getSlot()->maxElements);
-        esp_system_abort("");
+        char *message;
+        esp_system_abort(asprintf(&message, "Config index %u out of bounds (vector size %u, minElements %u maxElements %u)!", i, val->size(), this->getSlot()->minElements, this->getSlot()->maxElements) < 0 ? "" : message);
     }
     return &(*val)[i];
 }
@@ -28,8 +50,8 @@ const Config *Config::ConfArray::get(uint16_t i) const
 {
     const auto *val = this->getVal();
     if (i >= val->size()) {
-        logger.printfln("Config index %u out of bounds (vector size %u, minElements %u maxElements %u)!", i, val->size(), this->getSlot()->minElements, this->getSlot()->maxElements);
-        esp_system_abort("");
+        char *message;
+        esp_system_abort(asprintf(&message, "Config index %u out of bounds (vector size %u, minElements %u maxElements %u)!", i, val->size(), this->getSlot()->minElements, this->getSlot()->maxElements) < 0 ? "" : message);
     }
     return &(*val)[i];
 }
@@ -77,6 +99,9 @@ Config::ConfArray::ConfArray(const ConfArray &cpy)
 
 Config::ConfArray::~ConfArray()
 {
+    if (idx == std::numeric_limits<decltype(idx)>::max())
+        return;
+
     auto *slot = this->getSlot();
     slot->inUse = false;
 
@@ -94,5 +119,16 @@ Config::ConfArray &Config::ConfArray::operator=(const ConfArray &cpy)
 
     *this->getSlot() = *cpy.getSlot();
 
+    return *this;
+}
+
+Config::ConfArray::ConfArray(ConfArray &&cpy) {
+    this->idx = cpy.idx;
+    cpy.idx = std::numeric_limits<decltype(idx)>::max();
+}
+
+Config::ConfArray &Config::ConfArray::operator=(ConfArray &&cpy) {
+    this->idx = cpy.idx;
+    cpy.idx = std::numeric_limits<decltype(idx)>::max();
     return *this;
 }

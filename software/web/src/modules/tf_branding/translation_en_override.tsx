@@ -4,30 +4,21 @@ let x = {
     "charge_manager": {
         "status": {
             "charge_manager": "Charge Manager"
-        },
-        "navbar": {
-            "charge_manager": "Charge Manager"
-        },
-        "content": {
-            "charge_manager": "Charge Manager"
         }
     },
-    "event_log": {
-        "content": {
-            "debug_report_desc_muted": "complete report of all status information of this Brick except passwords"
-        }
-    },
-    "firmware_update": {
+    "system": {
         "content": {
             "factory_reset_modal_text": <>A factory reset will reset all configuration to their default values. <b>This action cannot be undone!</b> The Brick will re-open the WiFi access point with the default SSID and passphrase from the label on the backside of the Brick. Are you sure?</>,
             "reboot_desc": "",
             "config_reset_modal_text": "",
             "factory_reset_desc": "removes all configuration",
             "config_reset_desc": ""
-        },
+        }
+    },
+    "firmware_update": {
         "script": {
-            "no_info_page": "Firmware file corrupted (info page missing)",
-            "wrong_firmware_type": "Firmware file does not match the type of this Brick"
+            "install_state_19": "Firmware file corrupted (info page missing)",
+            "install_state_21": "Firmware file does not match the type of this Brick"
         }
     },
     "network": {

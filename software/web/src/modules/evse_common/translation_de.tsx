@@ -17,11 +17,11 @@ let x = {
         },
         "navbar": {
             "evse": "Ladestatus",
-            "evse_settings": "Ladeeinstellungen"
+            "evse_settings": "Einstellungen"
         },
         "content": {
             "status": "Ladestatus",
-            "settings": "Ladeeinstellungen",
+            "evse_settings": "Wallbox",
             "iec_state": "IEC-61851-Zustand",
             "iec_state_a": "A (getrennt)",
             "iec_state_b": "B (verbunden)",
@@ -30,8 +30,8 @@ let x = {
             "iec_state_ef": "E/F (Fehler)",
             "contactor_state": "Schützprüfung",
             "contactor_names": /*SFN*/(is_evse_v3: boolean) => is_evse_v3 ? "Schütz L1+N, Schütz L2+L3, Zustand" : "vor Schütz, nach Schütz, Zustand"/*NF*/,
-            "contactor_not_live": "Stromlos",
-            "contactor_live": "Stromführend",
+            "contactor_not_live": /*SFN*/(is_evse_v3: boolean) => is_evse_v3 ? "Offen" : "Stromlos"/*NF*/,
+            "contactor_live": /*SFN*/(is_evse_v3: boolean) => is_evse_v3 ? "Geschlossen" : "Stromführend"/*NF*/,
             "contactor_ok": "OK",
             "contactor_error": /*SFN*/(contactor_error: number) => {
                 if (contactor_error == 0)
@@ -155,17 +155,29 @@ let x = {
             "user_calibration_reset": "Zurücksetzen",
 
             // EVSE V2 only
+            "evse_v2_gpio_names_0": "Stromkonfiguration 0, Motorfehler, DC-Fehler, Stromkonfiguration 1",
+            "evse_v2_gpio_names_1": "DC-Fehlerstromschutz-Test, Abschalteingang, Taster, CP-PWM",
+            "evse_v2_gpio_names_2": "Motoreingangsschalter, Schützsteuerung, Konfigurierbarer Ausgang, CP-Trennung",
+            "evse_v2_gpio_names_3": "Motor aktiv, Motor-Phase, Schützprüfung vorher, Schützprüfung nachher",
+            "evse_v2_gpio_names_4": "Konfigurierbarer Eingang, DC X6, DC X30, LED",
+            "evse_v2_gpio_names_5": "nicht belegt",
+
+            // EVSE V3 only
+            "evse_v3_gpio_names_0": "DC X30, DC X6, DC-Fehler, DC-Fehlerstromschutz-Test",
+            "evse_v3_gpio_names_1": "EVSE-Status-LED, Taster, LED rot, LED blau",
+            "evse_v3_gpio_names_2": "LED grün, CP-PWM, Schütz 1, Schütz 0",
+            "evse_v3_gpio_names_3": "Schütz 1 Feedback, Schütz 0 Feedback, PE-Prüfung, Stromkonfiguration 1",
+            "evse_v3_gpio_names_4": "CP-Trennung, Stromkonfiguration 0, Abschalteingang, Versionsdetektion",
+            "evse_v3_gpio_names_5": "nicht belegt",
+
+            // EVSE V2 and V3
             "energy_meter_type": "Stromzählertyp",
-            "gpio_names_0": "Stromkonfiguration 0, Motorfehler, Gleichstromfehler, Stromkonfiguration 1",
-            "gpio_names_1": "DC-Fehlerstromschutz-Test, Abschaltung, Taster, CP-PWM",
-            "gpio_names_2": "Motoreingangsschalter, Schützsteuerung, Konfigurierbarer Ausgang, CP-Trennung",
-            "gpio_names_3": "Motor aktiv, Motor-Phase, Schützprüfung vorher, Schützprüfung nachher",
-            "gpio_names_4": "Konfigurierbarer Eingang, DC X6, DC X30, LED",
-            "gpio_names_5": "nicht belegt",
             "gpio_shutdown_muted": <><a href="{{{manual_url}}}">siehe Betriebsanleitung für Details</a></>,
             "gpio_shutdown_not_configured": "Nicht konfiguriert",
             "gpio_shutdown_on_open": "Abschalten wenn geöffnet",
             "gpio_shutdown_on_close": "Abschalten wenn geschlossen",
+            "gpio_4200w_on_open": "Begrenzen auf 4200 W wenn geöffnet (§14 EnWG)",
+            "gpio_4200w_on_close": "Begrenzen auf 4200 W wenn geschlossen (§14 EnWG)",
             "not_configured": "Nicht konfiguriert",
             "active_low_blocked": "Blockiert wenn geschlossen",
             "active_low_prefix": "Limitiert Ladestrom auf ",
@@ -186,6 +198,10 @@ let x = {
             "ev_wakeup_desc": "Fahrzeug-Weckruf",
             "ev_wakeup_desc_muted": <><a href="{{{manual_url}}}">siehe Betriebsanleitung für Details</a></>,
             "ev_wakeup": "Versucht die Ladeelektronik des Fahrzeugs aus einem Energiesparmodus zu wecken, indem ein Abziehen und Anstecken des Ladekabels vorgetäuscht wird.",
+
+            "phase_auto_switch_desc": "Automatischer Phasenwechsel",
+            "phase_auto_switch_desc_muted": <><a href="{{{manual_url}}}">siehe Betriebsanleitung für Details</a></>,
+            "phase_auto_switch": "Schaltet automatisch auf einphasiges Laden um, wenn das angeschlossene Fahrzeug nur auf L1 Strom bezieht.",
 
             "dc_fault_current_state": "DC-Fehlerstromzustand",
             "dc_fault_current_state_desc": "",
@@ -214,16 +230,21 @@ let x = {
             "temperature": "Temperatur",
             "phases_current": "Phasen geschaltet",
             "phases_requested": "Phasen angefordert",
-            "phases_status": "Status der Phasenumschaltung",
-            "switch_to_one_phase": "Umschalten auf einphasig",
-            "switch_to_three_phases": "Umschalten auf dreiphasig"
+            "phases_state": "Zustand der Phasenumschaltung",
+
+            "phases_connected": "Zuleitung",
+            "phases_connected_muted": <><a href="{{{manual_url}}}">siehe Betriebsanleitung für Details</a></>,
+            "phases_connected_1": "Einphasig",
+            "phases_connected_3": "Dreiphasig"
+
         },
         "automation" : {
             "external_current_wd": "Watchdog der externen Steuerung ausgelöst",
             "external_current_wd_trigger": <>Wenn der <b>Watchdog</b> der <b>externen</b> Steuerung auslöst, </>,
             "state_change": "Ladestatus gewechselt",
             "led_duration": "Dauer",
-            "indication": "LED-Zustand",
+            "indication": "Blinkmuster",
+            "color": "Farbe",
             "led_indication": "Zeige auf Status-LED an",
             "led_indication_off": "Aus",
             "led_indication_on": "An",
@@ -250,7 +271,14 @@ let x = {
                 }
                 return <>limitiere den erlaubten Ladestrom auf <b>{current} A</b>.</>
             }/*NF*/,
-            "automation_led_action_text": /*FFN*/(state: string, duration: number) => (state == "An" || state == "Aus") ? <>schalte die Status-LED für <b>{duration / 1000} Sekunden</b> <b>{state}</b>.</> : <>zeige <b>{state}</b> für <b>{duration / 1000} Sekunden</b> auf der Status-LED.</>/*NF*/
+            "automation_led_action_text": /*FFN*/(indication_number: number, indication_text: string, duration: number, color: string) => {
+                let c = color == "" ? "" : <>in <span class="px-2 mr-1" style={"background-color: " + color + "; border: 1px solid black;"}></span></>;
+                if (indication_number == 0)
+                    return <>schalte die Status-LED für <b>{duration / 1000} Sekunden</b> <b>{indication_text}</b>.</>;
+                if (indication_number == 255)
+                    return <>schalte die Status-LED für <b>{duration / 1000} Sekunden</b> {c} <b>{indication_text}</b>.</>;
+                return <>zeige <b>{indication_text}</b> {c} für <b>{duration / 1000} Sekunden</b> auf der Status-LED.</>;
+            }/*NF*/
         },
         "script": {
             "set_charging_current_failed": "Konnte Ladestrom nicht setzen",
@@ -267,6 +295,7 @@ let x = {
             "debug_stop_failed": "Stoppen der Aufzeichnung des Ladecontroller-Logs fehlgeschlagen.",
             "debug_stopped": "Aufzeichnung des Ladecontroller-Logs gestoppt.",
             "debug_done": "Abgeschlossen.",
+            "debug_file": "EVSE-Ladeprotokoll",
 
             "acc_blocked": "Blockiert",
             "by": "durch",

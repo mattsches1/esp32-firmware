@@ -19,8 +19,8 @@
 
 import { h, Fragment } from "preact";
 import { __, translate_unchecked } from "../../ts/translation";
-import { AutomationActionID } from "../automation/automation_defs";
-import { AutomationAction } from "../automation/types";
+import { AutomationActionID } from "../automation/automation_action_id.enum";
+import { AutomationAction, InitResult } from "../automation/types";
 import { InputText } from "../../ts/components/input_text";
 import { InputSelect } from "../../ts/components/input_select";
 import { FormRow } from "../../ts/components/form_row";
@@ -71,12 +71,12 @@ function get_nfc_inject_tag_edit_children(action: NfcAutomationAction, on_action
 
     const all_tags = known_items.concat(seen_tags);
 
-    return [<>
+    return [
         <FormRow label={__("nfc.automation.last_seen_and_known_tags")}>
             {all_tags.length > 0 ?
                 <ListGroup>{all_tags}</ListGroup>
                 : <span>{__("nfc.automation.add_tag_description")}</span>}
-        </FormRow>
+        </FormRow>,
         <FormRow label={__("nfc.automation.table_tag_id")}>
             <InputText
                 required
@@ -87,7 +87,7 @@ function get_nfc_inject_tag_edit_children(action: NfcAutomationAction, on_action
                 minLength={8} maxLength={29}
                 pattern="^([0-9a-fA-F]{2}:?){3,9}[0-9a-fA-F]{2}$"
                 invalidFeedback={__("nfc.automation.tag_id_invalid_feedback")} />
-        </FormRow>
+        </FormRow>,
         <FormRow label={__("nfc.automation.table_tag_type")}>
             <InputSelect
                 items={[
@@ -101,7 +101,7 @@ function get_nfc_inject_tag_edit_children(action: NfcAutomationAction, on_action
                 onValue={(v) => {
                     on_action(util.get_updated_union(action, {tag_type: parseInt(v)}));
                 }} />
-        </FormRow>
+        </FormRow>,
         <FormRow label={__("nfc.automation.action")}>
             <InputSelect
                 items={[
@@ -113,8 +113,8 @@ function get_nfc_inject_tag_edit_children(action: NfcAutomationAction, on_action
                 onValue={(v) => {
                     on_action(util.get_updated_union(action, {action: parseInt(v)}));
                 }} />
-        </FormRow>
-    </>]
+        </FormRow>,
+    ]
 }
 
 function new_nfc_inject_tag_config(): AutomationAction {
@@ -128,7 +128,7 @@ function new_nfc_inject_tag_config(): AutomationAction {
     ];
 }
 
-export function init() {
+export function init(): InitResult {
     return {
         action_components: {
             [AutomationActionID.NFCInjectTag]: {

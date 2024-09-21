@@ -18,17 +18,17 @@
  */
 #include "device_name.h"
 
+#include "event_log_prefix.h"
+#include "module_dependencies.h"
 #include "build.h"
-#include "api.h"
-#include "task_scheduler.h"
 
 extern char local_uid_str[32];
 
 void DeviceName::pre_setup()
 {
     name = Config::Object({
-        {"name", Config::Str("", 0, strlen(BUILD_HOST_PREFIX) + 1 + ARRAY_SIZE(local_uid_str))},
-        {"type", Config::Str(BUILD_HOST_PREFIX, 0, strlen(BUILD_HOST_PREFIX))},
+        {"name", Config::Str("", 0, BUILD_HOST_PREFIX_LENGTH + 1 + ARRAY_SIZE(local_uid_str))},
+        {"type", Config::Str(BUILD_HOST_PREFIX, 0, BUILD_HOST_PREFIX_LENGTH)},
         {"display_type", Config::Str("", 0, 64)},
         {"uid", Config::Str("", 0, 32)}
     });
@@ -38,7 +38,7 @@ void DeviceName::pre_setup()
     });
 }
 
-#if defined BUILD_NAME_WARP || defined BUILD_NAME_WARP2
+#if BUILD_IS_WARP() || BUILD_IS_WARP2() || BUILD_IS_WARP3()
 String getWarpDisplayName()
 {
     String display_type = api.hasFeature("meter") ? " Pro" : " Smart";
@@ -50,15 +50,17 @@ String getWarpDisplayName()
         display_type += " without EVSE";
     }
 
-#if defined BUILD_NAME_WARP
+#if BUILD_IS_WARP()
     if (api.hasFeature("nfc")) {
         display_type += " +NFC";
     }
 #endif
 
+#if BUILD_IS_WARP() || BUILD_IS_WARP2()
     if (api.hasFeature("rtc")) {
         display_type += " +RTC";
     }
+#endif
     return display_type;
 }
 #endif
@@ -71,7 +73,7 @@ static bool isVowel(char c)
 void DeviceName::updateDisplayType()
 {
     String display_type = BUILD_DISPLAY_NAME;
-#if defined BUILD_NAME_WARP || defined BUILD_NAME_WARP2
+#if BUILD_IS_WARP() || BUILD_IS_WARP2() || BUILD_IS_WARP3()
     display_type += getWarpDisplayName(); // FIXME: Also add more details for WARP Energy Manager, similar to WARP[2] here?
 #endif
 

@@ -21,8 +21,16 @@
 
 #include "module.h"
 #include "config.h"
+#include "module_available.h"
+
+#if MODULE_AUTOMATION_AVAILABLE()
+#include "modules/automation/automation_backend.h"
+#endif
 
 class RequireMeter final : public IModule
+#if MODULE_AUTOMATION_AVAILABLE()
+                         , public IAutomationBackend
+#endif
 {
 private:
     ConfigRoot config;
@@ -31,9 +39,12 @@ public:
     void pre_setup() override;
     void setup() override;
     void register_urls() override;
+    void register_events() override;
 
     void start_task();
     bool allow_charging(float meter_value);
 
-    bool action_triggered(Config *config, void *data);
+#if MODULE_AUTOMATION_AVAILABLE()
+    bool has_triggered(const Config *conf, void *data);
+#endif
 };

@@ -20,11 +20,10 @@
 import { h } from "preact";
 import * as util from "../../ts/util";
 import { __ } from "../../ts/translation";
-import { AutomationActionID } from "../automation/automation_defs";
-import { AutomationAction } from "../automation/types";
+import { AutomationActionID } from "../automation/automation_action_id.enum";
+import { AutomationAction, InitResult } from "../automation/types";
 import { InputFloat } from "../../ts/components/input_float";
 import { FormRow } from "../../ts/components/form_row";
-import { IS_ENERGY_MANAGER } from "src/build";
 import * as API from "../../ts/api"
 
 export type ChargeManagerAutomationAction = [
@@ -63,19 +62,16 @@ function new_set_manager_current_config(): AutomationAction {
     ];
 }
 
-export function init() {
-    if (!IS_ENERGY_MANAGER) {
-        return {
-            action_components: {
-                [AutomationActionID.SetManagerCurrent]: {
-                    name: __("charge_manager.automation.set_charge_manager"),
-                    new_config: new_set_manager_current_config,
-                    clone_config: (action: AutomationAction) => [action[0], {...action[1]}] as AutomationAction,
-                    get_edit_children: get_set_manager_edit_children,
-                    get_table_children: get_set_manager_table_children,
-                },
+export function init(): InitResult {
+    return {
+        action_components: {
+            [AutomationActionID.SetManagerCurrent]: {
+                name: __("charge_manager.automation.set_charge_manager"),
+                new_config: new_set_manager_current_config,
+                clone_config: (action: AutomationAction) => [action[0], {...action[1]}] as AutomationAction,
+                get_edit_children: get_set_manager_edit_children,
+                get_table_children: get_set_manager_table_children,
             },
-        };
-    }
-    return {};
+        },
+    };
 }

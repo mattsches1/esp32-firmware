@@ -19,19 +19,23 @@
 
 #pragma once
 
-#include "mqtt_client.h"
+#include <mqtt_client.h>
 
-#include "api.h"
+#include "module.h"
 #include "config.h"
+#include "modules/api/api.h"
+#include "mqtt_connection_state.enum.h"
+#include "module_available.h"
 
-enum class MqttConnectionState {
-    NOT_CONFIGURED,
-    NOT_CONNECTED,
-    CONNECTED,
-    ERROR
-};
+#if MODULE_AUTOMATION_AVAILABLE()
+#include "modules/automation/automation_backend.h"
+#endif
 
-class Mqtt final : public IAPIBackend
+class Mqtt final : public IModule,
+                   public IAPIBackend
+#if MODULE_AUTOMATION_AVAILABLE()
+                 , public IAutomationBackend
+#endif
 {
 public:
     using SubscribeCallback = std::function<void(const char *, size_t, char *, size_t)>;
@@ -57,7 +61,7 @@ public:
     void setup() override;
     void register_urls() override;
     void register_events() override;
-    void connect();
+    void pre_reboot() override;
 
     // Retain messages by default because we only send on change.
     bool publish_with_prefix(const String &path, const String &payload, bool retain = true);
@@ -68,7 +72,6 @@ public:
     // IAPIBackend implementation
     void addCommand(size_t commandIdx, const CommandRegistration &reg) override;
     void addState(size_t stateIdx, const StateRegistration &reg) override;
-    void addRawCommand(size_t rawCommandIdx, const RawCommandRegistration &reg) override;
     void addResponse(size_t responseIdx, const ResponseRegistration &reg) override;
     bool pushStateUpdate(size_t stateIdx, const String &payload, const String &path) override;
     bool pushRawStateUpdate(const String &payload, const String &path) override;
@@ -80,12 +83,17 @@ public:
 
     void resubscribe();
 
-    bool action_triggered(Config *config, void *data);
+#if MODULE_AUTOMATION_AVAILABLE()
+    bool has_triggered(const Config *conf, void *data) override;
+#endif
 
     ConfigRoot config;
     ConfigRoot state;
 
-    ConfigRoot config_in_use;
+    // Both strings are read by mqtt_auto_discovery.
+    String client_name;
+    // Copy prefix to not access config in MQTT thread.
+    String global_topic_prefix;
 
 private:
     struct MqttCommand {
@@ -98,7 +106,6 @@ private:
     };
 
     struct MqttState {
-        String topic;
         uint32_t last_send_ms;
     };
 
@@ -109,13 +116,12 @@ private:
     };
 
     std::vector<MqttCommand> commands;
-    std::vector<MqttState> states;
+    std::vector<MqttState, IRAMAlloc<MqttState>> states;
 
     size_t backend_idx;
 
-    esp_mqtt_client_handle_t client;
-    // Copy prefix to not access config in MQTT thread.
-    String prefix;
+    esp_mqtt_client_handle_t client = nullptr;
+    uint32_t send_interval_ms;
 
     uint32_t last_connected_ms = 0;
     bool was_connected = false;

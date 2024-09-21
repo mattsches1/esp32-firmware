@@ -19,64 +19,71 @@
 
 #pragma once
 
+#include "module.h"
 #include "config.h"
-
+#include "tools.h"
 #include "bindings/base58.h"
 #include "bindings/hal_common.h"
 #include "bindings/errors.h"
 #include "bindings/bricklet_unknown.h"
-#include "tools.h"
-
-#include "module.h"
-#include "api.h"
-#include "event_log.h"
-#include "task_scheduler.h"
-#include "tools.h"
-#include "web_server.h"
 
 extern TF_HAL hal;
 
 #define BOOTLOADER_MODE_FIRMWARE 1
 #define FIRMWARE_DEVICE_IDENTIFIER_OFFSET 8
 
+int device_module_printfln(const char *fmt, ...);
+
+class DeviceModuleBase : public IModule
+{
+public:
+    DeviceModuleBase(const uint8_t *firmware,
+                     const size_t firmware_len,
+                     const char *url_prefix,
+                     const char *device_name,
+                     const char *module_name) :
+        firmware(firmware),
+        firmware_len(firmware_len),
+        url_prefix(url_prefix),
+        device_name(device_name),
+        module_name(module_name) {}
+    virtual ~DeviceModuleBase() {}
+
+    void pre_setup() override;
+    void register_urls() override;
+
+    uint16_t get_device_id();
+
+protected:
+    virtual void reset() = 0;
+    void update_identity(TF_TFP *tfp);
+
+    const uint8_t *firmware;
+    const size_t firmware_len;
+    String url_prefix;
+    const char *device_name;
+    const char *module_name;
+
+    ConfigRoot identity;
+};
+
 template <typename DeviceT,
-          const uint8_t *firmware,
-          const size_t firmware_len,
           int (*init_function)(DeviceT *, const char *, TF_HAL *),
           int (*get_bootloader_mode_function)(DeviceT *, uint8_t *),
           int (*reset_function)(DeviceT *),
           int (*destroy_function)(DeviceT *),
           bool mandatory = true>
-class DeviceModule : virtual public IModule
+class DeviceModule : public DeviceModuleBase
 {
 public:
-    DeviceModule(const char *url_prefix,
+    DeviceModule(const uint8_t *firmware,
+                 const size_t firmware_len,
+                 const char *url_prefix,
                  const char *device_name,
                  const char *module_name,
                  std::function<void(void)> setup_function) :
-        url_prefix(url_prefix),
-        device_name(device_name),
-        module_name(module_name),
-        setup_function(setup_function)
-    {
-
-    }
-
-    virtual void pre_setup() override {
-        identity = Config::Object({
-            {"uid", Config::Str("", 0, 8)},
-            {"connected_uid", Config::Str("", 0, 8)},
-            {"position", Config::Str("", 0, 1)},
-            {"hw_version", Config::Str("", 0, 12)},
-            {"fw_version", Config::Str("", 0, 12)},
-            {"device_identifier", Config::Uint16(123)}
-        });
-    }
-
-    uint16_t get_device_id()
-    {
-        return firmware[firmware_len - FIRMWARE_DEVICE_IDENTIFIER_OFFSET] | (firmware[firmware_len - FIRMWARE_DEVICE_IDENTIFIER_OFFSET + 1] << 8);
-    }
+        DeviceModuleBase(firmware, firmware_len, url_prefix, device_name, module_name),
+        setup_function(setup_function) {}
 
     bool setup_device()
     {
@@ -87,9 +94,9 @@ public:
 
         if (!log_message_printed) {
             if (tfp == nullptr && mandatory)
-                logger.printfln("No %s Bricklet found. Disabling %s support.", device_name, module_name);
+                device_module_printfln("No %s Bricklet found. Disabling %s support.", device_name, module_name);
             else if (tfp != nullptr && !mandatory)
-                logger.printfln("%s Bricklet found. Enabling %s support.", device_name, module_name);
+                device_module_printfln("%s Bricklet found. Enabling %s support.", device_name, module_name);
         }
         log_message_printed = true;
 
@@ -98,14 +105,14 @@ public:
 
         device_found = true;
 
-        int result = ensure_matching_firmware(tfp, device_name, module_name, firmware, firmware_len, &logger, false);
+        int result = ensure_matching_firmware(tfp, device_name, module_name, firmware, firmware_len, false);
 
         if (result != 0) {
-            logger.printfln("Flashing %s Bricklet failed (%d)", device_name, result);
-            logger.printfln("Retrying once.");
-            result = ensure_matching_firmware(tfp, device_name, module_name, firmware, firmware_len, &logger, false);
+            device_module_printfln("Flashing %s Bricklet failed (%d)", device_name, result);
+            device_module_printfln("Retrying once.");
+            result = ensure_matching_firmware(tfp, device_name, module_name, firmware, firmware_len, false);
             if (result != 0) {
-                logger.printfln("Flashing %s Bricklet failed twice (%d). Disabling completely.", device_name, result);
+                device_module_printfln("Flashing %s Bricklet failed twice (%d). Disabling completely.", device_name, result);
                 device_found = false;
                 return false;
             }
@@ -118,32 +125,12 @@ public:
         result = init_function(&device, uid, &hal);
 
         if (result != TF_E_OK) {
-            logger.printfln("Failed to initialize %s Bricklet (%d). Disabling %s support.", device_name, result, module_name);
+            device_module_printfln("Failed to initialize %s Bricklet (%d). Disabling %s support.", device_name, result, module_name);
             return false;
         }
 
         update_identity(tfp);
         return true;
-    }
-
-    void register_urls() override
-    {
-        api.addCommand(url_prefix + "/reflash", Config::Null(), {}, [this]() {
-            uint16_t device_id = get_device_id();
-            TF_TFP *tfp = tf_hal_get_tfp(&hal, nullptr, nullptr, &device_id, false);
-
-            if (tfp != nullptr) {
-                ensure_matching_firmware(tfp, device_name, module_name, firmware, firmware_len, &logger, true);
-            }
-        }, true);
-
-        api.addCommand(url_prefix + "/reset", Config::Null(), {}, [this]() {
-            reset_function(&device);
-
-            initialized = false;
-        }, true);
-
-        api.addState(url_prefix + "/identity", &identity);
     }
 
     void loop() override
@@ -157,7 +144,7 @@ public:
         }
     }
 
-    void reset()
+    void reset() override
     {
         reset_function(&device);
     }
@@ -182,12 +169,8 @@ public:
         return mode != BOOTLOADER_MODE_FIRMWARE;
     }
 
-    bool device_found = false;
-
-    String url_prefix;
-    const char *device_name;
-    const char *module_name;
     std::function<void(void)> setup_function;
+    bool device_found = false;
     uint32_t last_check = 0;
 
     // Think before making the device handle public again.
@@ -199,51 +182,7 @@ public:
     // This simplifies reimplementing modules for other hardware.
 protected:
     DeviceT device;
-    ConfigRoot identity;
 
 private:
-    void update_identity(TF_TFP *tfp)
-    {
-        char uid[8];
-        char connected_uid[8];
-        char position;
-        uint8_t hw_version[3];
-        uint8_t fw_version[3];
-        uint16_t device_identifier;
-
-        TFPSwap swap(tfp);
-        TF_Unknown unknown;
-
-        int rc = tf_unknown_create(&unknown, tfp);
-        defer {tf_unknown_destroy(&unknown);};
-
-        if (rc != TF_E_OK) {
-            logger.printfln("Creation of unknown device failed with rc %i", rc);
-            return;
-        }
-
-        rc = tf_unknown_get_identity(&unknown, uid, connected_uid, &position, hw_version, fw_version, &device_identifier);
-        if (rc != TF_E_OK) {
-            logger.printfln("Getting identity of unknown device failed with rc %i", rc);
-        }
-
-        String value(uid);
-        identity.get("uid")->updateString(value);
-
-        value = String(connected_uid);
-        identity.get("connected_uid")->updateString(value);
-
-        value = String(position);
-        identity.get("position")->updateString(value);
-
-        value = hw_version[0] + String(".") + hw_version[1] + "." + hw_version[2];
-        identity.get("hw_version")->updateString(value);
-
-        value = fw_version[0] + String(".") + fw_version[1] + "." + fw_version[2];
-        identity.get("fw_version")->updateString(value);
-
-        identity.get("device_identifier")->updateUint(device_identifier);
-    }
-
     bool log_message_printed = false;
 };

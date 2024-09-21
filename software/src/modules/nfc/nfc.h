@@ -19,12 +19,15 @@
 
 #pragma once
 
-#include "bindings/bricklet_nfc.h"
-
-#include "build.h"
-#include "config.h"
 #include "device_module.h"
-#include "nfc_bricklet_firmware_bin.embedded.h"
+#include "config.h"
+#include "build.h"
+#include "bindings/bricklet_nfc.h"
+#include "module_available.h"
+
+#if MODULE_AUTOMATION_AVAILABLE()
+#include "modules/automation/automation_backend.h"
+#endif
 
 // in bytes
 #define NFC_TAG_ID_LENGTH 10
@@ -34,22 +37,19 @@
 #define TAG_LIST_LENGTH 9
 
 class NFC : public DeviceModule<TF_NFC,
-                                nfc_bricklet_firmware_bin_data,
-                                nfc_bricklet_firmware_bin_length,
                                 tf_nfc_create,
                                 tf_nfc_get_bootloader_mode,
                                 tf_nfc_reset,
                                 tf_nfc_destroy,
-#ifdef BUILD_NAME_WARP2
-                                true
-#else
-                                false
-#endif
-
+                                BUILD_IS_WARP2() | BUILD_IS_WARP3()
                                 >
+#if MODULE_AUTOMATION_AVAILABLE()
+          , public IAutomationBackend
+#endif
 {
 public:
-    NFC() : DeviceModule("nfc", "NFC", "NFC", [this](){this->setup_nfc();}) {}
+    NFC();
+
     void pre_setup() override;
     void setup() override;
     void register_urls() override;
@@ -77,12 +77,15 @@ public:
 
     void remove_user(uint8_t user_id);
 
-    bool action_triggered(Config *config, void *data);
+#if MODULE_AUTOMATION_AVAILABLE()
+    bool has_triggered(const Config *conf, void *data) override;
+#endif
 
 private:
     ConfigRoot config;
     ConfigRoot auth_info;
 
+    micros_t deadtime_post_start = 0_us;
     size_t auth_tag_count = 0;
     std::unique_ptr<auth_tag_t[]> auth_tags = nullptr;
     void setup_auth_tags();
@@ -94,8 +97,6 @@ public:
     uint32_t last_tag_injection = 0;
     int tag_injection_action = 0;
 
-    tag_info_t old_tag_buffer[TAG_LIST_LENGTH] = {};
-    tag_info_t new_tag_buffer[TAG_LIST_LENGTH] = {};
-    tag_info_t *old_tags = old_tag_buffer;
-    tag_info_t *new_tags = new_tag_buffer;
+    tag_info_t *old_tags = nullptr;
+    tag_info_t *new_tags = nullptr;
 };

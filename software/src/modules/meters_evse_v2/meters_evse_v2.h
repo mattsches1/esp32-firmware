@@ -19,21 +19,18 @@
 
 #pragma once
 
-#include "meter_evse_v2.h"
-#include "module_dependencies.h"
-
-#include <stdint.h>
-
-#include "config.h"
-#include "modules/meters/imeter.h"
-#include "modules/meters/meter_generator.h"
 #include "module.h"
+#include "modules/meters/meter_generator.h"
+#include "config.h"
+#include "meter_evse_v2.h"
 
 #if defined(__GNUC__)
     #pragma GCC diagnostic push
     //#include "gcc_warnings.h"
     #pragma GCC diagnostic ignored "-Weffc++"
 #endif
+
+struct EVSEV2MeterData;
 
 class MetersEVSEV2 final : public IModule, public MeterGenerator
 {
@@ -48,7 +45,8 @@ public:
     [[gnu::const]] virtual const Config *get_state_prototype()  override;
     [[gnu::const]] virtual const Config *get_errors_prototype() override;
 
-    void update_from_evse_v2_all_data(EVSEV2::meter_data *meter_data);
+    void update_from_evse_v2_all_data(EVSEV2MeterData *meter_data);
+    void energy_meter_values_callback(float power, float current[3]);
 
 private:
     Config config_prototype;

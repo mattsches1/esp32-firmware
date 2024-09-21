@@ -18,7 +18,7 @@
  */
 
 import { h, Context, Fragment, ComponentChildren } from "preact";
-import { useContext, useRef } from "preact/hooks";
+import { useId, useContext, useRef } from "preact/hooks";
 import { JSXInternal } from "preact/src/jsx";
 //import { Button } from "react-bootstrap";
 //import { ArrowLeft, ArrowRight } from "react-feather";
@@ -31,16 +31,22 @@ interface InputTimeProps extends Omit<JSXInternal.HTMLAttributes<HTMLInputElemen
     onDate?: (value: Date) => void
     children?: ComponentChildren
     style?: string
+    showSeconds?: boolean
 }
 
 export function InputTime(props: InputTimeProps) {
     const input = useRef<HTMLInputElement>();
-    const id = !props.idContext ? util.useId() : useContext(props.idContext);
+    const id = !props.idContext ? useId() : useContext(props.idContext);
 
-    const dateToValue = (date: Date) => util.toIsoString(date).split("T")[1];
+    const dateToHourMinSecValue = (date: Date) => util.toIsoString(date).split("T")[1];
+    const dateToHourMinValue    = (date: Date) => util.leftPad(date.getHours(), 0, 2) + ':' + util.leftPad(date.getMinutes(), 0, 2);
 
     const valueToDate = (value: string) => {
         let [h, m, s] = value.split(/:/g).map(x => parseInt(x));
+        // If showSeconds is false, the string is of form hh:mm and s will be undefined
+        if (s === undefined) {
+            s = 0;
+        }
 
         return new Date(0, 0, 1, h, m, s, 0);
     };
@@ -63,7 +69,8 @@ export function InputTime(props: InputTimeProps) {
                        } : undefined
                    }
                    disabled={!props.onDate}
-                   value={dateToValue(props.date)} />
+                   // Show seconds if showSeconds is true or undefined (i.e. default is true)
+                   value={props.showSeconds === false ? dateToHourMinValue(props.date) : dateToHourMinSecValue(props.date)} />
         </>;
 
     return inner;

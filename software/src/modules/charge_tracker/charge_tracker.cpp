@@ -20,12 +20,11 @@
 #include "charge_tracker.h"
 
 #include <memory>
+#include <LittleFS.h>
 
-#include "api.h"
-#include "task_scheduler.h"
-#include "tools.h"
+#include "event_log_prefix.h"
 #include "module_dependencies.h"
-
+#include "tools.h"
 #include "pdf_charge_log.h"
 
 struct [[gnu::packed]] ChargeStart {
@@ -318,7 +317,7 @@ bool ChargeTracker::setupRecords()
     File f;
 
     uint32_t found_blobs[32] = {0};
-    size_t found_blobs_size = sizeof(found_blobs) / sizeof(found_blobs[0]);
+    size_t found_blobs_size = ARRAY_SIZE(found_blobs);
     int found_blob_counter = 0;
 
     while (f = folder.openNextFile()) {
@@ -363,7 +362,7 @@ bool ChargeTracker::setupRecords()
     uint32_t first = found_blobs[0];
     uint32_t last = found_blobs[found_blob_counter - 1];
 
-    logger.printfln("Found %u records. First is %u, last is %u", found_blob_counter, first, last);
+    logger.printfln("Found %u record%s: first is %u, last is %u", found_blob_counter, found_blob_counter == 1 ? "" : "s", first, last);
     for (int i = 0; i < found_blob_counter - 1; ++i) {
         if (found_blobs[i] + 1 != found_blobs[i + 1]) {
             logger.printfln("Non-consecutive charge records found! (Next after %u is %u. Expected was %u", found_blobs[i], found_blobs[i+1], found_blobs[i] + 1);
@@ -372,7 +371,7 @@ bool ChargeTracker::setupRecords()
 
         f = LittleFS.open(chargeRecordFilename(found_blobs[i]));
         if (f.size() != CHARGE_RECORD_MAX_FILE_SIZE) {
-            logger.printfln("Charge record %s is too long: %u bytes", f.name(), f.size());
+            logger.printfln("Charge record %s doesn't have max size: %u bytes", f.name(), f.size());
             return false;
         }
     }
@@ -509,24 +508,55 @@ static size_t timestamp_min_to_date_time_string(char buf[17], uint32_t timestamp
     localtime_r(&timestamp, &t);
 
     if (english)
-        return sprintf(buf, "%4.4i-%2.2i-%2.2i %2.2i:%2.2i", t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min);
+        return sprintf_u(buf, "%4.4i-%2.2i-%2.2i %2.2i:%2.2i", t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min);
 
-    return sprintf(buf, "%2.2i.%2.2i.%4.4i %2.2i:%2.2i", t.tm_mday, t.tm_mon + 1, t.tm_year + 1900, t.tm_hour, t.tm_min);
+    return sprintf_u(buf, "%2.2i.%2.2i.%4.4i %2.2i:%2.2i", t.tm_mday, t.tm_mon + 1, t.tm_year + 1900, t.tm_hour, t.tm_min);
 }
 
-static int get_display_name(uint8_t user_id, char *ret_buf)
+static_assert(DISPLAY_NAME_LENGTH == 32, "Unexpected display name length");
+struct display_name_entry {
+    uint32_t length;
+    uint32_t name[DISPLAY_NAME_LENGTH / sizeof(uint32_t)];
+};
+
+static size_t get_display_name(uint8_t user_id, char *ret_buf, display_name_entry *display_name_cache)
 {
-    int result = 0;
-    task_scheduler.await([&result, user_id, ret_buf](){result = users.get_display_name(user_id, ret_buf);});
-    return result;
+    if (display_name_cache[user_id].length > DISPLAY_NAME_LENGTH) {
+        size_t length = 0;
+        uint32_t buf[9] = {}; // Make sure that short names are zero-padded.
+        task_scheduler.await([&length, user_id, &buf]() {length = users.get_display_name(user_id, reinterpret_cast<char *>(buf));});
+        if (length > sizeof(display_name_cache[user_id].name)) {
+            logger.printfln("Returned user name too long: [%.*s]", length, reinterpret_cast<char *>(buf));
+            display_name_cache[user_id].length = 0;
+        } else {
+            // Ignore actual name length in order to copy zero-padding as well.
+            uint32_t *src = buf;
+            uint32_t *dst_start = display_name_cache[user_id].name;
+            uint32_t *dst_end = dst_start + ARRAY_SIZE(display_name_cache[user_id].name);
+            do {
+                *dst_start++ = *src++;
+            } while (dst_start < dst_end);
+
+            display_name_cache[user_id].length = length;
+        }
+    }
+
+    uint32_t *src_start = display_name_cache[user_id].name;
+    uint32_t *src_end = src_start + (display_name_cache[user_id].length + 3) / 4; // Round up; copies some buffer slack that must be zero-filled. See padding above.
+    uint32_t *dst = reinterpret_cast<uint32_t *>(ret_buf);
+    while (src_start < src_end) {
+        *dst++ = *src_start++;
+    }
+
+    return display_name_cache[user_id].length;
 }
 
-static char *tracked_charge_to_string(char *buf, ChargeStart cs, ChargeEnd ce, bool english, uint32_t electricity_price)
+static char *tracked_charge_to_string(char *buf, ChargeStart cs, ChargeEnd ce, bool english, uint32_t electricity_price, display_name_entry *display_name_cache)
 {
     buf += 1 + timestamp_min_to_date_time_string(buf, cs.timestamp_minutes, english);
 
-    get_display_name(cs.user_id, buf);
-    buf += 1 + strnlen(buf, DISPLAY_NAME_LENGTH);
+    size_t name_len = get_display_name(cs.user_id, buf, display_name_cache);
+    buf += 1 + name_len;
 
     if (charged_invalid(cs, ce)) {
         memcpy(buf, "N/A", ARRAY_SIZE("N/A"));
@@ -534,7 +564,7 @@ static char *tracked_charge_to_string(char *buf, ChargeStart cs, ChargeEnd ce, b
     } else {
         float charged = ce.meter_end - cs.meter_start;
         if (charged <= 999.999f) {
-            int written = sprintf(buf, "%.3f", charged);
+            int written = sprintf_u(buf, "%.3f", charged);
             if (!english)
                 for (int i = 0; i < written; ++i)
                     if (buf[i] == '.')
@@ -556,13 +586,13 @@ static char *tracked_charge_to_string(char *buf, ChargeStart cs, ChargeEnd ce, b
     ce.charge_duration = ce.charge_duration % 60;
     int seconds = ce.charge_duration;
 
-    buf += 1 + sprintf(buf, "%i:%2.2i:%2.2i", hours, minutes, seconds);
+    buf += 1 + sprintf_u(buf, "%i:%2.2i:%2.2i", hours, minutes, seconds);
 
     if (isnan(cs.meter_start)) {
         memcpy(buf, "N/A", ARRAY_SIZE("N/A"));
         buf += ARRAY_SIZE("N/A");
     } else {
-        int written = sprintf(buf, "%.3f", cs.meter_start);
+        int written = sprintf_u(buf, "%.3f", cs.meter_start);
         if (!english)
             for (int i = 0; i < written; ++i)
                 if (buf[i] == '.')
@@ -583,7 +613,7 @@ static char *tracked_charge_to_string(char *buf, ChargeStart cs, ChargeEnd ce, b
             memcpy(buf, ">=10000", ARRAY_SIZE(">=10000"));
             buf += ARRAY_SIZE(">=10000");
         } else {
-            buf += 1 + sprintf(buf, "%d%c%02d", cost / 100, english ? '.' : ',', cost % 100);
+            buf += 1 + sprintf_u(buf, "%d%c%02d", cost / 100, english ? '.' : ',', cost % 100);
         }
     }
     return buf;
@@ -634,7 +664,8 @@ static bool repair_logic(Charge *buf)
     // We got no meter values of the charge but we got the end of the previous and the start of the next.
     case 9:
         if (buf[-1].ce.meter_end <= buf[1].cs.meter_start
-                && buf[1].cs.meter_start - buf[-1].ce.meter_end < CHARGE_TRACKER_MAX_REPAIR) {
+                && buf[1].cs.meter_start - buf[-1].ce.meter_end < CHARGE_TRACKER_MAX_REPAIR
+                && !(buf[-1].ce.meter_end == 0 && buf[0].cs.meter_start == 0 && buf[0].ce.meter_end == 0 && buf[1].cs.meter_start == 0)) {
             buf[0].cs.meter_start = buf[-1].ce.meter_end;
             buf[0].ce.meter_end = buf[1].cs.meter_start;
             repaired = true;
@@ -730,22 +761,20 @@ void ChargeTracker::register_urls()
     api.addState("charge_tracker/current_charge", &current_charge);
     api.addState("charge_tracker/state", &state);
 
-    api.addCommand("charge_tracker/remove_all_charges", Config::Confirm(), {Config::ConfirmKey()}, [this](String &result){
+    api.addCommand("charge_tracker/remove_all_charges", Config::Confirm(), {Config::confirm_key}, [this](String &result){
         if (!Config::Confirm()->get(Config::ConfirmKey())->asBool()) {
             result = "Tracked charges will NOT be removed";
             return;
         }
 
-        task_scheduler.scheduleOnce([](){
-            logger.printfln("Removing all tracked charges and rebooting.");
-            remove_directory(CHARGE_RECORD_FOLDER);
-            users.remove_username_file();
-            ESP.restart();
-        }, 3000);
+        remove_directory(CHARGE_RECORD_FOLDER);
+        users.remove_username_file();
+
+        trigger_reboot("Removing all tracked charges", 1000);
     }, true);
 
     server.on_HTTPThread("/charge_tracker/pdf", HTTP_PUT, [this](WebServerRequest request) {
-        logger.printfln("Beginning PDF generation. Please ignore timeout errors (rc -1 etc.) for the next minute!");
+        logger.printfln("Beginning PDF generation. Please ignore timeout errors (rc -1 etc.) until it is done.");
         #define USER_FILTER_ALL_USERS -2
         #define USER_FILTER_DELETED_USERS -1
         int user_filter = USER_FILTER_ALL_USERS;
@@ -805,7 +834,6 @@ void ChargeTracker::register_urls()
                             //50 "Gesamtbetrag 99999.99€ (Strompreis 123.45 ct/kWh)" + \0
                             //= 314
 
-
         double charged_sum = 0;
         uint32_t charged_cost_sum = 0;
         bool seen_charges_without_meter = false;
@@ -830,8 +858,10 @@ void ChargeTracker::register_urls()
             if (device_name.display_name.get("display_name")->asString() != device_name.name.get("name")->asString())
                 dev_name += " (" + device_name.name.get("name")->asString() + ")";
         });
-        if (await_result == TaskScheduler::AwaitResult::Timeout)
+
+        if (await_result == TaskScheduler::AwaitResult::Timeout) {
             return request.send(500, "text/plain", "Failed to generate PDF: Task timed out");
+        }
 
         {
             char charge_buf[sizeof(ChargeStart) + sizeof(ChargeEnd)];
@@ -894,36 +924,45 @@ void ChargeTracker::register_urls()
         }
 search_done:
 
-        char *stats_head = stats_buf;
-        stats_head += 1 + sprintf(stats_head, "%s: %s", english ? "Charger" : "Wallbox", dev_name.c_str());
+        display_name_entry *display_name_cache = static_cast<decltype(display_name_cache)>(heap_caps_malloc(MAX_PASSIVE_USERS * sizeof(display_name_cache[0]), MALLOC_CAP_32BIT));
+        if (!display_name_cache) {
+            return request.send(500, "text/plain", "Failed to generate PDF: No memory");;
+        }
 
-        stats_head += sprintf(stats_head, "%s: ", english ? "Exported on" : "Exportiert an");
+        for (size_t i = 0; i < MAX_PASSIVE_USERS; i++) {
+            display_name_cache[i].length = UINT32_MAX;
+        }
+
+        char *stats_head = stats_buf;
+        stats_head += 1 + sprintf_u(stats_head, "%s: %s", english ? "Charger" : "Wallbox", dev_name.c_str());
+
+        stats_head += sprintf_u(stats_head, "%s: ", english ? "Exported on" : "Exportiert am");
         stats_head += 1 + timestamp_min_to_date_time_string(stats_head, current_timestamp_min, english);
 
-        stats_head += sprintf(stats_head, "%s: ", english ? "Exported users" : "Exportierte Benutzer");
+        stats_head += sprintf_u(stats_head, "%s: ", english ? "Exported users" : "Exportierte Benutzer");
         if (user_filter == -2)
-            stats_head += sprintf(stats_head, "%s", english ? "all users" : "Alle Benutzer");
+            stats_head += sprintf_u(stats_head, "%s", english ? "all users" : "Alle Benutzer");
         else if (user_filter == -1)
-            stats_head += sprintf(stats_head, "%s", english ? "deleted users" : "Gelöschte Benutzer");
+            stats_head += sprintf_u(stats_head, "%s", english ? "deleted users" : "Gelöschte Benutzer");
         else
-            stats_head += get_display_name(user_filter, stats_head);
+            stats_head += get_display_name(user_filter, stats_head, display_name_cache);
         ++stats_head;
 
-        stats_head += sprintf(stats_head, "%s: ", english ? "Exported period" : "Exportierter Zeitraum");
+        stats_head += sprintf_u(stats_head, "%s: ", english ? "Exported period" : "Exportierter Zeitraum");
         if (start_timestamp_min == 0)
-            stats_head += sprintf(stats_head, "%s", english ? "record start" : "Aufzeichnungsbeginn");
+            stats_head += sprintf_u(stats_head, "%s", english ? "record start" : "Aufzeichnungsbeginn");
         else
             stats_head += timestamp_min_to_date_time_string(stats_head, start_timestamp_min, english);
 
-        stats_head += sprintf(stats_head, "%s", english ? " to " : " bis ");
+        stats_head += sprintf_u(stats_head, "%s", english ? " to " : " bis ");
 
         if (end_timestamp_min == 0)
-            stats_head += sprintf(stats_head, "%s", english ? "record end" : (start_timestamp_min == 0 ? "-ende" : "Aufzeichnungsende"));
+            stats_head += sprintf_u(stats_head, "%s", english ? "record end" : (start_timestamp_min == 0 ? "-ende" : "Aufzeichnungsende"));
         else
             stats_head += timestamp_min_to_date_time_string(stats_head, end_timestamp_min, english);
         ++stats_head;
 
-        int written = sprintf(stats_head, "%s: %9.3f kWh", english ? "Total energy of exported charges" : "Gesamtenergie exportierter Ladevorgänge", charged_sum);
+        int written = sprintf_u(stats_head, "%s: %9.3f kWh", english ? "Total energy of exported charges" : "Gesamtenergie exportierter Ladevorgänge", charged_sum);
         if (!english)
             for (int i = 0; i < written; ++i)
                 if (stats_head[i] == '.')
@@ -931,7 +970,7 @@ search_done:
         stats_head += 1 + written;
 
         if (electricity_price != 0) {
-            written = sprintf(stats_head, "%s: %d.%02d€ (%.2f ct/kWh)%s",
+            written = sprintf_u(stats_head, "%s: %d.%02d€ (%.2f ct/kWh)%s",
                             english ? "Total cost" : "Gesamtkosten",
                             charged_cost_sum / 100, charged_cost_sum % 100,
                             electricity_price / 100.0f,
@@ -959,11 +998,9 @@ search_done:
                       + 8) /* cost max 9999.99\0 else truncated to >10000*/
 
         char table_lines_buffer[8 * TABLE_LINE_LEN];
-
         File f;
 
         request.beginChunkedResponse(200, "application/pdf");
-
 
         const char * table_header_de = "Startzeit\0"
                                        "Benutzer\0"
@@ -979,9 +1016,14 @@ search_done:
                                        "Meter start\0"
                                        "Cost (€)";
 
+        // If there are no charges tracked, still generate one page, the table header etc.
+        // We will skip creating the table content later.
+        bool any_charges_tracked = charge_records > 0;
+        if (!any_charges_tracked)
+            charge_records = 1;
 
         init_pdf_generator(&request,
-                           "Title",
+                           english ? "WARP Charge Log" : "WARP Ladelog",
                            stats_buf, (electricity_price == 0) ? 5 : 6,
                            letterhead.get(), letterhead_lines,
                            english ? table_header_en : table_header_de,
@@ -998,7 +1040,9 @@ search_done:
                             &current_charge,
                             electricity_price,
                             english,
-                            configured_users]
+                            configured_users,
+                            &display_name_cache,
+                            any_charges_tracked]
                            (const char * * table_lines) {
             memset(table_lines_buffer, 0, ARRAY_SIZE(table_lines_buffer));
 
@@ -1009,7 +1053,10 @@ search_done:
             ChargeStart cs;
             ChargeEnd ce;
 
-            while (current_file <= last_file) {
+            // Skip creating the table content if there were no charges tracked.
+            // charge_records is set to 1 in this case to still generate the page,
+            // table header etc.
+            while (any_charges_tracked && current_file <= last_file) {
                 if (current_charge >= (CHARGE_RECORD_MAX_FILE_SIZE / CHARGE_RECORD_SIZE)) {
                     current_charge = 0;
                 }
@@ -1034,7 +1081,7 @@ search_done:
                         continue;
 
 
-                    table_lines_head = tracked_charge_to_string(table_lines_head, cs, ce, english, electricity_price);
+                    table_lines_head = tracked_charge_to_string(table_lines_head, cs, ce, english, electricity_price, display_name_cache);
                     ++lines_generated;
                 }
 
@@ -1055,11 +1102,10 @@ search_done:
             if (!f)
                 f.close();
 
-
-
             *table_lines = table_lines_buffer;
             return lines_generated;
         });
+        free(display_name_cache);
         logger.printfln("PDF generation done.");
         return request.endChunkedResponse();
     });

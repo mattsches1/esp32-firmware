@@ -19,27 +19,22 @@
 
 #pragma once
 
-#include "config.h"
-
+#include <FS.h> // FIXME: without this include here there is a problem with the IPADDR_NONE define in <lwip/ip4_addr.h>
+#include <functional>
 #include <lwip/err.h>
 #include <lwip/sockets.h>
 #include <lwip/sys.h>
 #include <lwip/netdb.h>
+#include <mdns.h>
+#include <TFJson.h>
 
 #include "module.h"
-#include "mdns.h"
-#include "TFJson.h"
-
-#include <functional>
-
-#if defined(BOARD_HAS_PSRAM)
-#define MAX_CONTROLLED_CHARGERS 32
-#else
-#define MAX_CONTROLLED_CHARGERS 10
-#endif
+#include "config.h"
+#include "cm_networking_defs.h"
 
 struct cm_state_v1;
 struct cm_state_v2;
+struct cm_state_v3;
 
 class CMNetworking final : public IModule
 {
@@ -52,12 +47,12 @@ public:
 
     void register_manager(const char *const *const hosts,
                           int charger_count,
-                          std::function<void(uint8_t /* client_id */, cm_state_v1 *, cm_state_v2 *)> manager_callback,
+                          std::function<void(uint8_t /* client_id */, cm_state_v1 *, cm_state_v2 *, cm_state_v3 *)> manager_callback,
                           std::function<void(uint8_t, uint8_t)> manager_error_callback);
 
-    bool send_manager_update(uint8_t client_id, uint16_t allocated_current, bool cp_disconnect_requested);
+    bool send_manager_update(uint8_t client_id, uint16_t allocated_current, bool cp_disconnect_requested, int8_t allocated_phases);
 
-    void register_client(std::function<void(uint16_t, bool)> client_callback);
+    void register_client(std::function<void(uint16_t, bool, int8_t)> client_callback);
     bool send_client_update(uint32_t esp32_uid,
                             uint8_t iec61851_state,
                             uint8_t charger_state,
@@ -68,13 +63,15 @@ public:
                             uint16_t allowed_charging_current,
                             uint16_t supported_current,
                             bool managed,
-                            bool cp_disconnected_state);
+                            bool cp_disconnected_state,
+                            int8_t phases,
+                            bool can_switch_phases_now);
 
     bool get_scan_results(CoolString &result);
 
     void resolve_hostname(uint8_t charger_idx);
     bool is_resolved(uint8_t charger_idx);
-    void clear_cached_hostname(uint8_t charger_idx);
+    void clear_dns_cache_entry(uint8_t charger_idx);
 
     void check_results();
 

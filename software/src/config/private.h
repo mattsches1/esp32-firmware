@@ -1,3 +1,22 @@
+/* esp32-firmware
+ * Copyright (C) 2020-2024 Erik Fleckstein <erik@tinkerforge.com>
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the
+ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+ * Boston, MA 02111-1307, USA.
+ */
+
 #pragma once
 
 #include "config.h"
@@ -9,13 +28,12 @@ struct ConfStringSlot {
     CoolString val = "";
     uint16_t minChars = 0;
     uint16_t maxChars = 0;
-    bool inUse = false;
 };
 
 struct ConfFloatSlot {
-    float val = 0;
-    float min = 0;
-    float max = 0;
+    uint32_t val = 0;
+    uint32_t min = 0;
+    uint32_t max = 0;
 };
 
 struct ConfIntSlot {
@@ -40,14 +58,17 @@ struct ConfArraySlot {
 };
 
 struct ConfObjectSchema {
+    struct Key {
+        size_t length;
+        const char *val;
+    };
     size_t length;
-    std::unique_ptr<uint8_t[]> key_lengths;
-    std::unique_ptr<char *[]> keys;
+    Key keys[];
 };
 
 struct ConfObjectSlot {
     const ConfObjectSchema *schema = nullptr;
-    std::unique_ptr<Config[]> values;
+    Config *values;
 };
 
 struct ConfUnionSlot {

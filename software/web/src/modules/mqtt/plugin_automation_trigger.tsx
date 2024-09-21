@@ -20,8 +20,8 @@
 import { h, Fragment } from "preact";
 import { useState } from "preact/hooks";
 import { __ } from "../../ts/translation";
-import { AutomationTriggerID } from "../automation/automation_defs";
-import { AutomationTrigger } from "../automation/types";
+import { AutomationTriggerID } from "../automation/automation_trigger_id.enum";
+import { AutomationTrigger, InitResult } from "../automation/types";
 import { InputText } from "../../ts/components/input_text";
 import { FormRow } from "../../ts/components/form_row";
 import { Switch } from "../../ts/components/switch";
@@ -49,7 +49,7 @@ function get_mqtt_edit_children(trigger: MqttAutomationTrigger, on_trigger: (tri
     const mqtt_config = API.get("mqtt/config");
     const [isInvalid, isInvalidSetter] = useState(false);
 
-    return [<>
+    return [
         <FormRow label={__("mqtt.automation.use_topic_prefix")}>
             <Switch
                 checked={trigger[1].use_prefix}
@@ -57,13 +57,13 @@ function get_mqtt_edit_children(trigger: MqttAutomationTrigger, on_trigger: (tri
                     on_trigger(util.get_updated_union(trigger, {use_prefix: !trigger[1].use_prefix}));
                 }}
                 desc={__("mqtt.automation.use_topic_prefix_muted") + mqtt_config.global_topic_prefix + "/automation_trigger/"} />
-        </FormRow>
+        </FormRow>,
         <FormRow label={__("mqtt.automation.topic")}>
             <InputText
                 required
                 value={trigger[1].topic_filter}
                 class={isInvalid ? "is-invalid" : undefined}
-                maxLength={64}
+                maxLength={32}
                 onValue={(v) => {
                     if (v.startsWith(mqtt_config.global_topic_prefix)) {
                         isInvalidSetter(true);
@@ -74,24 +74,24 @@ function get_mqtt_edit_children(trigger: MqttAutomationTrigger, on_trigger: (tri
                     on_trigger(util.get_updated_union(trigger, {topic_filter: v}));
                 }}
                 invalidFeedback={__("mqtt.automation.use_topic_prefix_invalid")} />
-        </FormRow>
+        </FormRow>,
         <FormRow label={__("mqtt.automation.payload")}>
             <InputText
-                placeholder={__("mqtt.automation.match_all")}
-                maxLength={64}
+                placeholder={__("mqtt.automation.match_any")}
+                maxLength={32}
                 value={trigger[1].payload}
                 onValue={(v) => {
                     on_trigger(util.get_updated_union(trigger, {payload: v}));
                 }} />
-        </FormRow>
+        </FormRow>,
         <FormRow label={__("mqtt.automation.accept_retain")}>
             <Switch
                 checked={trigger[1].retain}
                 onClick={() => {
                     on_trigger(util.get_updated_union(trigger, {retain: !trigger[1].retain}));
                 }} />
-        </FormRow>
-    </>]
+        </FormRow>,
+    ];
 }
 
 function new_mqtt_config(): AutomationTrigger {
@@ -106,7 +106,7 @@ function new_mqtt_config(): AutomationTrigger {
     ];
 }
 
-export function init() {
+export function init(): InitResult {
     return {
         trigger_components: {
             [AutomationTriggerID.MQTT]: {

@@ -17,15 +17,16 @@
  * Boston, MA 02111-1307, USA.
  */
 
-import $ from "../../ts/jq";
 import * as util from "../../ts/util";
 import * as API from "../../ts/api";
 import { __ } from "../../ts/translation";
-import { h, render, Fragment } from "preact";
+import { h, Fragment } from "preact";
 import { InputText } from "../../ts/components/input_text";
 import { Button } from "react-bootstrap";
 import { Save } from "react-feather";
 import { ConfigComponent } from "../../ts/components/config_component";
+import { StatusSection } from "../../ts/components/status_section";
+import { PageHeader } from "../../ts/components/page_header";
 
 export class DeviceNameStatus extends ConfigComponent<"info/display_name"> {
     constructor() {
@@ -34,43 +35,32 @@ export class DeviceNameStatus extends ConfigComponent<"info/display_name"> {
 
     render(props: {}, state: Readonly<API.getType['info/display_name']>) {
         if (!util.render_allowed() || !API.hasModule("device_name"))
-            return <></>;
+            return <StatusSection name="device_name" class="sticky-under-top" />;
 
         document.title = API.get("info/display_name").display_name + " - " + __("main.title");
 
-        return (
-            <div class="col-12 col-xl-8">
-                <div class="row pt-3 border-bottom tab-header-shadow">
-                    <h1 class="col-4 col-xl-6 page-header pb-2">{__("device_name.status.status")}</h1>
-                    <form class="col-8 col-xl-6" onSubmit={(e: Event) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        if (!(e.target as HTMLFormElement).checkValidity())
-                            return;
+        const hide_save = state.display_name == API.get('info/display_name').display_name;
 
-                        API.save("info/display_name", state, __("device_name.script.save_failed"));
-                    }}>
-                        <InputText maxLength={32} value={state.display_name} onValue={(v) => this.setState({display_name: v})} required>
-                            {state.display_name == API.get('info/display_name').display_name ? <></> :
-                                <div class="input-group-append">
-                                    <Button className="form-control rounded-right" type="submit"><Save/></Button>
-                                </div>
-                            }
-                        </InputText>
-                    </form>
-                </div>
-            </div>
-        );
+        return <StatusSection name="device_name" class="sticky-under-top">
+            <PageHeader title={__("device_name.status.status")} titleClass="col-4" childrenClass="col-8">
+                <form onSubmit={(e: Event) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (!(e.target as HTMLFormElement).checkValidity())
+                        return;
+
+                    API.save("info/display_name", state, __("device_name.script.save_failed"));
+                }}>
+                    <InputText class={hide_save ? "rounded-right" : undefined} maxLength={32} value={state.display_name} onValue={(v) => this.setState({display_name: v})} required>
+                        <div class="input-group-append">
+                            <Button className="form-control rounded-right" type="submit" hidden={hide_save} disabled={hide_save}><Save/></Button>
+                        </div>
+                    </InputText>
+                </form>
+            </PageHeader>
+        </StatusSection>;
     }
 }
 
-render(<DeviceNameStatus />, $("#status-device_name")[0]);
-
 export function init() {
-}
-
-export function add_event_listeners(source: API.APIEventTarget) {
-}
-
-export function update_sidebar_state(module_init: any) {
 }

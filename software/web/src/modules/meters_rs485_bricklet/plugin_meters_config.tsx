@@ -20,7 +20,7 @@
 import { h, ComponentChildren } from "preact";
 import { __, translate_unchecked } from "../../ts/translation";
 import * as util from "../../ts/util";
-import { MeterClassID } from "../meters/meters_defs";
+import { MeterClassID } from "../meters/meter_class_id.enum";
 import { MeterConfig } from "../meters/types";
 import { InputText } from "../../ts/components/input_text";
 import { FormRow } from "../../ts/components/form_row";
@@ -64,7 +64,7 @@ export function init() {
                             value={config[1].type_override}
                             onValue={(v) => on_config(util.get_updated_union(config, {type_override: parseInt(v)}))}
                             />
-                    </FormRow>
+                    </FormRow>,
                 ];
             },
             get_extra_rows: (meter_slot: number) => {
@@ -76,7 +76,7 @@ export function init() {
                         <InputText class="form-control-sm"
                                 value={meter_type_string}/>
                     </div></div>
-                </FormRow>
+                </FormRow>;
             }
         },
     };

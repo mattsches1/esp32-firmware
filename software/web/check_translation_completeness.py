@@ -1,23 +1,9 @@
-import json
 import os
-import re
+import json
 import sys
+import tinkerforge_util as tfutil
 
-import importlib.util
-import importlib.machinery
-
-software_dir = os.path.realpath(os.path.join(os.path.dirname(__file__), '..'))
-
-def create_software_module():
-    software_spec = importlib.util.spec_from_file_location('software', os.path.join(software_dir, '__init__.py'))
-    software_module = importlib.util.module_from_spec(software_spec)
-
-    software_spec.loader.exec_module(software_module)
-
-    sys.modules['software'] = software_module
-
-if 'software' not in sys.modules:
-    create_software_module()
+tfutil.create_parent_module(__file__, 'software')
 
 from software import util
 
@@ -61,7 +47,7 @@ def check_mismatch(translation_values, key, p):
     return mismatches
 
 def main():
-    ts_files = [os.path.join("src", "main.tsx")]
+    ts_files = [os.path.join("src", "main.tsx"), os.path.join("src", "app.tsx")]
 
     ts_files += get_all_ts_files("./src/ts")
     ts_files += get_all_ts_files("./src/typings")
@@ -87,10 +73,6 @@ def main():
                 print("\t", *[s.replace('\\xad', '') for s in x])
                 reported_mismatches.append(x)
 
-    with open('./src/index.html', 'r', encoding='utf-8') as f:
-        content = f.read()
-
-    used_placeholders += flatten([x.split(" ") for x in re.findall('data-i18n="([^"]*)"', content)])
     used_placeholders = set(used_placeholders)
     used_but_missing = []
 
@@ -162,6 +144,18 @@ def main():
             '.firmware_update.script.info_page_corrupted',
             '.firmware_update.script.no_info_page',
             '.firmware_update.script.wrong_firmware_type',
+            '.evse.content.evse_v2_gpio_names_0',
+            '.evse.content.evse_v2_gpio_names_1',
+            '.evse.content.evse_v2_gpio_names_2',
+            '.evse.content.evse_v2_gpio_names_3',
+            '.evse.content.evse_v2_gpio_names_4',
+            '.evse.content.evse_v2_gpio_names_5',
+            '.evse.content.evse_v3_gpio_names_0',
+            '.evse.content.evse_v3_gpio_names_1',
+            '.evse.content.evse_v3_gpio_names_2',
+            '.evse.content.evse_v3_gpio_names_3',
+            '.evse.content.evse_v3_gpio_names_4',
+            '.evse.content.evse_v3_gpio_names_5',
         ]
 
         for x in sorted(unused):

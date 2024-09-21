@@ -1,6 +1,29 @@
+/* esp32-firmware
+ * Copyright (C) 2020-2024 Erik Fleckstein <erik@tinkerforge.com>
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the
+ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+ * Boston, MA 02111-1307, USA.
+ */
+
 #pragma once
 
 #include "config/private.h"
+
+#include "header_logger.h"
+
+#include "tools.h"
 
 struct default_validator {
     String operator()(const Config::ConfString &x) const
@@ -19,13 +42,14 @@ struct default_validator {
 
     String operator()(const Config::ConfFloat &x) const
     {
-        const auto *slot = x.getSlot();
-        const auto val = *x.getVal();
+        const auto val = x.getVal();
+        const auto min = x.getMin();
+        const auto max = x.getMax();
 
-        if (val < slot->min)
-            return String("Float value ") + val + " was less than the allowed minimum of " + slot->min;
-        if (val > slot->max)
-            return String("Float value ") + val + " was more than the allowed maximum of " + slot->max;
+        if (val < min)
+            return String("Float value ") + val + " was less than the allowed minimum of " + min;
+        if (val > max)
+            return String("Float value ") + val + " was more than the allowed maximum of " + max;
         return "";
     }
 
@@ -95,7 +119,7 @@ struct default_validator {
             String err = Config::apply_visitor(default_validator{}, x.getSlot()->values[i].value);
 
             if (err != "")
-                return String("[\"") + x.getSlot()->schema->keys[i] + "\"] " + err;
+                return String("[\"") + x.getSlot()->schema->keys[i].val + "\"] " + err;
         }
 
         return "";
@@ -116,7 +140,7 @@ struct to_json {
     }
     void operator()(const Config::ConfFloat &x)
     {
-        insertHere.set(*x.getVal());
+        insertHere.set(x.getVal());
     }
     void operator()(const Config::ConfInt &x)
     {
@@ -162,24 +186,34 @@ struct to_json {
 
         JsonObject obj = insertHere.as<JsonObject>();
         for (size_t i = 0; i < size; ++i) {
-            const char *key = schema->keys[i];
+            const char *key = schema->keys[i].val;
             const Config &child = slot->values[i];
+
+            bool censored = false;
+            for (size_t ktc = 0; ktc < keys_to_censor_len; ++ktc) {
+                // We've made sure that both keys point to _rodata.
+                // Comparing the pointers should be enough, assuming that the literal strings are deduplicated perfectly.
+                if (key != keys_to_censor[ktc])
+                    continue;
+
+                if (!(child.is<Config::ConfString>() && child.asString().length() == 0)) {
+                    obj[key] = nullptr;
+                    censored = true;
+                    break;
+                }
+            }
+            if (censored)
+                continue;
 
             if (child.is<Config::ConfObject>()) {
                 obj.createNestedObject(key);
             } else if (child.is<Config::ConfArray>() || child.is<Config::ConfUnion>()) {
                 obj.createNestedArray(key);
-            } else if (!obj.containsKey(key)) {
+            } else {
                 obj[key] = nullptr;
             }
 
             Config::apply_visitor(to_json{obj[key], keys_to_censor, keys_to_censor_len}, child.value);
-        }
-
-        for (size_t i = 0; i < keys_to_censor_len; ++i) {
-            const String &key = keys_to_censor[i];
-            if (obj.containsKey(key) && !(obj[key].is<String>() && obj[key].as<String>().length() == 0))
-                obj[key] = nullptr;
         }
     }
 
@@ -201,7 +235,7 @@ struct to_json {
     }
 
     JsonVariant insertHere;
-    const String *keys_to_censor;
+    const char *const *keys_to_censor;
     size_t keys_to_censor_len;
 };
 
@@ -209,7 +243,8 @@ static const uint8_t leading_zeros_to_char_count[33] = {10,10,10,9,9,9,8,8,8,7,7
 
 // Never underestimates length. Overestimates by 0.12 chars on average.
 // Tested against the returned length of snprintf([...],"%u") for every 32 bit number.
-static size_t estimate_chars_per_uint(uint32_t v) {
+static size_t estimate_chars_per_uint(uint32_t v)
+{
 #if !defined(__XTENSA_EL__) || __XTENSA_EL__ != 1
     // __builtin_clz(v) is undefined for v == 0. Set the lowest bit to work around that.
     // The workaround is not neccessary on Xtensa, which uses the NSAU instruction that handles 0 correctly.
@@ -278,7 +313,7 @@ struct max_string_length_visitor {
 
         size_t sum = 2; // { and }
         for (size_t i = 0; i < size; ++i) {
-            sum += schema->key_lengths[i] + 3; // "":
+            sum += schema->keys[i].length + 3; // "":
             sum += Config::apply_visitor(max_string_length_visitor{}, slot->values[i].value);
         }
         sum += size - 1; // ,
@@ -348,7 +383,7 @@ struct string_length_visitor {
 
         size_t sum = 2; // { and }
         for (size_t i = 0; i < size; ++i) {
-            sum += schema->key_lengths[i] + 3; // "":
+            sum += schema->keys[i].length + 3; // "":
             sum += Config::apply_visitor(string_length_visitor{}, slot->values[i].value);
         }
         sum += size - 1; // ,
@@ -401,7 +436,7 @@ struct json_length_visitor {
         size_t sum = 0;
         for (size_t i = 0; i < size; ++i) {
             if (!zero_copy)
-                sum += schema->key_lengths[i] + 1;
+                sum += schema->keys[i].length + 1;
 
             sum += Config::apply_visitor(json_length_visitor{zero_copy}, slot->values[i].value);
         }
@@ -441,7 +476,7 @@ struct from_json {
         if (!json_node.is<float>())
             return "JSON node was not a float.";
 
-        *x.getVal() = json_node.as<float>();
+        x.setVal(json_node.as<float>());
         return "";
     }
     String operator()(Config::ConfInt &x)
@@ -541,10 +576,10 @@ struct from_json {
             // Try to use the non-object as value for the single member.
             // This allows calling for example evse/external_current_update with the payload 8000 instead of {"current": 8000}
             // Only allow this if the omitted key is not the confirm key.
-            if (!json_node.is<JsonObject>() && is_root && size == 1 && Config::ConfirmKey() != schema->keys[0]) {
+            if (!json_node.is<JsonObject>() && is_root && size == 1 && Config::ConfirmKey() != schema->keys[0].val) {
                 String inner_error = Config::apply_visitor(from_json{json_node, force_same_keys, permit_null_updates, false}, x.getSlot()->values[0].value);
                 if (inner_error != "")
-                    return String("(inferred) [\"") + schema->keys[0] + "\"] " + inner_error + "\n";
+                    return String("(inferred) [\"") + schema->keys[0].val + "\"] " + inner_error + "\n";
                 else
                     return inner_error;
             }
@@ -561,10 +596,9 @@ struct from_json {
         for (size_t i = 0; i < size; ++i) {
             // Don't cache x.getSlot(): The recursive visitor can reallocate slot buffers which invalidates the returned pointer!
             const auto *slot = x.getSlot();
-            const auto *key = slot->schema->keys[i];
+            const auto *key = slot->schema->keys[i].val;
 
-            if (!obj.containsKey(key))
-            {
+            if (!obj.containsKey(key)) {
                 if (!force_same_keys)
                     continue;
 
@@ -575,21 +609,18 @@ struct from_json {
             }
 
             String inner_error = Config::apply_visitor(from_json{obj[key], force_same_keys, permit_null_updates, false}, slot->values[i].value);
-            if(obj.size() > 0)
+            if (obj.size() > 0)
                 obj.remove(key);
-            if (inner_error != "")
-            {
+            if (inner_error != "") {
                 if (return_str.length() < 1000)
                     return_str += String("[\"") + key + "\"] " + inner_error + "\n";
                 else
                     more_errors = true;
             }
-
         }
 
         if (force_same_keys) {
-            for (auto i = obj.begin(); i != obj.end(); i += 1)
-            {
+            for (auto i = obj.begin(); i != obj.end(); i += 1) {
                 if (return_str.length() < 1000)
                     return_str += String("JSON object has unknown key '") + i->key().c_str() + "'.\n";
                 else
@@ -597,8 +628,7 @@ struct from_json {
             }
         }
 
-        if (return_str.length() > 0)
-        {
+        if (return_str.length() > 0) {
             if (more_errors)
                 return_str += "More errors occurred that got filtered out.\n";
             return return_str;
@@ -635,7 +665,6 @@ struct from_json {
             return "[0] JSON node was not an unsigned integer.";
         }
 
-
         if (new_tag != old_tag) {
             if (!x.changeUnionVariant(new_tag))
                 return String("[0] Unknown union tag: ") + new_tag;
@@ -671,7 +700,7 @@ struct from_update {
         if (update_val == nullptr)
             return "ConfUpdate node was not a float.";
 
-        *x.getVal() = *update_val;
+        x.setVal(*update_val);
         return "";
     }
     String operator()(Config::ConfInt &x)
@@ -697,7 +726,7 @@ struct from_update {
             if (update_val_int == nullptr || *update_val_int < 0)
                 return "ConfUpdate node was not an unsigned integer.";
 
-            new_val = (uint32_t) *update_val_int;
+            new_val = (uint32_t)*update_val_int;
         } else {
             new_val = *update_val_uint;
         }
@@ -781,7 +810,7 @@ struct from_update {
         for (size_t i = 0; i < size; ++i) {
             size_t obj_idx = 0xFFFFFFFF;
             // Don't cache x.getSlot(): The recursive visitor can reallocate slot buffers which invalidates the returned pointer!
-            const char *key = x.getSlot()->schema->keys[i];
+            const char *key = x.getSlot()->schema->keys[i].val;
             Config &value = x.getSlot()->values[i];
             for (size_t j = 0; j < size; ++j) {
                 if (obj_elements[j].first != key)
@@ -927,7 +956,7 @@ struct to_owned {
     }
     OwnedConfig operator()(const Config::ConfFloat &x)
     {
-        return OwnedConfig{*x.getVal()};
+        return OwnedConfig{x.getVal()};
     }
     OwnedConfig operator()(const Config::ConfInt &x)
     {
@@ -964,7 +993,7 @@ struct to_owned {
         const auto size = schema->length;
 
         for (size_t i = 0; i < size; ++i) {
-            result.push_back({String(schema->keys[i], schema->key_lengths[i]), Config::apply_visitor(to_owned{}, slot->values[i].value)});
+            result.push_back({String(schema->keys[i].val, schema->keys[i].length), Config::apply_visitor(to_owned{}, slot->values[i].value)});
         }
 
         return OwnedConfig{OwnedConfig::OwnedConfigObject{result}};
@@ -978,3 +1007,90 @@ struct to_owned {
         return OwnedConfig(OwnedConfig::OwnedConfigUnion{x.getTag(), result});
     }
 };
+
+#ifdef DEBUG_FS_ENABLE
+struct api_info {
+    void operator()(const Config::ConfString &x)
+    {
+        written += snprintf_u(buf + written, buf_size - written, "{\"type\":\"string\",\"val\":\"%s\",\"minChars\":%u,\"maxChars\":%u}", x.getSlot()->val.c_str(), x.getSlot()->minChars, x.getSlot()->maxChars);
+    }
+    void operator()(const Config::ConfFloat &x)
+    {
+        written += snprintf_u(buf + written, buf_size - written, "{\"type\":\"float\",\"val\":%f,\"min\":%f,\"max\":%f}", isnan(x.getVal()) ? 0.0f : x.getVal(), x.getMin(), x.getMax());
+    }
+    void operator()(const Config::ConfInt &x)
+    {
+        written += snprintf_u(buf + written, buf_size - written, "{\"type\":\"int\",\"val\":%d,\"min\":%d,\"max\":%d}", x.getSlot()->val, x.getSlot()->min, x.getSlot()->max);
+    }
+    void operator()(const Config::ConfUint &x)
+    {
+        written += snprintf_u(buf + written, buf_size - written, "{\"type\":\"uint\",\"val\":%u,\"min\":%u,\"max\":%u}", x.getSlot()->val, x.getSlot()->min, x.getSlot()->max);
+    }
+    void operator()(const Config::ConfBool &x)
+    {
+        written += snprintf_u(buf + written, buf_size - written, "{\"type\":\"bool\",\"val\":%s}", x.value ? "true" : "false");
+    }
+    void operator()(const Config::ConfVariant::Empty &x)
+    {
+        written += snprintf_u(buf + written, buf_size - written, "{\"type\":\"null\"}");
+    }
+    void operator()(const Config::ConfArray &x)
+    {
+        written += snprintf_u(buf + written, buf_size - written, "{\"type\":\"array\",\"prototype\":");
+        Config::apply_visitor(api_info{buf, buf_size, written}, x.getSlot()->prototype->value);
+        written += snprintf_u(buf + written, buf_size - written, ",\"minElements\":%u,\"maxElements\":%u,\"variantType\":%d,\"content\":[", x.getSlot()->minElements, x.getSlot()->maxElements, x.getSlot()->variantType);
+        bool first = true;
+        for (const Config &c : *x.getVal()) {
+            if (!first) {
+                written += snprintf_u(buf + written, buf_size - written, ",");
+            }
+            first = false;
+            Config::apply_visitor(api_info{buf, buf_size, written}, c.value);
+        }
+        written += snprintf_u(buf + written, buf_size - written, "]}");
+    }
+    void operator()(const Config::ConfObject &x)
+    {
+        const auto *slot = x.getSlot();
+        const auto size = slot->schema->length;
+
+        written += snprintf_u(buf + written, buf_size - written, "{\"type\":\"object\",\"length\":%u,\"entries\":[", size);
+
+        bool first = true;
+        for (size_t i = 0; i < size; ++i) {
+            if (!first) {
+                written += snprintf_u(buf + written, buf_size - written, ",");
+            }
+            first = false;
+            written += snprintf_u(buf + written, buf_size - written, "{\"key\":\"%.*s\",\"value\":", slot->schema->keys[i].length, slot->schema->keys[i].val);
+            Config::apply_visitor(api_info{buf, buf_size, written}, slot->values[i].value);
+            written += snprintf_u(buf + written, buf_size - written, "}");
+        }
+        written += snprintf_u(buf + written, buf_size - written, "]}");
+    }
+    void operator()(const Config::ConfUnion &x)
+    {
+        written += snprintf_u(buf + written, buf_size - written, "{\"type\":\"union\",\"tag\":%u,\"prototypes_len\":%u,\"prototypes\":[", x.getSlot()->tag, x.getSlot()->prototypes_len);
+
+        bool first = true;
+        for (size_t i = 0; i < x.getSlot()->prototypes_len; ++i) {
+            if (!first) {
+                written += snprintf_u(buf + written, buf_size - written, ",");
+            }
+            first = false;
+            written += snprintf_u(buf + written, buf_size - written, "{\"tag\": %u,\"value\":", x.getSlot()->prototypes[i].tag);
+            Config::apply_visitor(api_info{buf, buf_size, written}, x.getSlot()->prototypes[i].config.value);
+            written += snprintf_u(buf + written, buf_size - written, "}");
+        }
+        written += snprintf_u(buf + written, buf_size - written, "],\"val\":");
+
+        auto &value = x.getVal()->value;
+        Config::apply_visitor(api_info{buf, buf_size, written}, value);
+        written += snprintf_u(buf + written, buf_size - written, "}");
+    }
+
+    char *buf;
+    size_t buf_size;
+    size_t &written;
+};
+#endif

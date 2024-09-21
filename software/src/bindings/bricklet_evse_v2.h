@@ -1,7 +1,7 @@
 /* ***********************************************************
- * This file was automatically generated on 2023-12-11.      *
+ * This file was automatically generated on 2024-07-08.      *
  *                                                           *
- * C/C++ for Microcontrollers Bindings Version 2.0.3         *
+ * C/C++ for Microcontrollers Bindings Version 2.0.4         *
  *                                                           *
  * If you have a bugfix for this file and want to commit it, *
  * please fix the bug in the generator. You can find a link  *
@@ -28,6 +28,7 @@ extern "C" {
 struct TF_EVSEV2;
 #if TF_IMPLEMENT_CALLBACKS != 0
 
+typedef void (*TF_EVSEV2_EnergyMeterValuesHandler)(struct TF_EVSEV2 *evse_v2, float power, float current[3], bool phases_active[3], bool phases_connected[3], void *user_data);
 
 #endif
 /**
@@ -38,6 +39,8 @@ struct TF_EVSEV2;
 typedef struct TF_EVSEV2 {
     TF_TFP *tfp;
 #if TF_IMPLEMENT_CALLBACKS != 0
+    TF_EVSEV2_EnergyMeterValuesHandler energy_meter_values_handler;
+    void *energy_meter_values_user_data;
 
 #endif
     uint16_t magic;
@@ -247,6 +250,26 @@ typedef struct TF_EVSEV2 {
 /**
  * \ingroup TF_EVSEV2
  */
+#define TF_EVSE_V2_FUNCTION_SET_PHASE_AUTO_SWITCH 41
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_FUNCTION_GET_PHASE_AUTO_SWITCH 42
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_FUNCTION_SET_PHASES_CONNECTED 43
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_FUNCTION_GET_PHASES_CONNECTED 44
+
+/**
+ * \ingroup TF_EVSEV2
+ */
 #define TF_EVSE_V2_FUNCTION_GET_SPITFP_ERROR_COUNT 234
 
 /**
@@ -305,6 +328,11 @@ typedef struct TF_EVSEV2 {
 #define TF_EVSE_V2_FUNCTION_GET_IDENTITY 255
 
 #if TF_IMPLEMENT_CALLBACKS != 0
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_CALLBACK_ENERGY_METER_VALUES 45
 
 #endif
 
@@ -552,6 +580,16 @@ typedef struct TF_EVSEV2 {
  * \ingroup TF_EVSEV2
  */
 #define TF_EVSE_V2_SHUTDOWN_INPUT_SHUTDOWN_ON_CLOSE 2
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_SHUTDOWN_INPUT_4200_WATT_ON_OPEN 3
+
+/**
+ * \ingroup TF_EVSEV2
+ */
+#define TF_EVSE_V2_SHUTDOWN_INPUT_4200_WATT_ON_CLOSE 4
 
 /**
  * \ingroup TF_EVSEV2
@@ -876,8 +914,19 @@ int tf_evse_v2_set_response_expected(TF_EVSEV2 *evse_v2, uint8_t function_id, bo
  * functions of this device at once.
  */
 int tf_evse_v2_set_response_expected_all(TF_EVSEV2 *evse_v2, bool response_expected);
-
-
+#if TF_IMPLEMENT_CALLBACKS != 0
+/**
+ * \ingroup TF_EVSEV2
+ *
+ * Registers the given \c handler to the Energy Meter Values callback. The
+ * \c user_data will be passed as the last parameter to the \c handler.
+ *
+ * Signature: \code void callback(float power, float current[3], bool phases_active[3], bool phases_connected[3], void *user_data) \endcode
+ *
+ * TODO
+ */
+int tf_evse_v2_register_energy_meter_values_callback(TF_EVSEV2 *evse_v2, TF_EVSEV2_EnergyMeterValuesHandler handler, void *user_data);
+#endif
 #if TF_IMPLEMENT_CALLBACKS != 0
 /**
  * \ingroup TF_EVSEV2
@@ -1113,7 +1162,7 @@ int tf_evse_v2_get_all_data_1(TF_EVSEV2 *evse_v2, uint8_t *ret_iec61851_state, u
  *
  * TODO
  */
-int tf_evse_v2_get_all_data_2(TF_EVSEV2 *evse_v2, uint8_t *ret_shutdown_input_configuration, uint8_t *ret_input_configuration, uint8_t *ret_output_configuration, int16_t *ret_indication, uint16_t *ret_duration, uint16_t *ret_color_h, uint8_t *ret_color_s, uint8_t *ret_color_v, uint8_t *ret_button_configuration, uint32_t *ret_button_press_time, uint32_t *ret_button_release_time, bool *ret_button_pressed, bool *ret_ev_wakeup_enabled, bool *ret_control_pilot_disconnect, bool *ret_boost_mode_enabled, int16_t *ret_temperature, uint8_t *ret_phases_current, uint8_t *ret_phases_requested, uint8_t *ret_phases_status);
+int tf_evse_v2_get_all_data_2(TF_EVSEV2 *evse_v2, uint8_t *ret_shutdown_input_configuration, uint8_t *ret_input_configuration, uint8_t *ret_output_configuration, int16_t *ret_indication, uint16_t *ret_duration, uint16_t *ret_color_h, uint8_t *ret_color_s, uint8_t *ret_color_v, uint8_t *ret_button_configuration, uint32_t *ret_button_press_time, uint32_t *ret_button_release_time, bool *ret_button_pressed, bool *ret_ev_wakeup_enabled, bool *ret_control_pilot_disconnect, bool *ret_boost_mode_enabled, int16_t *ret_temperature, uint8_t *ret_phases_current, uint8_t *ret_phases_requested, uint8_t *ret_phases_state, uint8_t *ret_phases_info, bool *ret_phase_auto_switch_enabled, uint8_t *ret_phases_connected);
 
 /**
  * \ingroup TF_EVSEV2
@@ -1176,7 +1225,35 @@ int tf_evse_v2_set_phase_control(TF_EVSEV2 *evse_v2, uint8_t phases);
  *
  * TODO
  */
-int tf_evse_v2_get_phase_control(TF_EVSEV2 *evse_v2, uint8_t *ret_phases_current, uint8_t *ret_phases_requested, uint8_t *ret_phases_status);
+int tf_evse_v2_get_phase_control(TF_EVSEV2 *evse_v2, uint8_t *ret_phases_current, uint8_t *ret_phases_requested, uint8_t *ret_phases_state, uint8_t *ret_phases_info);
+
+/**
+ * \ingroup TF_EVSEV2
+ *
+ * TODO
+ */
+int tf_evse_v2_set_phase_auto_switch(TF_EVSEV2 *evse_v2, bool phase_auto_switch_enabled);
+
+/**
+ * \ingroup TF_EVSEV2
+ *
+ * TODO
+ */
+int tf_evse_v2_get_phase_auto_switch(TF_EVSEV2 *evse_v2, bool *ret_phase_auto_switch_enabled);
+
+/**
+ * \ingroup TF_EVSEV2
+ *
+ * TODO
+ */
+int tf_evse_v2_set_phases_connected(TF_EVSEV2 *evse_v2, uint8_t phases_connected);
+
+/**
+ * \ingroup TF_EVSEV2
+ *
+ * TODO
+ */
+int tf_evse_v2_get_phases_connected(TF_EVSEV2 *evse_v2, uint8_t *ret_phases_connected);
 
 /**
  * \ingroup TF_EVSEV2

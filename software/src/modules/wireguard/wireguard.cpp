@@ -18,13 +18,11 @@
  */
 #include "wireguard.h"
 
-#include "api.h"
-#include "event_log.h"
-#include "task_scheduler.h"
-
 #include <WiFi.h>
+#include <mbedtls/base64.h>
 
-#include "mbedtls/base64.h"
+#include "event_log_prefix.h"
+#include "module_dependencies.h"
 
 String check_key(const String &key, bool enable)
 {
@@ -55,6 +53,8 @@ void Wireguard::pre_setup()
 
         {"remote_host", Config::Str("", 0, 64)},
         {"remote_port", Config::Uint16(51820)},
+
+        {"local_port", Config::Uint16(51820)},
 
         {"private_key",       Config::Str("", 0, 44)},
         {"remote_public_key", Config::Str("", 0, 44)},
@@ -126,12 +126,14 @@ void Wireguard::start_wireguard()
     IPAddress internal_gateway;
     IPAddress allowed_ip;
     IPAddress allowed_subnet;
+    uint16_t local_port;
 
     internal_ip.fromString(config.get("internal_ip")->asEphemeralCStr());
     internal_subnet.fromString(config.get("internal_subnet")->asEphemeralCStr());
     internal_gateway.fromString(config.get("internal_gateway")->asEphemeralCStr());
     allowed_ip.fromString(config.get("allowed_ip")->asEphemeralCStr());
     allowed_subnet.fromString(config.get("allowed_subnet")->asEphemeralCStr());
+    local_port = config.get("local_port")->asUint();
 
     private_key = config.get("private_key")->asString(); // Local copy of ephemeral conf String. The network interface created by WG might hold a reference to the C string.
     remote_host = config.get("remote_host")->asString(); // Local copy of ephemeral conf String. lwip_getaddrinfo() might hold a reference to the C string.
@@ -140,6 +142,7 @@ void Wireguard::start_wireguard()
 
     wg.begin(internal_ip,
              internal_subnet,
+             local_port,
              internal_gateway,
              private_key.c_str(),
              remote_host.c_str(),
@@ -202,4 +205,9 @@ void Wireguard::register_urls()
     });
 
     api.addState("wireguard/state", &state);
+}
+
+bool Wireguard::port_used(uint32_t port) {
+    uint32_t self_port = config.get("local_port")->asUint();
+    return port == self_port;
 }

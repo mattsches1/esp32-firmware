@@ -11,6 +11,7 @@ let x = {
         },
         "content": {
             "charge_tracker": "Ladetracker",
+            "charge_log_file": "Ladelog",
             "download": "Ladelog herunterladen",
             "download_desc": "",
             "download_btn": "Ladelog als CSV herunterladen",
@@ -57,7 +58,7 @@ let x = {
             "automation_action_text": "lösche alle aufgezeichnete Ladevorgänge und starte neu."
         },
         "script": {
-            "tracked_charge_count": /*SFN*/ (tracked: number, max_: number) => `${tracked} von maximal ${max_} (${Math.floor(tracked / max_)} %)` /*NF*/,
+            "tracked_charge_count": /*SFN*/ (tracked: number, max_: number) => `${tracked} von maximal ${max_} (${Math.floor(100 * tracked / max_)} %)` /*NF*/,
             "csv_header_start": "Startzeit",
             "csv_header_display_name": "Anzeigename",
             "csv_header_username": "Benutzername",

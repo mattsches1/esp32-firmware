@@ -17,15 +17,14 @@
  * Boston, MA 02111-1307, USA.
  */
 
-#include "module_dependencies.h"
 #include "network.h"
 
-#include "api.h"
-#include "build.h"
-#include "sdkconfig.h"
-#include "task_scheduler.h"
-
+#include <sdkconfig.h>
 #include <ESPmDNS.h>
+
+#include "event_log_prefix.h"
+#include "module_dependencies.h"
+#include "build.h"
 
 extern char local_uid_str[32];
 
@@ -40,10 +39,8 @@ void Network::pre_setup()
 
 void Network::setup()
 {
-    String default_hostname = String(BUILD_HOST_PREFIX) + "-" + local_uid_str;
-
     if (!api.restorePersistentConfig("network/config", &config)) {
-        config.get("hostname")->updateString(default_hostname);
+        config.get("hostname")->updateString(String(BUILD_HOST_PREFIX) + "-" + local_uid_str);
     }
 
     initialized = true;

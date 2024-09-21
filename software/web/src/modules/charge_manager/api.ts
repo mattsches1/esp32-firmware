@@ -1,11 +1,13 @@
 interface ChargerState {
-    state: number,
-    error: number,
-    allocated_current: number,
-    supported_current: number,
-    last_update: number,
-    name: string,
-    uid: number
+    s: number,
+    e: number,
+    ac: number,
+    ap: number,
+    sc: number,
+    sp: number,
+    lu: number,
+    n: string,
+    u: number
 }
 
 interface ServCharger {
@@ -20,12 +22,18 @@ export type scan_result = ServCharger[] | string;
 export interface state {
     state: number,
     uptime: number,
-    chargers: ChargerState[]
+    chargers: ChargerState[],
+    l_raw: number[],
+    l_min: number[],
+    l_spread: number[],
+    l_max_pv: number,
+    alloc: number[]
 }
 
 interface ChargerConfig {
     host: string,
-    name: string
+    name: string,
+    rot: number
 }
 
 export interface config {
@@ -48,4 +56,32 @@ export interface available_current {
 }
 
 export interface scan {
+}
+
+interface ChargerLowLevelState {
+    b: number
+    rc: number
+    ae: number
+    ar: number
+    ls: number
+    lp: number
+    lw: number
+    ip: number
+}
+
+export interface low_level_state {
+    last_hyst_reset: number,
+    wnd_min: number[],
+    wnd_max: number[],
+    chargers: ChargerLowLevelState[]
+}
+
+export interface low_level_config {
+    global_hysteresis: number
+    alloc_energy_rot_thres: number
+    min_active_time: number
+    wakeup_time: number
+    plug_in_time: number
+    enable_current_factor_pct: number
+    allocation_interval: number
 }

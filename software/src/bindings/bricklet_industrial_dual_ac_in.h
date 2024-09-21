@@ -1,7 +1,7 @@
 /* ***********************************************************
- * This file was automatically generated on 2023-04-25.      *
+ * This file was automatically generated on 2024-07-08.      *
  *                                                           *
- * C/C++ for Microcontrollers Bindings Version 2.0.3         *
+ * C/C++ for Microcontrollers Bindings Version 2.0.4         *
  *                                                           *
  * If you have a bugfix for this file and want to commit it, *
  * please fix the bug in the generator. You can find a link  *
@@ -393,7 +393,7 @@ int tf_industrial_dual_ac_in_callback_tick(TF_IndustrialDualACIn *industrial_dua
 /**
  * \ingroup TF_IndustrialDualACIn
  *
- * Returns the input values as bools, *true* refers to "AC voltage detected" and *false* refers to no AC "voltage detected".
+ * Returns the input values as bools, *true* refers to "AC voltage detected" and *false* refers to no "AC voltage detected".
  */
 int tf_industrial_dual_ac_in_get_value(TF_IndustrialDualACIn *industrial_dual_ac_in, bool ret_value[2]);
 

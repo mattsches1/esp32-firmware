@@ -11,8 +11,14 @@ let x = {
         },
         "content": {
             "meters": "Energy Meters",
-            "history": "History (48 h)",
-            "live": "Live",
+            "history_48": "History (48 h)",
+            "history_24": "History (24 h)",
+            "history_12": "History (12 h)",
+            "history_6": "History (6 h)",
+            "history_3": "History (3 h)",
+            "live": "Live (6 min)",
+            "no_data": "No data available!",
+            "loading": "Loading data...",
             "detailed_values": "Details",
             "detailed_values_none": "No values are available yet.",
 
@@ -33,6 +39,7 @@ let x = {
             "add_meter_infix": " of ",
             "add_meter_suffix": " energy meters configured",
             "add_meter_slot": "Number",
+            "add_meter_slot_select": "Select...",
             "add_meter_class": "Class",
             "add_meter_class_select": "Select...",
 
@@ -47,7 +54,7 @@ let x = {
             "last_reset": "Last energy meter reset",
             "last_reset_unknown": "Unknown",
             "last_reset_counter": /*SFN*/ (n: number) => `${n} times resetted`/*NF*/,
-            "reset": "Reset energy meter",
+            "reset": "Reset",
             "never": "Never",
 
             "reset_modal": "Reset meter values?",
@@ -78,6 +85,8 @@ let x = {
             "meter_type_5": "Eastron SDM630MCT",
             "meter_type_6": "Eltako DSZ15DZMOD",
             "meter_type_7": "YTL DEM4A",
+            "meter_type_200": "Unknown/Custom (basic)",
+            "meter_type_201": "Unknown/Custom (extra values)",
             "meter_type_254": "Internal",
             "meter_type_255": "Auto detect",
             "reboot_required": "Reboot required"

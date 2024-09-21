@@ -20,18 +20,15 @@
 #pragma once
 
 #include <vector>
-
-#include "ArduinoJson.h"
-#include "FS.h"
-
-#include "cool_string.h"
-#include "event_log.h"
-#include "tools.h"
+#include <ArduinoJson.h>
+#include <FS.h>
 
 #define STRICT_VARIANT_ASSUME_MOVE_NOTHROW true
-#include "strict_variant/variant.hpp"
-#include "strict_variant/mpl/find_with.hpp"
+#include <strict_variant/variant.hpp>
+#include <strict_variant/mpl/find_with.hpp>
 
+#include "cool_string.h"
+#include "tools.h"
 #include "config/owned_config.h"
 
 #ifdef DEBUG_FS_ENABLE
@@ -43,6 +40,8 @@
 #else
 #define ASSERT_MAIN_THREAD() do {} while (0)
 #endif
+
+class StringBuilder;
 
 void config_pre_init();
 void config_post_setup();
@@ -69,6 +68,7 @@ enum class ConfigSource {
 
 struct Config {
     struct ConfString {
+        friend struct api_info;
         using Slot = ConfStringSlot;
 
     private:
@@ -90,14 +90,20 @@ struct Config {
         ~ConfString();
 
         ConfString &operator=(const ConfString &cpy);
+
+        ConfString(ConfString &&cpy);
+        ConfString &operator=(ConfString &&cpy);
     };
 
     struct ConfFloat {
+        friend struct api_info;
         using Slot = ConfFloatSlot;
 
     private:
         uint16_t idx;
         Slot *getSlot();
+        const Slot *getSlot() const;
+        void setSlot(float val, float min, float max);
 
     public:
         static bool slotEmpty(size_t i);
@@ -105,18 +111,24 @@ struct Config {
         static Slot *allocSlotBuf(size_t elements);
         static void freeSlotBuf(Slot *buf);
 
-        float *getVal();
-        const float *getVal() const;
-        const Slot *getSlot() const;
+        float getVal() const;
+        float getMin() const;
+        float getMax() const;
+
+        void setVal(float f);
 
         ConfFloat(float val, float min, float max);
         ConfFloat(const ConfFloat &cpy);
         ~ConfFloat();
 
         ConfFloat &operator=(const ConfFloat &cpy);
+
+        ConfFloat(ConfFloat &&cpy);
+        ConfFloat &operator=(ConfFloat &&cpy);
     };
 
     struct ConfInt {
+        friend struct api_info;
         using Slot = ConfIntSlot;
 
     private:
@@ -138,9 +150,13 @@ struct Config {
         ~ConfInt();
 
         ConfInt &operator=(const ConfInt &cpy);
+
+        ConfInt(ConfInt &&cpy);
+        ConfInt &operator=(ConfInt &&cpy);
     };
 
     struct ConfUint {
+        friend struct api_info;
         using Slot = ConfUintSlot;
 
     private:
@@ -162,6 +178,9 @@ struct Config {
         ~ConfUint();
 
         ConfUint &operator=(const ConfUint &cpy);
+
+        ConfUint(ConfUint &&cpy);
+        ConfUint &operator=(ConfUint &&cpy);
     };
 
     struct ConfBool {
@@ -173,6 +192,7 @@ struct Config {
     };
 
     struct ConfArray {
+        friend struct api_info;
         using Slot = ConfArraySlot;
 
     private:
@@ -196,9 +216,13 @@ struct Config {
         ~ConfArray();
 
         ConfArray &operator=(const ConfArray &cpy);
+
+        ConfArray(ConfArray &&cpy);
+        ConfArray &operator=(ConfArray &&cpy);
     };
 
     struct ConfObject {
+        friend struct api_info;
         using Slot = ConfObjectSlot;
 
     private:
@@ -215,14 +239,18 @@ struct Config {
         const Slot *getSlot() const;
         Slot *getSlot();
 
-        ConfObject(std::vector<std::pair<String, Config>> &&val);
+        ConfObject(std::vector<std::pair<const char *, Config>> &&val);
         ConfObject(const ConfObject &cpy);
         ~ConfObject();
 
         ConfObject &operator=(const ConfObject &cpy);
+
+        ConfObject(ConfObject &&cpy);
+        ConfObject &operator=(ConfObject &&cpy);
     };
 
     struct ConfUnion {
+        friend struct api_info;
         using Slot = ConfUnionSlot;
 
     private:
@@ -247,6 +275,9 @@ struct Config {
         ~ConfUnion();
 
         ConfUnion &operator=(const ConfUnion &cpy);
+
+        ConfUnion(ConfUnion &&cpy);
+        ConfUnion &operator=(ConfUnion &&cpy);
     };
 
     struct ConfUpdateArray;
@@ -326,6 +357,9 @@ struct Config {
         ConfVariant(const ConfVariant &cpy);
 
         ConfVariant &operator=(const ConfVariant &cpy);
+
+        ConfVariant(ConfVariant &&cpy);
+        ConfVariant &operator=(ConfVariant &&cpy);
 
         void destroyUnionMember();
 
@@ -452,7 +486,12 @@ struct Config {
                         uint16_t maxElements,
                         int variantType);
 
-    static Config Object(std::initializer_list<std::pair<String, Config>> obj);
+    static Config Object(std::initializer_list<std::pair<const char *, Config>> obj);
+
+    template<typename T>
+    static Config Enum(T u, T first, T last) {
+        return Uint(static_cast<uint32_t>(u), static_cast<uint32_t>(first), static_cast<uint32_t>(last));
+    }
 
     template<typename T>
     static void check_enum_template_type() {
@@ -482,7 +521,9 @@ public:
     static ConfigRoot *Null();
 
     static ConfigRoot *Confirm();
+    // Just for convenience.
     static String ConfirmKey();
+    static constexpr const char *confirm_key = "do_i_know_what_i_am_doing";
 
     static Config Uint8(uint8_t u);
 
@@ -563,8 +604,7 @@ public:
     T getTag() const {
         Config::check_enum_template_type<T>();
         if (!this->is<Config::ConfUnion>()) {
-            logger.printfln("Tried to get tag of a node that is not a union!");
-            esp_system_abort("");
+            esp_system_abort("Tried to get tag of a node that is not a union!");
         }
         return (T) this->get<ConfUnion>()->getTag();
     }
@@ -574,11 +614,14 @@ private:
     ConfigT *get() {
         ASSERT_MAIN_THREAD();
         if (!this->is<ConfigT>()) {
-            logger.printfln("get: Config has wrong type. This is %s, requested is %s", this->value.getVariantName(), ConfigT::variantName);
-#ifdef DEBUG_FS_ENABLE
-            logger.printfln("Content is %s", this->to_string().c_str());
+            char *message;
+            int result = -1;
+#ifndef DEBUG_FS_ENABLE
+            result = asprintf(&message, "get: Config has wrong type. This is %s, requested is %s", this->value.getVariantName(), ConfigT::variantName);
+#else
+            result = asprintf(&message, "get: Config has wrong type. This is %s, requested is %s.\n Content is %s", this->value.getVariantName(), ConfigT::variantName, this->to_string().c_str());
 #endif
-            esp_system_abort("");
+            esp_system_abort(result < 0 ? "" : message);
         }
 
         return reinterpret_cast<ConfigT *>(&value.val);
@@ -588,11 +631,14 @@ private:
     const ConfigT *get() const {
         ASSERT_MAIN_THREAD();
         if (!this->is<ConfigT>()) {
-            logger.printfln("get: Config has wrong type. This is %s, requested is %s", this->value.getVariantName(), ConfigT::variantName);
-#ifdef DEBUG_FS_ENABLE
-            logger.printfln("Content is %s", this->to_string().c_str());
+            char *message;
+            int result = -1;
+#ifndef DEBUG_FS_ENABLE
+            result = asprintf(&message, "get: Config has wrong type. This is %s, requested is %s", this->value.getVariantName(), ConfigT::variantName);
+#else
+            result = asprintf(&message, "get: Config has wrong type. This is %s, requested is %s.\n Content is %s", this->value.getVariantName(), ConfigT::variantName, this->to_string().c_str());
 #endif
-            esp_system_abort("");
+            esp_system_abort(result < 0 ? "" : message);
         }
 
         return reinterpret_cast<const ConfigT *>(&value.val);
@@ -617,11 +663,14 @@ public:
         } else if (this->is<ConfInt>()) {
             return (T) this->asInt();
         } else {
-            logger.printfln("asEnum: Config has wrong type. This is %s, (not a ConfInt or ConfUint)", this->value.getVariantName());
-#ifdef DEBUG_FS_ENABLE
-            logger.printfln("Content is %s", this->to_string().c_str());
+            char *message;
+            int result = -1;
+#ifndef DEBUG_FS_ENABLE
+            result = asprintf(&message, "asEnum: Config has wrong type. This is %s, (not a ConfInt or ConfUint)", this->value.getVariantName());
+#else
+            result = asprintf(&message, "asEnum: Config has wrong type. This is %s, (not a ConfInt or ConfUint)\nContent is %s", this->value.getVariantName(), this->to_string().c_str());
 #endif
-            esp_system_abort("");
+            esp_system_abort(result < 0 ? "" : message);
         }
     }
 
@@ -637,12 +686,14 @@ private:
     bool update_value(T value, const char *value_type) {
         ASSERT_MAIN_THREAD();
         if (!this->is<ConfigT>()) {
-            logger.printfln("update_value: Config has wrong type. This is a %s. new value is a %s", this->value.getVariantName(), value_type);
-#ifdef DEBUG_FS_ENABLE
-            logger.printfln("Content is %s", this->to_string().c_str());
-            logger.printfln("value is %s", String(value).c_str());
+            char *message;
+            int result = -1;
+#ifndef DEBUG_FS_ENABLE
+            result = asprintf(&message, "update_value: Config has wrong type. This is a %s. new value is a %s", this->value.getVariantName(), value_type);
+#else
+            result = asprintf(&message, "update_value: Config has wrong type. This is a %s. new value is a %s\nContent is %s\nvalue is %s", this->value.getVariantName(), value_type, this->to_string().c_str(), String(value).c_str());
 #endif
-            esp_system_abort("");
+            esp_system_abort(result < 0 ? "" : message);
         }
         T *target = get<ConfigT>()->getVal();
         T old_value = *target;
@@ -662,13 +713,49 @@ public:
     bool updateFloat(float value);
     bool updateBool(bool value);
 
+    template<typename T>
+    bool updateEnum(T value) {
+        if (this->is<ConfUint>()) {
+            return updateUint(static_cast<uint32_t>(value));
+        }
+        else if (this->is<ConfInt>()) {
+            return updateInt(static_cast<int32_t>(value));
+        }
+        else {
+            char *message;
+            int result = -1;
+#ifndef DEBUG_FS_ENABLE
+            result = asprintf(&message, "updateEnum: Config has wrong type. This is %s, (not a ConfInt or ConfUint)", this->value.getVariantName());
+#else
+            result = asprintf(&message, "updateEnum: Config has wrong type. This is %s, (not a ConfInt or ConfUint)\nContent is %s", this->value.getVariantName(), this->to_string().c_str());
+#endif
+            esp_system_abort(result < 0 ? "" : message);
+        }
+    }
+
+    template<typename T>
+    bool changeUnionVariant(T tag) {
+        ASSERT_MAIN_THREAD();
+        if (!this->is<ConfUnion>()) {
+            char *message;
+            int result = -1;
+#ifndef DEBUG_FS_ENABLE
+            result = asprintf(&message, "updateUnion: Config has wrong type. This is %s, (not a ConfUnion)", this->value.getVariantName());
+#else
+            result = asprintf(&message, "updateUnion: Config has wrong type. This is %s, (not a ConfUnion)\nContent is %s", this->value.getVariantName(), this->to_string().c_str());
+#endif
+            esp_system_abort(result < 0 ? "" : message);
+        }
+
+        return get<ConfUnion>()->changeUnionVariant(static_cast<uint8_t>(tag));
+    }
+
 private:
     template<typename T, typename ConfigT>
     size_t fillArray(T *arr, size_t elements) {
         ASSERT_MAIN_THREAD();
         if (!this->is<ConfArray>()) {
-            logger.printfln("Can't fill array, Config is not an array");
-            esp_system_abort("");
+            esp_system_abort("Can't fill array, Config is not an array");
         }
 
         const ConfArray &confArr = this->value.val.a;
@@ -677,8 +764,7 @@ private:
         for (size_t i = 0; i < toWrite; ++i) {
             const Config *entry = confArr.get(i);
             if (!entry->is<ConfigT>()) {
-                logger.printfln("Config entry has wrong type.");
-                esp_system_abort("");
+                esp_system_abort("Config entry has wrong type.");
             }
             arr[i] = *entry->get<ConfigT>()->getVal();
         }
@@ -686,7 +772,7 @@ private:
         return toWrite;
     }
 
-    DynamicJsonDocument to_json(const String *keys_to_censor, size_t keys_to_censor_len) const;
+    DynamicJsonDocument to_json(const char *const *keys_to_censor, size_t keys_to_censor_len) const;
 
 public:
     size_t fillFloatArray(float *arr, size_t elements);
@@ -706,12 +792,12 @@ public:
     void save_to_file(File &file);
 
     void write_to_stream(Print &output);
-    void write_to_stream_except(Print &output, const String *keys_to_censor, size_t keys_to_censor_len);
+    void write_to_stream_except(Print &output, const char *const *keys_to_censor, size_t keys_to_censor_len);
 
     String to_string() const;
 
-    String to_string_except(const String *keys_to_censor, size_t keys_to_censor_len) const;
-    size_t to_string_except(const String *keys_to_censor, size_t keys_to_censor_len, char *buf, size_t buf_size) const;
+    String to_string_except(const char *const *keys_to_censor, size_t keys_to_censor_len) const;
+    void to_string_except(const char *const *keys_to_censor, size_t keys_to_censor_len, StringBuilder *sb) const;
 };
 
 struct ConfigRoot : public Config {
@@ -754,6 +840,10 @@ public:
     String validate(ConfigSource source);
 
     OwnedConfig get_owned_copy();
+
+#ifdef DEBUG_FS_ENABLE
+    void print_api_info(char *buf, size_t buf_size, size_t &written);
+#endif
 
 private:
     template<typename T>

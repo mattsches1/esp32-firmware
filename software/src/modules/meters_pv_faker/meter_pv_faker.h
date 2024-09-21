@@ -22,7 +22,6 @@
 #include <math.h>
 
 #include "config.h"
-#include "modules/energy_manager/structs.h"
 #include "modules/meters/meter_defs.h"
 #include "modules/meters/imeter.h"
 
@@ -44,10 +43,11 @@ public:
     //bool supports_energy_import() override {return true;}
     //bool supports_energy_imexsum()override {return true;}
     //bool supports_energy_export() override {return true;}
-    bool supports_currents()      override {return true;}
+    //bool supports_currents()      override {return true;}
 
 private:
     void update_illuminance(uint32_t illuminance);
+    void update_limit(uint32_t illuminance);
 
     uint32_t slot;
 
@@ -57,7 +57,9 @@ private:
     uint32_t peak_at_lux;
     int64_t  peak_at_lux_shifted;
 
-    float values[8];
+    int64_t  limited_power;
+
+    float values[2] = {0};
 };
 
 #if defined(__GNUC__)

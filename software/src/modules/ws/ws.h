@@ -22,10 +22,12 @@
 #include <functional>
 #include <vector>
 
-#include "api.h"
+#include "module.h"
+#include "modules/api/api.h"
 #include "web_sockets.h"
+#include "string_builder.h"
 
-class WS final : public IAPIBackend
+class WS final : public IModule, public IAPIBackend
 {
 public:
     WS() : web_sockets() {}
@@ -36,11 +38,15 @@ public:
     // IAPIBackend implementation
     void addCommand(size_t commandIdx, const CommandRegistration &reg) override;
     void addState(size_t stateIdx, const StateRegistration &reg) override;
-    void addRawCommand(size_t rawCommandIdx, const RawCommandRegistration &reg) override;
     void addResponse(size_t responseIdx, const ResponseRegistration &reg) override;
     bool pushStateUpdate(size_t stateIdx, const String &payload, const String &path) override;
     bool pushRawStateUpdate(const String &payload, const String &path) override;
     WantsStateUpdate wantsStateUpdate(size_t stateIdx) override;
+
+    bool pushStateUpdateBegin(StringBuilder *sb, size_t stateIdx, size_t payload_len, const char *path, ssize_t path_len = -1);
+    bool pushStateUpdateEnd(StringBuilder *sb);
+    bool pushRawStateUpdateBegin(StringBuilder *sb, size_t payload_len, const char *path, ssize_t path_len = -1);
+    bool pushRawStateUpdateEnd(StringBuilder *sb);
 
     WebSockets web_sockets;
 };

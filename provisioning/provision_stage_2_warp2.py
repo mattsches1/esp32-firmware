@@ -36,10 +36,11 @@ from provision_stage_3_warp2 import Stage3
 
 evse = None
 power_off_on_error = True
-is_warp3 = None
+generation = None
 
 def run_bricklet_tests(ipcon, result, qr_variant, qr_power, qr_stand, qr_stand_wiring, ssid, stage3):
     global evse
+    global generation
     enumerations = enumerate_devices(ipcon)
 
     master = next((e for e in enumerations if e.device_identifier == 13), None)
@@ -59,8 +60,54 @@ def run_bricklet_tests(ipcon, result, qr_variant, qr_power, qr_stand, qr_stand_w
     is_smart = not is_basic and energy_meter_type == 0
     is_pro = not is_basic and energy_meter_type != 0
 
-    stage3.test_front_panel_button(qr_stand == '0' or qr_stand_wiring == '0')
+    automatic = qr_stand == '0' or qr_stand_wiring == '0'
+
+    stage3.test_front_panel_button(automatic)
     result["front_panel_button_tested"] = True
+
+    if generation >= 3:
+        def manual_check_color(color):
+            stage3.beep_notify()
+
+            input_result = "n"
+
+            while input_result := input(green(f'Is front LED {color}? [y/n]')) not in ["y", "n"]:
+                pass
+
+            if input_result == "n":
+                fatal_error(f"Front LED not {color}!")
+
+        evse.set_indicator_led(255, 60000, 0, 255, 255)
+        time.sleep(0.5)
+        if automatic and not stage3.is_front_panel_led_red():
+            fatal_error("Front LED not red!")
+        elif not automatic:
+            manual_check_color('red')
+
+        evse.set_indicator_led(255, 60000, 120, 255, 255)
+        time.sleep(0.5)
+        if automatic and not stage3.is_front_panel_led_green():
+            fatal_error("Front LED not green!")
+        elif not automatic:
+            manual_check_color('green')
+
+        evse.set_indicator_led(255, 60000, 240, 255, 255)
+        time.sleep(0.5)
+        if automatic and not stage3.is_front_panel_led_blue():
+            fatal_error("Front LED not blue!")
+        elif not automatic:
+            manual_check_color('blue')
+
+        evse.set_indicator_led(255, 60000, 0, 0, 255)
+        time.sleep(0.5)
+        if automatic and not stage3.is_front_panel_led_white():
+            fatal_error("Front LED not white!")
+        elif not automatic:
+            manual_check_color('white')
+
+        evse.set_indicator_led(-1, 1000, 0, 0, 0)
+
+        result["front_panel_led_tested"] = True
 
     seen_tags = []
     if is_smart or is_pro:
@@ -145,21 +192,30 @@ def run_bricklet_tests(ipcon, result, qr_variant, qr_power, qr_stand, qr_stand_w
         for i in range(3):
             error_count = evse.get_energy_meter_errors()
             if any(x != 0 for x in error_count):
-                if i == 2:
-                    fatal_error("Energy meter error count is {}, expected only zeros!".format(error_count) + blink("Complain to Erik!"))
+                # Allow exactly one timeout in the third attempt. This can happen for some reason, but one timeout is "still fine™".
+                if i == 2 and (any(x != 0 for x in error_count[1:]) or error_count[0] > 1):
+                    fatal_error("Energy meter error count is {}, expected only zeros or at most one timeout (first member)! ".format(error_count) + blink("Complain to Erik!"))
                 else:
                     print(".")
             else:
-                result["energy_meter_reachable"] = True
                 break
             time.sleep(3)
 
         result["energy_meter_reachable"] = True
 
+        meter_str = urllib.request.urlopen('http://{}/meter/values'.format(ssid), timeout=3).read()
+        meter_data = json.loads(meter_str)
+        if meter_data["energy_abs"] >= 1:
+            stage3.beep_notify()
+            while my_input(f'Energy meter reports {meter_data["energy_abs"]:.3f} kWh. Only < 1 kWh is allowed. Check if this is okay and press y + return to continue') != "y":
+                pass
+
     return seen_tags
 
 def exists_evse_test_report(evse_uid):
-    with open(os.path.join("evse_v2_test_report", "full_test_log.csv"), newline='') as csvfile:
+    global generation
+    evse_version = {2: 2, 3: 3}[generation]
+    with open(os.path.join(f"evse_v{evse_version}_test_report", "full_test_log.csv"), newline='') as csvfile:
         reader = csv.reader(csvfile, delimiter=',')
         for row in reader:
             if row[0] == evse_uid:
@@ -180,9 +236,9 @@ def retry_wrapper(fn, s):
 
 def is_front_panel_button_pressed():
     global evse
-    global is_warp3
-    assert is_warp3 != None
-    return retry_wrapper(lambda: evse.get_low_level_state().gpio[5 if is_warp3 else 6], "check if front panel button is pressed")
+    global generation
+    assert generation in (2, 3)
+    return retry_wrapper(lambda: evse.get_low_level_state().gpio[{2: 6, 3: 5}[generation]], "check if front panel button is pressed")
 
 def get_iec_state():
     global evse
@@ -196,8 +252,13 @@ def has_evse_error():
     global evse
     return retry_wrapper(lambda: evse.get_state().error_state != 0, "get EVSE error state")
 
+def switch_phases(phases):
+    global evse
+    return retry_wrapper(lambda: evse.set_phase_control(phases), "set phases")
+
 def led_wrap():
-    stage3 = Stage3(is_front_panel_button_pressed_function=is_front_panel_button_pressed, get_iec_state_function=get_iec_state, reset_dc_fault_function=reset_dc_fault, has_evse_error_function=has_evse_error)
+    stage3 = Stage3(is_front_panel_button_pressed_function=is_front_panel_button_pressed, get_iec_state_function=get_iec_state, reset_dc_fault_function=reset_dc_fault, has_evse_error_function=has_evse_error,
+    switch_phases_function=switch_phases)
     stage3.setup()
     stage3.set_led_strip_color((0, 0, 255))
     try:
@@ -349,7 +410,6 @@ def collect_nfc_tag_ids(stage3, getter, beep_notify):
     return seen_tags
 
 def main(stage3):
-    global is_warp3
     result = {"start": now()}
 
     github_reachable = True
@@ -363,14 +423,6 @@ def main(stage3):
     if github_reachable:
         with ChangedDirectory(os.path.join("..", "..", "firmwares")):
             run(["git", "pull"])
-
-    evse_directory = os.path.join("..", "..", "firmwares", "bricklets", "evse_v2")
-    evse_path = os.readlink(os.path.join(evse_directory, "bricklet_evse_v2_firmware_latest.zbin"))
-    evse_path = os.path.join(evse_directory, evse_path)
-
-    firmware_directory = os.path.join("..", "..", "firmwares", "bricks", "warp2_charger")
-    firmware_path = os.readlink(os.path.join(firmware_directory, "brick_warp2_charger_firmware_latest.bin"))
-    firmware_path = os.path.join(firmware_directory, firmware_path)
 
     # T:WARP2-CP-22KW-50;V:2.1;S:5000000001;B:2021-09;A:0;;;
     pattern = r'^T:WARP(2|3)-C(B|S|P)-(11|22)KW-(50|75)(?:-PC)?;V:(\d+\.\d+);S:(5\d{9});B:(\d{4}-\d{2})(?:;A:(0|1))?;;;*$'
@@ -408,11 +460,14 @@ def main(stage3):
     if qr_accessories == '0':
         qr_stand = '0'
         qr_stand_wiring = '0'
+        qr_stand_lock = False
         qr_supply_cable = 0.0
         qr_cee = False
+        qr_custom_front_panel = False
+        qr_custom_type2_cable = False
     else:
-        # S:1;W:1;E:2.5;C:1;;;
-        pattern = r'^(?:S:(0|1|2|1-PC|2-PC);)?(?:W:(0|1|2);)?E:(\d+\.\d+);C:(0|1);;;*$'
+        # S:1;W:1;E:2.5;C:1;CFP:1;CT2:1;;;
+        pattern = r'^(?:S:(0|1|2|1-PC|2-PC);)?(?:W:(0|1|2);)?(?:L:(0|1);)?E:(\d+\.\d+);C:(0|1);(?:CFP:(0|1);)?(?:CT2:(0|1);)?;;*$'
         qr_code = my_input("Scan the accessories QR code")
         match = re.match(pattern, qr_code)
 
@@ -422,19 +477,37 @@ def main(stage3):
 
         qr_stand = match.group(1) if match.group(1) != None else '0'
         qr_stand_wiring = match.group(2) if match.group(2) != None else '0'
-        qr_supply_cable = float(match.group(3))
-        qr_cee = bool(int(match.group(4)))
+        qr_stand_lock = bool(int(match.group(3) if match.group(3) != None else '0'))
+        qr_supply_cable = float(match.group(4))
+        qr_cee = bool(int(match.group(5)))
+        qr_custom_front_panel = bool(int(match.group(6) if match.group(6) != None else '0'))
+        qr_custom_type2_cable = bool(int(match.group(7) if match.group(7) != None else '0'))
 
         print("Accessories QR code data:")
         print("    Stand: {}".format(qr_stand))
         print("    Stand Wiring: {}".format(qr_stand_wiring))
+        print("    Stand Lock: {}".format(qr_stand_lock))
         print("    Supply Cable: {} m".format(qr_supply_cable))
         print("    CEE: {}".format(qr_cee))
+        print("    Custom Front Panel: {}".format(qr_custom_front_panel))
+        print("    Custom Type 2 Cable: {}".format(qr_custom_type2_cable))
 
         result["accessories_qr_code"] = match.group(0)
 
+    global generation
+    assert qr_gen in ("2", "3")
+    generation = int(qr_gen)
+
+    evse_directory = os.path.join("..", "..", "firmwares", "bricklets", "evse_v2")
+    evse_path = os.readlink(os.path.join(evse_directory, "bricklet_evse_v2_firmware_latest.zbin"))
+    evse_path = os.path.join(evse_directory, evse_path)
+
+    firmware_directory = os.path.join("..", "..", "firmwares", "bricks", f"warp{generation}_charger")
+    firmware_path = os.readlink(os.path.join(firmware_directory, f"brick_warp{generation}_charger_firmware_latest.bin"))
+    firmware_path = os.path.join(firmware_directory, firmware_path)
+
     if qr_variant != "B":
-        pattern = r"^WIFI:S:(esp32|warp|warp2|warp3)-([{BASE58}]{{3,6}});T:WPA;P:([{BASE58}]{{4}}-[{BASE58}]{{4}}-[{BASE58}]{{4}}-[{BASE58}]{{4}});;$".format(BASE58=BASE58)
+        pattern = r"^WIFI:S:(warp{gen})-([{BASE58}]{{3,6}});T:WPA;P:([{BASE58}]{{4}}-[{BASE58}]{{4}}-[{BASE58}]{{4}}-[{BASE58}]{{4}});;$".format(BASE58=BASE58, gen=generation)
         qr_code = getpass.getpass(green("Scan the ESP Brick QR code"))
         match = re.match(pattern, qr_code)
 
@@ -444,13 +517,14 @@ def main(stage3):
 
         if (qr_stand != '0' and qr_stand_wiring != '0') or qr_supply_cable != 0 or qr_cee:
             stage3.power_on('CEE')
+        elif generation == 3:
+            stage3.power_on('Smart')
         else:
-            stage3.power_on({"B": "Basic", "S": "Smart", "P": "Pro"}[qr_variant])
+            stage3.power_on({"S": "Smart", "P": "Pro"}[qr_variant])
 
         hardware_type = match.group(1)
         esp_uid_qr = match.group(2)
         passphrase_qr = match.group(3)
-        is_warp3 = hardware_type == 'warp3'
 
         print("ESP Brick QR code data:")
         print("    Hardware type: {}".format(hardware_type))
@@ -465,12 +539,12 @@ def main(stage3):
 
         event_log = connect_to_ethernet(ssid, "event_log").decode('utf-8')
 
-        m = re.search(r"WARP(?:2|3) (?:CHARGER|Charger) V(\d+).(\d+).(\d+)", event_log)
+        m = re.search(r"WARP{gen} (?:CHARGER|Charger) V(\d+).(\d+).(\d+)".format(gen=generation), event_log)
         if not m:
             fatal_error("Failed to find version number in event log!" + event_log)
 
         version = [int(x) for x in m.groups()]
-        latest_version = [int(x) for x in re.search(r"warp2_charger_firmware_(\d+)_(\d+)_(\d+).bin", firmware_path).groups()]
+        latest_version = [int(x) for x in re.search(r"warp{gen}_charger_firmware_(\d+)_(\d+)_(\d+).bin".format(gen=generation), firmware_path).groups()]
 
         if version > latest_version:
             fatal_error("Flashed firmware {}.{}.{} is not released yet! Latest released is {}.{}.{}".format(*version, *latest_version))
@@ -582,6 +656,7 @@ def main(stage3):
         print("Configuring tags")
         req = urllib.request.Request("http://{}/nfc/config_update".format(ssid),
                                      data=json.dumps({
+                                         "deadtime_post_start": None,
                                          "authorized_tags": [
                                              {
                                                  "user_id": 1,
@@ -610,7 +685,7 @@ def main(stage3):
         if (qr_stand != '0' and qr_stand_wiring != '0') or qr_supply_cable != 0 or qr_cee:
             stage3.power_on('CEE')
         else:
-            stage3.power_on({"B": "Basic", "S": "Smart", "P": "Pro"}[qr_variant])
+            stage3.power_on('Basic')
 
         result["uid"] = None
 
@@ -641,9 +716,7 @@ def main(stage3):
     result["evse_test_report_found"] = True
 
     if qr_variant == "B":
-        hardware_type = "warp2" if result["evse_version"] < 30 else "warp3"
-        is_warp3 = hardware_type == 'warp3'
-        ssid = hardware_type + "-" + result["evse_uid"]
+        ssid = f'warp{generation}-{result["evse_uid"]}'
 
     browser = None
     try:
@@ -652,7 +725,7 @@ def main(stage3):
             browser.get("http://{}/#evse".format(ssid))
 
         print("Performing the electrical tests")
-        stage3.test_wallbox()
+        stage3.test_wallbox(has_phase_switch=generation >= 3)
     finally:
         if browser is not None:
             browser.quit()

@@ -19,28 +19,26 @@
 
 #include "tools.h"
 
-#include "bindings/errors.h"
-
 #include <Arduino.h>
-
-#include "SPIFFS.h"
-#include "esp_spiffs.h"
-#include "LittleFS.h"
-#include "esp_littlefs.h"
-#include "esp_netif.h"
-#include "esp_system.h"
-#include "esp_timer.h"
-#include "freertos/task.h"
-
+#include <SPIFFS.h>
+#include <esp_spiffs.h>
+#include <LittleFS.h>
+#include <esp_littlefs.h>
+#include <esp_netif.h>
+#include <esp_system.h>
+#include <esp_timer.h>
+#include <freertos/task.h>
+#include <lwip/udp.h>
+#include <esp_log.h>
 #include <soc/efuse_reg.h>
+#include <arpa/inet.h>
+
+#include "event_log_prefix.h"
+#include "main_dependencies.h"
+#include "bindings/errors.h"
 #include "bindings/base58.h"
 #include "bindings/bricklet_unknown.h"
-#include "event_log.h"
-#include "esp_log.h"
 #include "build.h"
-#include "task_scheduler.h"
-
-#include <arpa/inet.h>
 
 extern TF_HAL hal;
 
@@ -94,11 +92,6 @@ bool deadline_elapsed(uint32_t deadline_ms)
     return a_after_b(millis(), deadline_ms);
 }
 
-micros_t operator""_usec(unsigned long long int i)
-{
-    return micros_t{(int64_t)i};
-}
-
 micros_t now_us()
 {
     return micros_t{esp_timer_get_time()};
@@ -106,7 +99,7 @@ micros_t now_us()
 
 bool deadline_elapsed(micros_t deadline_us)
 {
-    return deadline_us == 0_usec || deadline_us < now_us();
+    return deadline_us < now_us();
 }
 
 void read_efuses(uint32_t *ret_uid_num, char *ret_uid_str, char *ret_passphrase)
@@ -164,7 +157,7 @@ void read_efuses(uint32_t *ret_uid_num, char *ret_uid_str, char *ret_passphrase)
 
         tf_base58_encode(passphrase[i], buf);
 
-        if (strnlen(buf, sizeof(buf) / sizeof(buf[0])) != 4) {
+        if (strnlen(buf, ARRAY_SIZE(buf)) != 4) {
             logger.printfln("efuse error: malformed passphrase!");
         } else {
             memcpy(ret_passphrase + i * 5, buf, 4);
@@ -299,7 +292,9 @@ bool mirror_filesystem(fs::FS &fromFS, fs::FS &toFS, String root_name, int level
     return true;
 }
 
-bool mount_or_format_spiffs(void)
+bool should_factory_reset_bricklets = false;
+
+bool mount_or_format_spiffs()
 {
     /*
     tl;dr:
@@ -348,6 +343,7 @@ bool mount_or_format_spiffs(void)
             LittleFS.begin(false, "/spiffs", 10, "spiffs");
         }
         LittleFS.format();
+        should_factory_reset_bricklets = true;
         LittleFS.begin(false, "/spiffs", 10, "spiffs");
 
         logger.printfln("Mirroring data backup to data partition.");
@@ -372,6 +368,7 @@ bool mount_or_format_spiffs(void)
             LittleFS.begin(false, "/spiffs", 10, "spiffs");
         }
         LittleFS.format();
+        should_factory_reset_bricklets = true;
         logger.printfln("Data partition is now formatted as LittleFS.");
     }
 
@@ -405,18 +402,18 @@ static bool wait_for_bootloader_mode(TF_Unknown *bricklet, int target_mode)
     return mode == target_mode;
 }
 
-static bool flash_plugin(TF_Unknown *bricklet, const uint8_t *firmware, size_t firmware_len, int regular_plugin_upto, EventLog *logger)
+static bool flash_plugin(TF_Unknown *bricklet, const uint8_t *firmware, size_t firmware_len, int regular_plugin_upto)
 {
-    logger->printfln("    Setting bootloader mode to bootloader.");
+    logger.printfln_plain("    Setting bootloader mode to bootloader.");
     tf_unknown_set_bootloader_mode(bricklet, 0, nullptr);
-    logger->printfln("    Waiting for bootloader...");
+    logger.printfln_plain("    Waiting for bootloader...");
 
     if (!wait_for_bootloader_mode(bricklet, 0)) {
-        logger->printfln("    Timed out, flashing failed");
+        logger.printfln_plain("    Timed out, flashing failed");
         return false;
     }
 
-    logger->printfln("    Device is in bootloader, flashing...");
+    logger.printfln_plain("    Device is in bootloader, flashing...");
 
     int num_packets = firmware_len / 64;
     int last_packet = 0;
@@ -434,14 +431,14 @@ static bool flash_plugin(TF_Unknown *bricklet, const uint8_t *firmware, size_t f
 
         if (tf_unknown_set_write_firmware_pointer(bricklet, start) != TF_E_OK) {
             if (tf_unknown_set_write_firmware_pointer(bricklet, start) != TF_E_OK) {
-                logger->printfln("    Failed to set firmware pointer to %d", start);
+                logger.printfln_plain("    Failed to set firmware pointer to %d", start);
                 return false;
             }
         }
 
         if (tf_unknown_write_firmware(bricklet, const_cast<uint8_t *>(firmware + start), nullptr) != TF_E_OK) {
             if (tf_unknown_write_firmware(bricklet, const_cast<uint8_t *>(firmware + start), nullptr) != TF_E_OK) {
-                logger->printfln("    Failed to write firmware at %d", start);
+                logger.printfln_plain("    Failed to write firmware at %d", start);
                 return false;
             }
         }
@@ -453,26 +450,26 @@ static bool flash_plugin(TF_Unknown *bricklet, const uint8_t *firmware, size_t f
 
             if (tf_unknown_set_write_firmware_pointer(bricklet, start) != TF_E_OK) {
                 if (tf_unknown_set_write_firmware_pointer(bricklet, start) != TF_E_OK) {
-                    logger->printfln("    (Footer) Failed to set firmware pointer to %d", start);
+                    logger.printfln_plain("    (Footer) Failed to set firmware pointer to %d", start);
                     return false;
                 }
             }
 
             if (tf_unknown_write_firmware(bricklet, const_cast<uint8_t *>(firmware + start), nullptr) != TF_E_OK) {
                 if (tf_unknown_write_firmware(bricklet, const_cast<uint8_t *>(firmware + start), nullptr) != TF_E_OK) {
-                    logger->printfln("    (Footer) Failed to write firmware at %d", start);
+                    logger.printfln_plain("    (Footer) Failed to write firmware at %d", start);
                     return false;
                 }
             }
         }
     }
 
-    logger->printfln("    Device flashed successfully.");
+    logger.printfln_plain("    Device flashed successfully.");
 
     return true;
 }
 
-static bool flash_firmware(TF_Unknown *bricklet, const uint8_t *firmware, size_t firmware_len, EventLog *logger)
+static bool flash_firmware(TF_Unknown *bricklet, const uint8_t *firmware, size_t firmware_len)
 {
     int regular_plugin_upto = -1;
 
@@ -487,52 +484,52 @@ static bool flash_firmware(TF_Unknown *bricklet, const uint8_t *firmware, size_t
     }
 
     if (regular_plugin_upto == -1) {
-        logger->printfln("    Firmware end marker not found. Is this a valid firmware?");
+        logger.printfln_plain("    Firmware end marker not found. Is this a valid firmware?");
         return false;
     }
 
-    if (!flash_plugin(bricklet, firmware, firmware_len, regular_plugin_upto, logger)) {
+    if (!flash_plugin(bricklet, firmware, firmware_len, regular_plugin_upto)) {
         return false;
     }
 
-    logger->printfln("    Setting bootloader mode to firmware.");
+    logger.printfln_plain("    Setting bootloader mode to firmware.");
 
     uint8_t ret_status = 0;
 
     tf_unknown_set_bootloader_mode(bricklet, 1, &ret_status);
 
     if (ret_status != 0 && ret_status != 2) {
-        logger->printfln("    Failed to set bootloader mode to firmware. status %d.", ret_status);
+        logger.printfln_plain("    Failed to set bootloader mode to firmware. status %d.", ret_status);
 
         if (ret_status != 5) {
             return false;
         }
 
-        logger->printfln("    Status is 5, retrying.");
+        logger.printfln_plain("    Status is 5, retrying.");
 
-        if (!flash_plugin(bricklet, firmware, firmware_len, firmware_len, logger)) {
+        if (!flash_plugin(bricklet, firmware, firmware_len, firmware_len)) {
             return false;
         }
 
         ret_status = 0;
 
-        logger->printfln("    Setting bootloader mode to firmware.");
+        logger.printfln_plain("    Setting bootloader mode to firmware.");
         tf_unknown_set_bootloader_mode(bricklet, 1, &ret_status);
 
         if (ret_status != 0 && ret_status != 2) {
-            logger->printfln("    (Second attempt) Failed to set bootloader mode to firmware. status %d.", ret_status);
+            logger.printfln_plain("    (Second attempt) Failed to set bootloader mode to firmware. status %d.", ret_status);
             return false;
         }
     }
 
-    logger->printfln("    Waiting for firmware...");
+    logger.printfln_plain("    Waiting for firmware...");
 
     if (!wait_for_bootloader_mode(bricklet, 1)) {
-        logger->printfln("    Timed out, flashing failed");
+        logger.printfln_plain("    Timed out, flashing failed");
         return false;
     }
 
-    logger->printfln("    Firmware flashed successfully");
+    logger.printfln_plain("    Firmware flashed successfully");
 
     return true;
 }
@@ -541,7 +538,7 @@ static bool flash_firmware(TF_Unknown *bricklet, const uint8_t *firmware, size_t
 #define FIRMWARE_MINOR_OFFSET 11
 #define FIRMWARE_PATCH_OFFSET 12
 
-int ensure_matching_firmware(TF_TFP *tfp, const char *name, const char *purpose, const uint8_t *firmware, size_t firmware_len, EventLog *logger, bool force)
+int ensure_matching_firmware(TF_TFP *tfp, const char *name, const char *purpose, const uint8_t *firmware, size_t firmware_len, bool force)
 {
     TFPSwap tfp_swap(tfp);
     TF_Unknown bricklet;
@@ -554,7 +551,7 @@ int ensure_matching_firmware(TF_TFP *tfp, const char *name, const char *purpose,
     defer {tf_unknown_destroy(&bricklet);};
 
     if (rc != TF_E_OK) {
-        logger->printfln("%s init failed (rc %d).", name, rc);
+        logger.printfln("%s init failed (rc %d).", name, rc);
         return -1;
     }
 
@@ -563,7 +560,7 @@ int ensure_matching_firmware(TF_TFP *tfp, const char *name, const char *purpose,
     rc = tf_unknown_get_identity(&bricklet, nullptr, nullptr, nullptr, nullptr, firmware_version, nullptr);
 
     if (rc != TF_E_OK) {
-        logger->printfln("%s get identity failed (rc %d).", name, rc);
+        logger.printfln("%s get identity failed (rc %d).", name, rc);
         return -1;
     }
 
@@ -587,18 +584,18 @@ int ensure_matching_firmware(TF_TFP *tfp, const char *name, const char *purpose,
 
     if (flash_required) {
         if (force) {
-            logger->printfln("Forcing %s firmware update to %d.%d.%d. Flashing firmware...",
+            logger.printfln("Forcing %s firmware update to %d.%d.%d. Flashing firmware...",
                              name,
                              embedded_firmware_version[0], embedded_firmware_version[1], embedded_firmware_version[2]);
         } else {
-            logger->printfln("%s firmware is %d.%d.%d not the expected %d.%d.%d. Flashing firmware...",
+            logger.printfln("%s firmware is %d.%d.%d not the expected %d.%d.%d. Flashing firmware...",
                              name,
                              firmware_version[0], firmware_version[1], firmware_version[2],
                              embedded_firmware_version[0], embedded_firmware_version[1], embedded_firmware_version[2]);
         }
 
-        if (!flash_firmware(&bricklet, firmware, firmware_len, logger)) {
-            logger->printfln("%s flashing failed.", name);
+        if (!flash_firmware(&bricklet, firmware, firmware_len)) {
+            logger.printfln("%s flashing failed.", name);
             return -1;
         }
     }
@@ -606,8 +603,8 @@ int ensure_matching_firmware(TF_TFP *tfp, const char *name, const char *purpose,
     return 0;
 }
 
-int compare_version(uint8_t left_major, uint8_t left_minor, uint8_t left_patch,
-                    uint8_t right_major, uint8_t right_minor, uint8_t right_patch) {
+int compare_version(uint8_t left_major, uint8_t left_minor, uint8_t left_patch, uint8_t left_beta /* 255 == no beta */, uint32_t left_timestamp,
+                    uint8_t right_major, uint8_t right_minor, uint8_t right_patch, uint8_t right_beta /* 255 == no beta */, uint32_t right_timestamp) {
     if (left_major > right_major)
         return 1;
 
@@ -624,6 +621,24 @@ int compare_version(uint8_t left_major, uint8_t left_minor, uint8_t left_patch,
         return 1;
 
     if (left_patch < right_patch)
+        return -1;
+
+    if (left_beta == 255 && right_beta != 255)
+        return 1;
+
+    if (left_beta != 255 && right_beta == 255)
+        return -1;
+
+    if (left_beta > right_beta)
+        return 1;
+
+    if (left_beta < right_beta)
+        return -1;
+
+    if (left_timestamp > right_timestamp)
+        return 1;
+
+    if (left_timestamp < right_timestamp)
         return -1;
 
     return 0;
@@ -831,7 +846,7 @@ static void gethostbyname_addrtype_lwip_ctx_async(const char */*hostname*/, cons
 }
 
 void dns_gethostbyname_addrtype_lwip_ctx_async(const char *hostname,
-                                               void (*found_callback)(dns_gethostbyname_addrtype_lwip_ctx_async_data *callback_arg),
+                                               std::function<void(dns_gethostbyname_addrtype_lwip_ctx_async_data *callback_arg)> &&found_callback,
                                                dns_gethostbyname_addrtype_lwip_ctx_async_data *callback_arg,
                                                u8_t dns_addrtype)
 {
@@ -849,13 +864,46 @@ void dns_gethostbyname_addrtype_lwip_ctx_async(const char *hostname,
     found_callback(callback_arg);
 }
 
-void trigger_reboot(const char *initiator)
+static esp_err_t poke_localhost_fn(void * /*ctx*/)
 {
-    task_scheduler.scheduleOnce([initiator]() {
-        logger.printfln("Reboot requested by %s.", initiator);
-        delay(1500);
+    udp_pcb *l_udp_pcb = udp_new();
+    if (l_udp_pcb) {
+        //udp_bind(l_udp_pcb, IP_ADDR_ANY, 0); // pcb will be bound in udp_sendto()
+
+        struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, 0, PBUF_ROM); // PBUF_ROM because we have no payload
+        if (p) {
+            p->payload = nullptr; // payload can be nullptr because length is 0 and pbuf type is PBUF_ROM
+            p->len = 0;
+            p->tot_len = 0;
+
+            ip_addr_t dst_addr;
+            dst_addr.type = IPADDR_TYPE_V4;
+            dst_addr.u_addr.ip4.addr = htonl(IPADDR_LOOPBACK);
+
+            errno = 0;
+            err_t err = udp_sendto(l_udp_pcb,p, &dst_addr, 9);
+            if (err != ERR_OK) {
+                logger.printfln("udp_sendto failed: %i | %s (%i)", err, strerror(errno), errno);
+            }
+
+            pbuf_free(p);
+        }
+        udp_remove(l_udp_pcb);
+    }
+    return ESP_OK; // Don't care about errors.
+}
+
+void poke_localhost()
+{
+    esp_netif_tcpip_exec(poke_localhost_fn, nullptr);
+}
+
+void trigger_reboot(const char *initiator, uint32_t delay_ms)
+{
+    logger.printfln("Reboot requested by %s.", initiator);
+    task_scheduler.scheduleOnce([]() {
         ESP.restart();
-    }, 0);
+    }, delay_ms);
 }
 
 void list_dir(fs::FS &fs, const char *dirname, uint8_t max_depth, uint8_t current_depth)
@@ -929,6 +977,16 @@ time_t ms_until_time(int h, int m)
 		delay = ms_until_datetime(NULL, NULL, &d, &h, &m, &s);
 	}
 	return delay;
+}
+
+size_t sprintf_u(char *buf, const char *format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    int res = vsprintf(buf, format, args);
+    va_end(args);
+
+    return res < 0 ? 0 : static_cast<size_t>(res);
 }
 
 size_t snprintf_u(char *buf, size_t len, const char *format, ...)
@@ -1078,4 +1136,29 @@ i2c_cmd_handle_t i2c_master_prepare_write_read_device(uint8_t device_address,
 error:
     i2c_cmd_link_delete_static(handle);
     return nullptr;
+}
+
+time_t get_localtime_today_midnight()
+{
+    // Current local time
+    time_t now = time(nullptr);
+    struct tm tm;
+    localtime_r(&now, &tm);
+
+    // Local time to today midnight
+    tm.tm_hour = 0;
+    tm.tm_min = 0;
+    tm.tm_sec = 0;
+    return mktime(&tm);
+}
+
+time_t get_localtime_today_midnight_in_utc()
+{
+    time_t midnight_local = get_localtime_today_midnight();
+
+    // Midnight local time to UTC
+    struct tm tm_utc;
+    gmtime_r(&midnight_local, &tm_utc);
+
+    return mktime(&tm_utc);
 }

@@ -19,18 +19,18 @@
 
 #pragma once
 
+#include <Arduino.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <esp_heap_caps.h>
+#include <limits>
 
 #include "ringbuffer.h"
 #include "malloc_tools.h"
-#include "esp_heap_caps.h"
-
-#include "task_scheduler.h"
-#include "web_server.h"
 
 // How many hours to keep the coarse history for
 #define HISTORY_HOURS 48
+
 // How many minutes to keep the fine history for.
 // This also controls the coarseness of the coarse history.
 // For example 4 means that we accumulate 4 minutes of samples
@@ -62,6 +62,8 @@ static_assert(std::numeric_limits<METER_VALUE_HISTORY_VALUE_TYPE>::max() >= METE
 static_assert(std::numeric_limits<int>::lowest() <= METER_VALUE_HISTORY_VALUE_MIN);
 static_assert(std::numeric_limits<int>::max() >= METER_VALUE_HISTORY_VALUE_MAX);
 
+class StringBuilder;
+
 class ValueHistory
 {
 public:
@@ -74,10 +76,10 @@ public:
     void register_urls_empty(String base_url);
     void add_sample(float sample);
     void tick(uint32_t now, bool update_history, METER_VALUE_HISTORY_VALUE_TYPE *live_sample, METER_VALUE_HISTORY_VALUE_TYPE *history_sample);
-    size_t format_live(uint32_t now, char *buf, size_t buf_size);
-    size_t format_live_samples(char *buf, size_t buf_size);
-    size_t format_history(uint32_t now, char *buf, size_t buf_size);
-    size_t format_history_samples(char *buf, size_t buf_size);
+    void format_live(uint32_t now, StringBuilder *sb);
+    void format_live_samples(StringBuilder *sb);
+    void format_history(uint32_t now, StringBuilder *sb);
+    void format_history_samples(StringBuilder *sb);
     float samples_per_second();
 
     int64_t sum_this_interval = 0;
@@ -96,7 +98,7 @@ public:
     METER_VALUE_HISTORY_VALUE_TYPE last_live_val;
     int last_live_val_valid = 0;
 
-    TF_Ringbuffer<METER_VALUE_HISTORY_VALUE_TYPE,
+    TF_PackedRingbuffer<METER_VALUE_HISTORY_VALUE_TYPE,
                   3 * 60 * HISTORY_MINUTE_INTERVAL,
                   uint32_t,
 #if defined(BOARD_HAS_PSRAM)
@@ -107,7 +109,7 @@ public:
                   heap_caps_free> live;
     uint32_t live_last_update = 0;
 
-    TF_Ringbuffer<METER_VALUE_HISTORY_VALUE_TYPE,
+    TF_PackedRingbuffer<METER_VALUE_HISTORY_VALUE_TYPE,
                   HISTORY_RING_BUF_SIZE,
                   uint32_t,
 #if defined(BOARD_HAS_PSRAM)

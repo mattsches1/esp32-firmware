@@ -10,8 +10,7 @@ let x = {
         "login_button": "Anmelden",
         "navbar_status": "Status",
         "reboot_title": "Neu starten um Konfiguration anzuwenden",
-        "reboot_content_prefix": "Die geänderten ",
-        "reboot_content_suffix": " werden nur nach einem Neustart angewendet. Jetzt neu starten?",
+        "reboot_content": /*SFN*/ (name: string) => `Die geänderten ${name} werden nur nach einem Neustart angewendet. Jetzt neu starten?`/*NF*/,
         "abort": "Abbrechen",
         "reboot": "Neu starten"
     },
@@ -77,6 +76,9 @@ let x = {
             "abort": "Verwerfen",
             "add": "Hinzufügen",
             "apply": "Übernehmen"
+        },
+        "remote_close_button": {
+            "close": "Fernzugriff schließen"
         }
     },
     "util": {

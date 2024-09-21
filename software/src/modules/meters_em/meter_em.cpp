@@ -18,11 +18,11 @@
  */
 
 #include "meter_em.h"
-#include "module_dependencies.h"
 
+#include "event_log_prefix.h"
+#include "module_dependencies.h"
 #include "modules/meters/meter_value_id.h"
 #include "modules/meters/sdm_helpers.h"
-#include "task_scheduler.h"
 #include "tools.h"
 
 #include "gcc_warnings.h"
@@ -33,7 +33,7 @@ MeterClassID MeterEM::get_class() const
     return MeterClassID::EnergyManager;
 }
 
-void MeterEM::update_from_em_all_data(const EnergyManagerAllData &all_data)
+void MeterEM::update_from_em_all_data(const EMAllDataCommon &all_data)
 {
     // Reject stale data older than five seconds.
     if (deadline_elapsed(all_data.last_update + 5 * 1000))
@@ -53,8 +53,11 @@ void MeterEM::update_from_em_all_data(const EnergyManagerAllData &all_data)
 
     if (meter_type != all_data.energy_meter_type) {
         if (meter_type != METER_TYPE_NONE) {
-            if (!meter_change_warning_printed) {
-                logger.printfln("meter_em: Meter change detected. This is not supported.");
+            // Don't print warning if this is a not-none -> none transition.
+            // This happens if the EVSE restarts without the ESP also restarting.
+            // The meter will be detected again in a few seconds.
+            if (!meter_change_warning_printed && all_data.energy_meter_type != METER_TYPE_NONE) {
+                logger.printfln("Meter change detected. This is not supported.");
                 meter_change_warning_printed = true;
             }
             return;
@@ -62,7 +65,7 @@ void MeterEM::update_from_em_all_data(const EnergyManagerAllData &all_data)
 
         // No need to initialize the array because either all values are written or it is rejected entirely.
         float all_values[METER_ALL_VALUES_RESETTABLE_COUNT];
-        if (energy_manager.get_energy_meter_detailed_values(all_values) != METER_ALL_VALUES_RESETTABLE_COUNT)
+        if (em_common.get_energy_meter_detailed_values(all_values) != METER_ALL_VALUES_RESETTABLE_COUNT)
             return;
 
         meter_type = all_data.energy_meter_type;
@@ -92,6 +95,8 @@ void MeterEM::update_from_em_all_data(const EnergyManagerAllData &all_data)
     for (size_t i = 0; i < ARRAY_SIZE(value_index_currents); i++) {
         meters.update_value(slot, value_index_currents[i], all_data.current[i]);
     }
+
+    meters.finish_update(slot);
 }
 
 void MeterEM::update_all_values(float *values)
@@ -101,7 +106,7 @@ void MeterEM::update_all_values(float *values)
 
     if (!values) {
         values = local_values;
-        if (energy_manager.get_energy_meter_detailed_values(values) != METER_ALL_VALUES_RESETTABLE_COUNT)
+        if (em_common.get_energy_meter_detailed_values(values) != METER_ALL_VALUES_RESETTABLE_COUNT)
             return;
     }
 
@@ -112,5 +117,5 @@ void MeterEM::update_all_values(float *values)
 
 bool MeterEM::reset()
 {
-    return energy_manager.reset_energy_meter_relative_energy();
+    return em_common.reset_energy_meter_relative_energy();
 }

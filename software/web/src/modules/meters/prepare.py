@@ -1,26 +1,13 @@
-import os
 import sys
 import re
-import importlib.util
-import importlib.machinery
 from pathlib import PurePath
+import tinkerforge_util as tfutil
 
-software_dir = os.path.realpath(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
-
-def create_software_module():
-    software_spec = importlib.util.spec_from_file_location('software', os.path.join(software_dir, '__init__.py'))
-    software_module = importlib.util.module_from_spec(software_spec)
-
-    software_spec.loader.exec_module(software_module)
-
-    sys.modules['software'] = software_module
-
-if 'software' not in sys.modules:
-    create_software_module()
+tfutil.create_parent_module(__file__, 'software')
 
 from software import util
 
-with open(os.path.join(software_dir, "web", "src", "build.ts"), "r", encoding='utf-8') as f:
+with open('../../build.ts', 'r', encoding='utf-8') as f:
     content = f.read()
     match = re.search(r"export const METERS_SLOTS = (\d+);", content)
     if match is None:
@@ -42,17 +29,17 @@ for plugin in util.find_frontend_plugins('Meters', 'Config'):
         configs.append('{0}_config.{1}'.format(plugin.module_name, interface_name))
 
 with open('api.ts', 'w', encoding='utf-8') as f:
-    f.write(util.specialize_template('api.ts.template_header', None, {
+    f.write(tfutil.specialize_template('api.ts.template_header', None, {
         "{{{imports}}}": '\n'.join(imports),
         "{{{configs}}}": ('\n    | ' if len(configs) > 0 else '') + '\n    | '.join(configs),
     }) + '\n')
 
     for i in range(meter_count):
-        f.write(util.specialize_template('api.ts.template_fragment', None, {
+        f.write(tfutil.specialize_template('api.ts.template_fragment', None, {
             "{{{meter_id}}}": str(i),
         }) + '\n')
 
-util.specialize_template("plugins.tsx.template", "plugins.tsx", {
+tfutil.specialize_template("plugins.tsx.template", "plugins.tsx", {
     "{{{imports}}}": '\n'.join(imports),
     "{{{inits}}}": '\n    '.join(inits),
 })

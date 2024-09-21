@@ -19,9 +19,7 @@
 
 #pragma once
 
-#include "bindings/bricklet_industrial_dual_relay.h"
-
-#include "config.h"
+#include <stdint.h>
 
 #include "module.h"
 

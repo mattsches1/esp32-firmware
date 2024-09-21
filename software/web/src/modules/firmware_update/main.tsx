@@ -17,10 +17,9 @@
  * Boston, MA 02111-1307, USA.
  */
 
-import $ from "../../ts/jq";
 import * as util from "../../ts/util";
 import * as API from "../../ts/api";
-import { h, render, Fragment, Component } from "preact";
+import { h, Fragment, Component } from "preact";
 import { __, translate_unchecked } from "../../ts/translation";
 import { PageHeader } from "../../ts/components/page_header";
 import { FormRow } from "../../ts/components/form_row";
@@ -28,190 +27,292 @@ import { InputText } from "../../ts/components/input_text";
 import { InputFile } from "../../ts/components/input_file";
 import { Button } from "react-bootstrap";
 import { SubPage } from "../../ts/components/sub_page";
+import { NavbarItem } from "../../ts/components/navbar_item";
+import { Progress } from "../../ts/components/progress";
+import { Upload } from "react-feather";
+import { CheckState } from "./check_state.enum";
+import { InstallState } from "./install_state.enum";
 
-type FirmwareUpdateConfig = API.getType["info/version"];
+export function FirmwareUpdateNavbar() {
+    return <NavbarItem name="firmware_update" module="firmware_update" title={__("firmware_update.navbar.firmware_update")} symbol={<Upload />} />;
+}
 
-export class FirmwareUpdate extends Component<{}, FirmwareUpdateConfig> {
+interface FirmwareUpdateState {
+    current_firmware: string,
+    manual_install_in_progress: boolean,
+    publisher: string,
+    check_timestamp: number,
+    check_state: number,
+    update_version: string,
+    install_state: number,
+    install_progress: number,
+};
+
+export class FirmwareUpdate extends Component<{}, FirmwareUpdateState> {
     constructor() {
         super();
-        util.addApiEventListener('info/version', () => {
-            let newState = API.get('info/version');
-            if (this.state != null && this.state.firmware != null && this.state.firmware != newState.firmware)
-                window.location.reload();
 
-            this.setState(API.get('info/version'));
+        this.state = {
+            current_firmware: null,
+            manual_install_in_progress: false,
+            publisher: null,
+            check_timestamp: 0,
+            check_state: null,
+            update_version: null,
+            install_state: null,
+            install_progress: 0,
+        } as any;
+
+        util.addApiEventListener('info/version', () => {
+            let version = API.get('info/version');
+
+            if (this.state.current_firmware != null && this.state.current_firmware != version.firmware) {
+                window.location.reload();
+            }
+
+            this.setState({current_firmware: version.firmware});
+        });
+
+        util.addApiEventListener('firmware_update/state', () => {
+            let state = API.get('firmware_update/state');
+
+            if (state.install_state == InstallState.Rebooting) {
+                util.postReboot(__("firmware_update.script.update_success"), __("util.reboot_text"));
+            }
+
+            this.setState({
+                publisher: state.publisher,
+                check_timestamp: state.check_timestamp,
+                check_state: state.check_state,
+                update_version: state.update_version,
+                install_state: state.install_state,
+                install_progress: state.install_progress,
+            });
         });
     }
 
     async checkFirmware(f: File) {
         try {
             await util.upload(f.slice(0xd000 - 0x1000, 0xd000), "check_firmware", () => {})
-        } catch (error) {
+        }
+        catch (error) {
+            let message = null;
+
             if (typeof error === "string") {
-                util.add_alert("firmware_update_failed","alert-danger", __("firmware_update.script.flash_fail"), error);
-            } else if (error instanceof XMLHttpRequest) {
-                let xhr = error;
-
-                if (xhr.status == 423) {
-                    util.add_alert("firmware_update_failed", "alert-danger", __("firmware_update.script.flash_fail"), __("firmware_update.script.vehicle_connected"));
-                    return false;
-                }
-
+                message = error;
+            }
+            else if (error instanceof XMLHttpRequest) {
                 try {
-                    let e = JSON.parse(xhr.responseText)
-                    let error_message = translate_unchecked(e["error"])
-                    if (e["error"] == "firmware_update.script.downgrade") {
-                        error_message = error_message.replace("%fw%", e["fw"]).replace("%installed%", e["installed"]);
+                    let response = JSON.parse(error.responseText);
 
+                    if (response.error == InstallState.Downgrade) {
                         const modal = util.async_modal_ref.current;
-                        if(!await modal.show({
-                                title: __("firmware_update.content.downgrade"),
-                                body: error_message,
-                                no_text: __("firmware_update.content.abort_downgrade"),
+
+                        if (await modal.show({
+                                title: __("firmware_update.content.downgrade_title"),
+                                body: __("firmware_update.content.downgrade_body")(response.firmware_version, response.installed_version),
+                                no_text: __("firmware_update.content.abort_update"),
                                 yes_text: __("firmware_update.content.confirm_downgrade"),
                                 no_variant: "secondary",
                                 yes_variant: "danger",
-                            }))
-                            return false;
-                    } else {
-                        util.add_alert("firmware_update_failed","alert-danger", __("firmware_update.script.flash_fail"), error_message);
-                        return false;
+                            })) {
+                            return true;
+                        }
                     }
-                } catch {
-                    util.add_alert("firmware_update_failed","alert-danger", __("firmware_update.script.flash_fail"), xhr.responseText);
-                    return false;
+                    else {
+                        message = translate_unchecked("firmware_update.script.install_state_" + response.error);
+                    }
+                }
+                catch {
+                    message = error.responseText;
                 }
             }
+
+            if (message != null) {
+                util.add_alert("firmware_update_failed", "danger", __("firmware_update.script.update_fail"), message);
+            }
+
+            return false;
         }
 
-        util.pauseWebSockets();
         return true;
     }
 
-    render(props: {}, state: Readonly<FirmwareUpdateConfig>) {
-        if (!util.render_allowed())
-            return (<></>);
-
-        // TODO: why not use the charge tracker module here?
-        let show_config_reset = false;
-        if (API.hasModule("users"))
-            show_config_reset = true;
-
-        let build_time: string = '';
+    format_build_extra(version: string, publisher: string) {
+        let result = '';
 
         try {
-            let timestamp = parseInt(state.firmware.split('-')[1], 16);
+            let timestamp = parseInt(version.split('+')[1], 16);
 
             if (util.hasValue(timestamp) && !isNaN(timestamp)) {
-                build_time = __("firmware_update.script.build_time_prefix") + util.timestamp_sec_to_date(timestamp) + __("firmware_update.script.build_time_suffix");
+                result += __("firmware_update.script.build_time")(util.timestamp_sec_to_date(timestamp));
             }
         } catch {
         }
 
+        if (result.length > 0 && publisher.length > 0) {
+            result += ', ';
+        }
+
+        if (publisher.length > 0) {
+            result += __("firmware_update.script.publisher")(publisher);
+        }
+
+        if (result.length > 0) {
+            result = ` (${result})`
+        }
+
+        return result;
+    }
+
+    render() {
+        if (!util.render_allowed())
+            return <SubPage name="firmware_update" />;
+
         return (
-            <SubPage>
+            <SubPage name="firmware_update">
                 <PageHeader title={__("firmware_update.content.firmware_update")} />
 
-                <FormRow label={__("firmware_update.content.current_firmware")}>
-                    <InputText value={state.firmware + build_time}/>
+                <FormRow label={__("firmware_update.content.current_version")}>
+                    <InputText value={this.state.current_firmware + this.format_build_extra(this.state.current_firmware, this.state.publisher)}/>
                 </FormRow>
 
-                <FormRow label={__("firmware_update.content.firmware_update_label")} label_muted={__("firmware_update.content.firmware_update_desc")}>
+                <FormRow label={__("firmware_update.content.manual_update")} label_muted={__("firmware_update.content.manual_update_muted")}>
                     <InputFile
                         browse={__("firmware_update.content.browse")}
                         select_file={__("firmware_update.content.select_file")}
-                        upload={__("firmware_update.content.update")}
+                        upload={__("firmware_update.content.install_update")}
+                        uploading={__("firmware_update.content.installing_update")}
                         url="/flash_firmware"
                         accept=".bin"
-
                         timeout_ms={120 * 1000}
-                        onUploadStart={async (f) => this.checkFirmware(f)}
-                        onUploadSuccess={() => util.postReboot(__("firmware_update.script.flash_success"), __("util.reboot_text"))}
-                        onUploadError={error => {
-                            if (typeof error === "string") {
-                                util.add_alert("firmware_update_failed","alert-danger", __("firmware_update.script.flash_fail"), error);
-                            } else if (error instanceof XMLHttpRequest) {
-                                let xhr = error;
+                        onUploadStart={async (f) => {
+                            this.setState({manual_install_in_progress: true});
+                            util.remove_alert("firmware_update_failed");
 
-                                if (xhr.status == 423)
-                                    util.add_alert("firmware_update_failed", "alert-danger", __("firmware_update.script.flash_fail"), __("firmware_update.script.vehicle_connected"));
-                                else {
-                                    let txt = xhr.responseText.startsWith("firmware_update.") ? translate_unchecked(xhr.responseText) : (xhr.responseText ?? xhr.response);
-                                    util.add_alert("firmware_update_failed","alert-danger", __("firmware_update.script.flash_fail"), txt);
+                            if (!await this.checkFirmware(f)) {
+                                this.setState({manual_install_in_progress: false});
+                                return false;
+                            }
+
+                            util.pauseWebSockets();
+
+                            if (this.state.install_state == InstallState.InProgress) {
+                                this.setState({install_state: InstallState.Aborted, install_progress: 0});
+                            }
+
+                            return true;
+                        }}
+                        onUploadSuccess={() => util.postReboot(__("firmware_update.script.update_success"), __("util.reboot_text"))}
+                        onUploadError={async (error) => {
+                            let message = null;
+
+                            if (typeof error === "string") {
+                                message = error;
+                            }
+                            else if (error instanceof XMLHttpRequest) {
+                                try {
+                                    let response = JSON.parse(error.responseText);
+
+                                    if (response.error == InstallState.SignatureVerifyFailed) {
+                                        const modal = util.async_modal_ref.current;
+
+                                        if (await modal.show({
+                                                title: __("firmware_update.content.signature_verify_failed_title"),
+                                                body: __("firmware_update.content.signature_verify_failed_body")(response.actual_publisher, response.expected_publisher),
+                                                no_text: __("firmware_update.content.abort_update"),
+                                                yes_text: __("firmware_update.content.confirm_override"),
+                                                no_variant: "secondary",
+                                                yes_variant: "danger",
+                                            })) {
+                                            try {
+                                                await API.call("firmware_update/override_signature", {cookie: response.cookie}, __("firmware_update.script.update_fail"));
+                                            }
+                                            catch {
+                                                return;
+                                            }
+
+                                            util.postReboot(__("firmware_update.script.update_success"), __("util.reboot_text"));
+                                            return;
+                                        }
+                                    }
+                                    else {
+                                        message = translate_unchecked("firmware_update.script.install_state_" + response.error);
+                                    }
+                                } catch {
+                                    message = error.responseText;
                                 }
                             }
+
+                            if (message != null) {
+                                util.add_alert("firmware_update_failed", "danger", __("firmware_update.script.update_fail"), message);
+                            }
+
                             util.resumeWebSockets();
+                            this.setState({manual_install_in_progress: false});
                         }}
                     />
                 </FormRow>
 
-                <FormRow label={__("firmware_update.content.reboot")} label_muted={__("firmware_update.content.reboot_desc")}>
-                    <Button variant="primary" className="form-control" onClick={util.reboot}>{__("firmware_update.content.reboot")}</Button>
-                </FormRow>
+                {API.hasFeature("firmware_update") ?
+                    <>
+                        <FormRow label={__("firmware_update.content.check_for_update")}>
+                            <Button variant="primary"
+                                    className="form-control"
+                                    onClick={() => this.setState({check_state: CheckState.InProgress, install_state: InstallState.Idle, install_progress: 0}, () => API.call("firmware_update/check_for_update", null, ""))}
+                                    disabled={this.state.check_state == CheckState.InProgress || this.state.install_state == InstallState.InProgress || this.state.manual_install_in_progress}>
+                                {__("firmware_update.content.check_for_update")}
+                                <span class="ml-2 spinner-border spinner-border-sm" role="status" style="vertical-align: middle;" hidden={this.state.check_state != CheckState.InProgress}></span>
+                            </Button>
+                        </FormRow>
 
-                <FormRow label={__("firmware_update.content.current_spiffs")}>
-                    <InputText value={state.config + " (" + state.config_type + ")"}/>
-                </FormRow>
+                        {this.state.check_timestamp != 0 && this.state.check_state != CheckState.InProgress ? <>
+                            <FormRow label={__("firmware_update.content.check_for_update_timestamp")}>
+                                <InputText value={util.timestamp_sec_to_date(this.state.check_timestamp, "")} />
+                            </FormRow>
 
-                {show_config_reset ?
-                    <FormRow label={__("firmware_update.content.config_reset")} label_muted={__("firmware_update.content.config_reset_desc")}>
-                        <Button variant="danger" className="form-control" onClick={async () => {
-                                const modal = util.async_modal_ref.current;
-                                if (!await modal.show({
-                                        title: __("firmware_update.content.config_reset"),
-                                        body: __("firmware_update.content.config_reset_modal_text"),
-                                        no_text: __("firmware_update.content.abort_reset"),
-                                        yes_text: __("firmware_update.content.confirm_config_reset"),
-                                        no_variant: "secondary",
-                                        yes_variant: "danger"
-                                    }))
-                                    return;
+                            {this.state.check_state != null && this.state.check_state != CheckState.Idle ?
+                                <FormRow label={__("firmware_update.content.check_for_update_error")}>
+                                    <InputText value={translate_unchecked(`firmware_update.script.check_state_${this.state.check_state}`)} />
+                                </FormRow>
+                                : <>
+                                <FormRow label={__("firmware_update.content.available_update")}>
+                                    <InputText value={
+                                        this.state.update_version.length > 0
+                                            ? this.state.update_version + this.format_build_extra(this.state.update_version, '')
+                                            : __("firmware_update.content.no_update")}>
+                                        {this.state.update_version.length > 0
+                                            ? <div class="input-group-append">
+                                                <Button variant="primary"
+                                                        type="button"
+                                                        onClick={() => this.setState({install_state: InstallState.InProgress, install_progress: 0}, () => API.call("firmware_update/install_firmware", {version: this.state.update_version}, __("firmware_update.script.install_failed")))}
+                                                        disabled={this.state.install_state == InstallState.InProgress || this.state.manual_install_in_progress}>{__("firmware_update.content.install_update")}</Button>
+                                            </div>
+                                            : undefined
+                                        }
+                                    </InputText>
+                                </FormRow>
+                            </>}
+                        </> : undefined}
 
-                                try {
-                                    await util.put("/config_reset", {"do_i_know_what_i_am_doing": true});
-                                    util.postReboot(__("firmware_update.script.config_reset_init"), __("util.reboot_text"));
-                                } catch (error) {
-                                    util.add_alert("config_reset_failed", "alert-danger", __("firmware_update.script.config_reset_error"), error);
-                                }
-                            }}>{__("firmware_update.content.config_reset")}</Button>
-                    </FormRow>
-                    : ""
+                        {this.state.install_state != InstallState.Idle ? <>
+                            {this.state.install_state == InstallState.InProgress
+                                ? <FormRow label={__("firmware_update.content.install_progress")}>
+                                      <Progress class="mb-1" progress={this.state.install_progress / 100} />
+                                      <label class="mb-0">{__("firmware_update.content.installing_update")}</label>
+                                  </FormRow>
+                                : <FormRow label={__("firmware_update.content.install_complete")}>
+                                      <InputText value={translate_unchecked("firmware_update.script.install_state_" + this.state.install_state)} />
+                                  </FormRow>
+                            }
+                        </> : undefined}
+                    </>
+                    : undefined
                 }
-
-                <FormRow label={__("firmware_update.content.factory_reset")} label_muted={__("firmware_update.content.factory_reset_desc")}>
-                    <Button variant="danger" className="form-control" onClick={async () => {
-                        const modal = util.async_modal_ref.current;
-                        if (!await modal.show({
-                                title: __("firmware_update.content.factory_reset"),
-                                body: __("firmware_update.content.factory_reset_modal_text"),
-                                no_text: __("firmware_update.content.abort_reset"),
-                                yes_text: __("firmware_update.content.confirm_factory_reset"),
-                                no_variant: "secondary",
-                                yes_variant: "danger"
-                            }))
-                            return;
-
-                        try {
-                            await util.put("/factory_reset", {"do_i_know_what_i_am_doing": true});
-                            util.postReboot(__("firmware_update.script.factory_reset_init"), __("util.reboot_text"));
-                        } catch (error) {
-                            util.add_alert("factory_reset_failed", "alert-danger", __("firmware_update.script.factory_reset_error"), error);
-                        }
-                    }}>{__("firmware_update.content.factory_reset")}</Button>
-                </FormRow>
             </SubPage>
         );
     }
 }
 
-render(<FirmwareUpdate />, $("#flash")[0]);
-
 export function init() {
-}
-
-export function add_event_listeners(source: API.APIEventTarget) {
-}
-
-export function update_sidebar_state(module_init: any) {
-    $("#sidebar-flash").prop("hidden", !module_init.firmware_update);
 }

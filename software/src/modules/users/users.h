@@ -19,9 +19,8 @@
 
 #pragma once
 
-#include "config.h"
-
 #include "module.h"
+#include "config.h"
 
 #define USERS_AUTH_TYPE_NONE 0
 #define USERS_AUTH_TYPE_LOST 1
@@ -55,24 +54,27 @@ public:
     void rename_user(uint8_t user_id, const String &username, const String &display_name);
     void remove_from_username_file(uint8_t user_id);
     void search_next_free_user();
-    int get_display_name(uint8_t user_id, char *ret_buf);
+    size_t get_display_name(uint8_t user_id, char *ret_buf);
     bool is_user_configured(uint8_t user_id);
 
     #define TRIGGER_CHARGE_ANY 0
     #define TRIGGER_CHARGE_START 1
     #define TRIGGER_CHARGE_STOP 2
-    bool trigger_charge_action(uint8_t user_id, uint8_t auth_type, Config::ConfVariant auth_info, int action = TRIGGER_CHARGE_ANY);
+    bool trigger_charge_action(uint8_t user_id, uint8_t auth_type, Config::ConfVariant auth_info, int action, micros_t deadtime_post_stop, micros_t deadtime_post_start);
 
     void remove_username_file();
 
     ConfigRoot config;
     ConfigRoot add;
+    ConfigRoot modify;
     ConfigRoot remove;
     ConfigRoot http_auth;
     ConfigRoot http_auth_update;
 
     bool start_charging(uint8_t user_id, uint16_t current_limit, uint8_t auth_type, Config::ConfVariant auth_info);
     bool stop_charging(uint8_t user_id, bool force, float meter_abs = 0);
+
+    micros_t last_charge_action_triggered = 0_us;
 };
 
 void set_led(int16_t mode);

@@ -21,27 +21,26 @@
 
 #include "device_module.h"
 #include "bindings/bricklet_real_time_clock_v2.h"
-#include "real_time_clock_v2_bricklet_firmware_bin.embedded.h"
-#include "../rtc/rtc.h"
+#include "modules/rtc/rtc.h"
 
 class RtcBricklet final : public DeviceModule<TF_RealTimeClockV2,
-                                        real_time_clock_v2_bricklet_firmware_bin_data,
-                                        real_time_clock_v2_bricklet_firmware_bin_length,
-                                        tf_real_time_clock_v2_create,
-                                        tf_real_time_clock_v2_get_bootloader_mode,
-                                        tf_real_time_clock_v2_reset,
-                                        tf_real_time_clock_v2_destroy,
-                                        false>, public IRtcBackend
+                                              tf_real_time_clock_v2_create,
+                                              tf_real_time_clock_v2_get_bootloader_mode,
+                                              tf_real_time_clock_v2_reset,
+                                              tf_real_time_clock_v2_destroy,
+                                              false>,
+                          public IRtcBackend
 {
 public:
-    RtcBricklet(): DeviceModule("rtc", "Real Time Clock 2.0", "RTC", [this](){this->setup_rtc();}) {};
+    RtcBricklet();
+
     void setup() override;
     void register_urls() override;
 
     void setup_rtc();
-    void set_time(const timeval &time);
-    void set_time(const tm &time);
-    bool update_system_time();
-    void reset();
-    struct timeval get_time();
+
+    // IRtcBackend implementation
+    void set_time(const tm &time) override;
+    struct timeval get_time() override;
+    void reset() override;
 };

@@ -17,11 +17,10 @@
  * Boston, MA 02111-1307, USA.
  */
 
-import $ from "../../ts/jq";
 import * as API from "../../ts/api";
 import * as util from "../../ts/util";
 import { METERS_SLOTS } from "../../build";
-import { h, render, createRef, Fragment, Component, ComponentChild, RefObject, ComponentChildren } from "preact";
+import { h, createRef, Fragment, Component, RefObject } from "preact";
 import { __ } from "../../ts/translation";
 import { PageHeader } from "../../ts/components/page_header";
 import { InputDate } from "../../ts/components/input_date";
@@ -31,31 +30,21 @@ import { FormRow } from "../../ts/components/form_row";
 import { OutputFloat } from "../../ts/components/output_float";
 import { SubPage } from "../../ts/components/sub_page";
 import { FormSeparator } from "../../ts/components/form_separator";
+import { UplotLoader } from "../../ts/components/uplot_loader";
+import { UplotWrapper, UplotData, CachedData, UplotPath } from "../../ts/components/uplot_wrapper_2nd";
+import { UplotFlagsWrapper } from "../../ts/components/uplot_wrapper_3rd";
 import uPlot from "uplot";
-import { uPlotTimelinePlugin } from "../../ts/uplot-plugins";
-import { MeterValueID } from "../meters/meter_value_id";
 import { MeterConfig } from "../meters/types";
+import { get_meter_power_index } from "../meters/main";
+import { NavbarItem } from "../../ts/components/navbar_item";
+import { StatusSection } from "../../ts/components/status_section";
+import { PieChart } from "react-feather";
+
+export function EMEnergyAnalysisNavbar() {
+    return <NavbarItem name="em_energy_analysis" module="em_common" title={__("em_energy_analysis.navbar.em_energy_analysis")} symbol={<PieChart />} />;
+}
 
 const UPDATE_RETRY_DELAY = 500; // ms
-
-interface CachedData {
-    update_timestamp: number;
-    use_timestamp: number;
-}
-
-interface UplotData extends CachedData {
-    keys: string[];
-    names: string[];
-    values: number[][];
-    extras?: number[][];
-    stacked: boolean[];
-    bars: boolean[];
-    value_names?: {[id: number]: string}[];
-    value_strokes?: {[id: number]: string}[];
-    value_fills?: {[id: number]: string}[];
-    extra_names?: {[id: number]: string}[];
-    default_visibilty?: boolean[];
-}
 
 interface Wallbox5minData extends CachedData {
     empty: boolean;
@@ -83,57 +72,6 @@ interface EnergyManagerDailyData extends CachedData {
     complete: boolean;
     energy_import: number[/*meter_slot*/][/*timestamp_slot*/]; // kWh
     energy_export: number[/*meter_slot*/][/*timestamp_slot*/]; // kWh
-}
-
-// https://seaborn.pydata.org/tutorial/color_palettes.html#qualitative-color-palettes
-// sns.color_palette("tab10")
-const strokes = [
-    'rgb(  0, 123, 255)', // use bootstrap blue instead of tab10 blue, to avoid subtle conflict between plot and button blue
-    'rgb(255, 127,  14)',
-    'rgb( 44, 160,  44)',
-    'rgb(214,  39,  40)',
-    'rgb(148, 103, 189)',
-    'rgb(140,  86,  75)',
-    'rgb(227, 119, 194)',
-    'rgb(127, 127, 127)',
-    'rgb(188, 189,  34)',
-    'rgb( 23, 190, 207)',
-];
-
-const fills = [
-    'rgb(  0, 123, 255, 0.1)', // use bootstrap blue instead of tab10 blue, to avoid subtle conflict between plot and button blue
-    'rgb(255, 127,  14, 0.1)',
-    'rgb( 44, 160,  44, 0.1)',
-    'rgb(214,  39,  40, 0.1)',
-    'rgb(148, 103, 189, 0.1)',
-    'rgb(140,  86,  75, 0.1)',
-    'rgb(227, 119, 194, 0.1)',
-    'rgb(127, 127, 127, 0.1)',
-    'rgb(188, 189,  34, 0.1)',
-    'rgb( 23, 190, 207, 0.1)',
-];
-
-let color_cache: {[id: string]: {stroke: string, fill: string}} = {};
-let color_cache_next: {[id: string]: number} = {};
-
-function get_color(group: string, name: string)
-{
-    let key = group + '-' + name;
-
-    if (!color_cache[key]) {
-        if (!util.hasValue(color_cache_next[group])) {
-            color_cache_next[group] = 0;
-        }
-
-        color_cache[key] = {
-            stroke: strokes[color_cache_next[group] % strokes.length],
-            fill: fills[color_cache_next[group] % fills.length],
-        };
-
-        color_cache_next[group]++;
-    }
-
-    return color_cache[key];
 }
 
 const wb_state_names: {[id: number]: string} = {
@@ -205,930 +143,6 @@ const em_relay_fills: {[id: number]: string} = {
     1: 'rgb( 40, 167,  69, 0.66)',
 };
 
-interface UplotLoaderProps {
-    show: boolean;
-    marker_class: 'h3'|'h4';
-    children: ComponentChildren;
-}
-
-class UplotLoader extends Component<UplotLoaderProps, {}> {
-    no_data_ref = createRef();
-    loading_ref = createRef();
-
-    set_loading() {
-        this.no_data_ref.current.style.visibility = 'hidden';
-        this.loading_ref.current.style.visibility = 'inherit';
-    }
-
-    set_show(show: boolean) {
-        this.no_data_ref.current.style.display = show ? 'flex' : 'none';
-        this.loading_ref.current.style.display = show ? 'flex' : 'none';
-    }
-
-    set_data(data: UplotData, visible?: boolean) {
-        this.loading_ref.current.style.visibility = 'hidden';
-
-        if (visible === false || (visible === undefined && (!data || data.keys.length <= 1))) {
-            this.no_data_ref.current.style.visibility = 'inherit';
-        }
-        else {
-            this.no_data_ref.current.style.visibility = 'hidden';
-        }
-    }
-
-    render(props?: UplotLoaderProps, state?: Readonly<{}>, context?: any): ComponentChild {
-        return (
-            <>
-                <div ref={this.no_data_ref} style={`position: absolute; width: 100%; height: 100%; visibility: hidden; display: ${props.show ? 'flex' : 'none'};`}>
-                    <span class={props.marker_class} style="margin: auto;">{__("em_energy_analysis.content.no_data")}</span>
-                </div>
-                <div ref={this.loading_ref} style={`position: absolute; width: 100%; height: 100%; visibility: ${props.show ? 'inherit' : 'hidden'}; display: ${props.show ? 'flex' : 'none'};`}>
-                    <span class={props.marker_class} style="margin: auto;">{__("em_energy_analysis.content.loading")}</span>
-                </div>
-                {props.children}
-            </>
-        );
-    }
-}
-
-interface UplotFlagsWrapperProps {
-    id: string;
-    class: string;
-    sidebar_id: string;
-    show: boolean;
-    sync?: uPlot.SyncPubSub;
-    legend_time_label: string;
-    legend_time_with_minutes: boolean;
-    legend_value_prefix: string;
-    legend_div_ref: RefObject<HTMLDivElement>;
-    x_format: Intl.DateTimeFormatOptions;
-    x_padding_factor: number;
-    y_sync_ref?: RefObject<UplotWrapper>;
-}
-
-class UplotFlagsWrapper extends Component<UplotFlagsWrapperProps, {}> {
-    uplot: uPlot;
-    data: UplotData;
-    pending_data: UplotData;
-    series_visibility: {[id: string]: boolean} = {};
-    visible: boolean = false;
-    div_ref = createRef();
-    observer: ResizeObserver;
-    bar_height: number = 20;
-    bar_spacing: number = 5;
-    y_size: number = 0;
-    y_other_size: number = 0;
-
-    shouldComponentUpdate() {
-        return false;
-    }
-
-    componentDidMount() {
-        if (this.uplot) {
-            return;
-        }
-
-        // FIXME: special hack for status page that is visible by default
-        //        and doesn't receive an initial shown event because of that
-        this.visible = this.props.sidebar_id === "status";
-
-        // We have to use jquery here or else the events don't fire?
-        // This can be removed once the sidebar is ported to preact.
-        $(`#sidebar-${this.props.sidebar_id}`).on('shown.bs.tab', () => {
-            this.visible = true;
-
-            if (this.pending_data !== undefined) {
-                this.set_data(this.pending_data);
-            }
-        });
-
-        $(`#sidebar-${this.props.sidebar_id}`).on('hidden.bs.tab', () => {
-            this.visible = false;
-        });
-
-        let options = {
-            ...this.get_size(),
-            pxAlign: 0,
-            cursor: {
-                drag: {
-                    x: false, // disable zoom
-                },
-                sync: {
-                    key: this.props.sync?.key,
-                },
-            },
-            series: [
-                {
-                    label: this.props.legend_time_label,
-                    value: (self: uPlot, rawValue: number) => {
-                        if (rawValue !== null) {
-                            if (this.props.legend_time_with_minutes) {
-                                return util.timestamp_min_to_date(rawValue / 60);
-                            }
-                            else {
-                                return new Date(rawValue * 1000).toLocaleDateString([], {year: 'numeric', month: '2-digit', day: '2-digit'});
-                            }
-                        }
-
-                        return null;
-                    },
-                },
-            ],
-            axes: [
-                {
-                    size: 1,// with size = 0 the width of the whole plot changes relative to the power plot
-                    ticks: {
-                        size: 0
-                    },
-                    incrs: [
-                        60,
-                        60 * 2,
-                        3600,
-                        3600 * 2,
-                        3600 * 4,
-                        3600 * 6,
-                        3600 * 8,
-                        3600 * 12,
-                        3600 * 24,
-                        3600 * 48,
-                    ],
-                    values: (self: uPlot, splits: number[]) => {
-                        let values: string[] = new Array(splits.length);
-
-                        for (let i = 0; i < splits.length; ++i) {
-                            values[i] = (new Date(splits[i] * 1000)).toLocaleString([], this.props.x_format);
-                        }
-
-                        return values;
-                    },
-                    side: 0,
-                },
-                {
-                    size: (self: uPlot, values: string[], axisIdx: number, cycleNum: number): number => {
-                        let size = 0;
-
-                        if (values) {
-                            self.ctx.save();
-                            self.ctx.font = self.axes[axisIdx].font;
-
-                            for (let i = 0; i < values.length; ++i) {
-                                size = Math.max(size, self.ctx.measureText(values[i]).width);
-                            }
-
-                            self.ctx.restore();
-                        }
-
-                        this.y_size = Math.ceil(size / devicePixelRatio) + 20;
-                        size = Math.max(this.y_size, this.y_other_size);
-
-                        if (this.props.y_sync_ref && this.props.y_sync_ref.current) {
-                            this.props.y_sync_ref.current.set_y_other_size(this.y_size);
-                        }
-
-                        return size;
-                    },
-                },
-            ],
-            scales: {
-                x: {
-                    range: (self: uPlot, initMin: number, initMax: number, scaleKey: string): uPlot.Range.MinMax => {
-                        let pad = (initMax - initMin) * this.props.x_padding_factor;
-                        return [initMin - pad, initMax + pad];
-                    },
-                },
-            },
-            padding: [null, 5, 0, null] as uPlot.Padding,
-            legend: {
-                mount: (self: uPlot, legend: HTMLElement) => {
-                    if (this.props.legend_div_ref.current) {
-                        this.props.legend_div_ref.current.appendChild(legend);
-                    }
-                },
-            },
-            plugins: [
-                uPlotTimelinePlugin({
-                    fill: (seriesIdx: number, dataIdx: number, value: any) => this.data.value_fills && this.data.value_fills[seriesIdx] ? this.data.value_fills[seriesIdx][value] : 'rgb(0, 0, 0, 0.1)',
-                    stroke: (seriesIdx: number, dataIdx: number, value: any) => this.data.value_strokes && this.data.value_strokes[seriesIdx] ? this.data.value_strokes[seriesIdx][value] : 'rgb(0, 0, 0)',
-                    bar_height: this.bar_height,
-                    bar_spacing: this.bar_spacing,
-                }),
-                {
-                    hooks: {
-                        setSeries: (self: uPlot, seriesIdx: number, opts: uPlot.Series) => {
-                            this.series_visibility[this.data.keys[seriesIdx]] = opts.show;
-                            this.resize();
-                        },
-                        addSeries: (self: uPlot, seriesIdx: number) => {
-                            if (this.data && this.data.keys[seriesIdx].startsWith('wb_state_')) {
-                                let series = document.querySelectorAll('.u-time-in-legend-alone .u-legend .u-series');
-                                let element = series[seriesIdx] as HTMLElement;
-
-                                if (element) {
-                                    element.style.display = 'none';
-                                }
-                            }
-
-                            this.resize();
-                        },
-                        delSeries: (self: uPlot, seriesIdx: number) => {
-                            this.resize();
-                        },
-                    },
-                },
-            ],
-        };
-
-        let div = this.div_ref.current;
-        this.uplot = new uPlot(options, [], div);
-
-        try {
-            this.observer = new ResizeObserver(() => {
-                this.resize();
-            });
-
-            this.observer.observe(div);
-        } catch (e) {
-            setInterval(() => {
-                this.resize();
-            }, 500);
-
-            window.addEventListener("resize", e => {
-                this.resize();
-            });
-        }
-
-        if (this.pending_data !== undefined) {
-            this.set_data(this.pending_data);
-        }
-    }
-
-    render(props?: UplotFlagsWrapperProps, state?: Readonly<{}>, context?: any): ComponentChild {
-        return <div ref={this.div_ref} class={props.class} style={`display: ${props.show ? 'block' : 'none'}; visibility: hidden;`} />;
-    }
-
-    resize() {
-        let size = this.get_size();
-
-        if (size.width == 0 || size.height == 0) {
-            return;
-        }
-
-        if (this.uplot) {
-            this.uplot.setSize(size);
-        }
-        else {
-            window.setTimeout(() => {
-                this.resize();
-            }, 100);
-        }
-    }
-
-    get_size() {
-        let div = this.div_ref.current;
-        let count = 0;
-
-        if (this.uplot) {
-            for (let i = 1; i < this.uplot.series.length; ++i) {
-                if (this.series_visibility[this.data.keys[i]]) {
-                    ++count;
-                }
-            }
-        }
-
-        return {
-            width: div.clientWidth,
-            height: 1 + count * this.bar_height + Math.max(count - 1, 0) * this.bar_spacing + 17,
-        }
-    }
-
-    set_y_other_size(size: number) {
-        if (this.y_other_size == size) {
-            return;
-        }
-
-        this.y_other_size = size;
-
-        if (this.y_other_size != this.y_size) {
-            this.resize();
-        }
-    }
-
-    set_loading() {
-        this.div_ref.current.style.visibility = 'hidden';
-
-        if (this.props.legend_div_ref.current) {
-            this.props.legend_div_ref.current.style.visibility = 'hidden';
-        }
-    }
-
-    set_show(show: boolean) {
-        this.div_ref.current.style.display = show ? 'block' : 'none';
-
-        if (this.props.legend_div_ref.current) {
-            this.props.legend_div_ref.current.style.display = show ? 'block' : 'none';
-        }
-    }
-
-    get_series_opts(i: number): uPlot.Series {
-        let name = this.data.names[i];
-
-        return {
-            show: this.series_visibility[this.data.keys[i]],
-            label: (this.props.legend_value_prefix + ' ' + name).trim(),
-            value: (self: uPlot, rawValue: number, seriesIdx: number, idx: number | null) => {
-                if (rawValue !== null && this.data.value_names && this.data.value_names[seriesIdx]) {
-                    return this.data.value_names[seriesIdx][this.data.values[seriesIdx][idx]];
-                }
-
-                return rawValue;
-            },
-            width: 0,
-        };
-    }
-
-    set_data(data: UplotData, visible?: boolean) {
-        if (!this.uplot || !this.visible) {
-            this.pending_data = data;
-            return;
-        }
-
-        this.data = data;
-        this.pending_data = undefined;
-
-        if (visible === false || (visible === undefined && (!this.data || this.data.keys.length <= 1))) {
-            this.div_ref.current.style.visibility = 'hidden';
-
-            if (this.props.legend_div_ref.current) {
-                this.props.legend_div_ref.current.style.visibility = 'hidden';
-            }
-        }
-        else {
-            this.div_ref.current.style.visibility = 'inherit';
-
-            if (this.props.legend_div_ref.current) {
-                this.props.legend_div_ref.current.style.visibility = 'inherit';
-            }
-
-            while (this.uplot.series.length > 1) {
-                this.uplot.delSeries(this.uplot.series.length - 1);
-            }
-
-            while (this.uplot.series.length < this.data.keys.length) {
-                if (this.series_visibility[this.data.keys[this.uplot.series.length]] === undefined) {
-                    let visibilty = true;
-
-                    if (this.data.default_visibilty) {
-                        visibilty = this.data.default_visibilty[this.uplot.series.length];
-                    }
-
-                    this.series_visibility[this.data.keys[this.uplot.series.length]] = visibilty;
-                }
-
-                this.uplot.addSeries(this.get_series_opts(this.uplot.series.length));
-            }
-
-            this.uplot.setData(this.data.values as any);
-        }
-    }
-}
-
-interface UplotWrapperProps {
-    id: string;
-    class: string;
-    sidebar_id: string;
-    color_cache_group: string;
-    show: boolean;
-    sync?: uPlot.SyncPubSub;
-    legend_time_label: string;
-    legend_time_with_minutes: boolean;
-    legend_value_prefix: string;
-    legend_div_ref?: RefObject<HTMLDivElement>;
-    aspect_ratio: number;
-    x_format: Intl.DateTimeFormatOptions;
-    x_padding_factor: number;
-    y_min?: number;
-    y_max?: number;
-    y_unit: string;
-    y_label: string;
-    y_digits: number;
-    y_skip_upper?: boolean;
-    y_sync_ref?: RefObject<UplotFlagsWrapper>;
-    default_fill?: boolean;
-    padding?: uPlot.Padding;
-}
-
-class UplotWrapper extends Component<UplotWrapperProps, {}> {
-    uplot: uPlot;
-    data: UplotData;
-    pending_data: UplotData;
-    series_visibility: {[id: string]: boolean} = {};
-    visible: boolean = false;
-    div_ref = createRef();
-    observer: ResizeObserver;
-    y_min: number = 0;
-    y_max: number = 0;
-    y_size: number = 0;
-    y_other_size: number = 0;
-    y_label_size: number = 20;
-
-    shouldComponentUpdate() {
-        return false;
-    }
-
-    componentDidMount() {
-        if (this.uplot) {
-            return;
-        }
-
-        // FIXME: special hack for status page that is visible by default
-        //        and doesn't receive an initial shown event because of that
-        this.visible = this.props.sidebar_id === "status";
-
-        // We have to use jquery here or else the events don't fire?
-        // This can be removed once the sidebar is ported to preact.
-        $(`#sidebar-${this.props.sidebar_id}`).on('shown.bs.tab', () => {
-            this.visible = true;
-
-            if (this.pending_data !== undefined) {
-                this.set_data(this.pending_data);
-            }
-        });
-
-        $(`#sidebar-${this.props.sidebar_id}`).on('hidden.bs.tab', () => {
-            this.visible = false;
-        });
-
-        let padding: uPlot.Padding = this.props.padding;
-
-        if (!padding) {
-            padding = [null, null, null, null] as uPlot.Padding;
-        }
-
-        let options = {
-            ...this.get_size(),
-            pxAlign: 0,
-            cursor: {
-                drag: {
-                    x: false, // disable zoom
-                },
-                sync: {
-                    key: this.props.sync?.key,
-                },
-            },
-            series: [
-                {
-                    label: this.props.legend_time_label,
-                    value: (self: uPlot, rawValue: number) => {
-                        if (rawValue !== null) {
-                            if (this.props.legend_time_with_minutes) {
-                                return util.timestamp_min_to_date(rawValue / 60);
-                            }
-                            else {
-                                return new Date(rawValue * 1000).toLocaleDateString([], {year: 'numeric', month: '2-digit', day: '2-digit'});
-                            }
-                        }
-
-                        return null;
-                    },
-                },
-            ],
-            axes: [
-                {
-                    size: 30,
-                    incrs: [
-                        60,
-                        60 * 2,
-                        3600,
-                        3600 * 2,
-                        3600 * 4,
-                        3600 * 6,
-                        3600 * 8,
-                        3600 * 12,
-                        3600 * 24,
-                        3600 * 48,
-                        3600 * 72,
-                        3600 * 168,
-                    ],
-                    values: (self: uPlot, splits: number[]) => {
-                        let values: string[] = new Array(splits.length);
-
-                        for (let i = 0; i < splits.length; ++i) {
-                            values[i] = (new Date(splits[i] * 1000)).toLocaleString([], this.props.x_format);
-                        }
-
-                        return values;
-                    },
-                },
-                {
-                    label: this.props.y_label,
-                    labelSize: this.y_label_size,
-                    labelGap: 2,
-                    labelFont: 'bold 14px system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"',
-                    size: (self: uPlot, values: string[], axisIdx: number, cycleNum: number): number => {
-                        let size = 0;
-
-                        if (values) {
-                            self.ctx.save();
-                            self.ctx.font = self.axes[axisIdx].font;
-
-                            for (let i = 0; i < values.length; ++i) {
-                                size = Math.max(size, self.ctx.measureText(values[i]).width);
-                            }
-
-                            self.ctx.restore();
-                        }
-
-                        this.y_size = Math.ceil(size / devicePixelRatio) + 20;
-                        size = Math.max(this.y_size + this.y_label_size, this.y_other_size) - this.y_label_size;
-
-                        if (this.props.y_sync_ref && this.props.y_sync_ref.current) {
-                            this.props.y_sync_ref.current.set_y_other_size(this.y_size + this.y_label_size);
-                        }
-
-                        return size;
-                    },
-                    values: (self: uPlot, splits: number[]) => {
-                        let values: string[] = new Array(splits.length);
-
-                        for (let digits = 0; digits <= 3; ++digits) {
-                            let last_value: string = null;
-                            let unique = true;
-
-                            for (let i = 0; i < splits.length; ++i) {
-                                if (this.props.y_skip_upper && splits[i] >= this.y_max) {
-                                    values[i] = '';
-                                }
-                                else {
-                                    values[i] = util.toLocaleFixed(splits[i], digits);
-                                }
-
-                                if (last_value == values[i]) {
-                                    unique = false;
-                                }
-
-                                last_value = values[i];
-                            }
-
-                            if (unique) {
-                                break;
-                            }
-                        }
-
-                        return values;
-                    },
-                },
-            ],
-            scales: {
-                x: {
-                    range: (self: uPlot, initMin: number, initMax: number, scaleKey: string): uPlot.Range.MinMax => {
-                        let pad = (initMax - initMin) * this.props.x_padding_factor;
-                        return [initMin - pad, initMax + pad];
-                    },
-                },
-                y: {
-                    range: (self: uPlot, initMin: number, initMax: number, scaleKey: string): uPlot.Range.MinMax => {
-                        return uPlot.rangeNum(this.y_min, this.y_max, {min: {}, max: {}});
-                    }
-                },
-            },
-            legend: {
-                mount: (self: uPlot, legend: HTMLElement) => {
-                    if (this.props.legend_div_ref && this.props.legend_div_ref.current) {
-                        this.props.legend_div_ref.current.appendChild(legend);
-                    }
-                },
-            },
-            padding: padding,
-            plugins: [
-                {
-                    hooks: {
-                        setSeries: (self: uPlot, seriesIdx: number, opts: uPlot.Series) => {
-                            this.series_visibility[this.data.keys[seriesIdx]] = opts.show;
-                            this.update_internal_data();
-
-                            if (this.props.y_sync_ref && this.props.y_sync_ref.current && this.data.keys[seriesIdx].startsWith('wb_power_')) {
-                                let key = this.data.keys[seriesIdx].replace('_power_', '_state_');
-
-                                for (let i = 1; i < this.props.y_sync_ref.current.data.keys.length; ++i) {
-                                    if (this.props.y_sync_ref.current.data.keys[i] == key) {
-                                        this.props.y_sync_ref.current.uplot.setSeries(i, {show: opts.show});
-                                        break;
-                                    }
-                                }
-                            }
-                        },
-                        drawAxes: [
-                            (self: uPlot) => {
-                                let ctx = self.ctx;
-                                let s  = self.series[0];
-                                let xd = self.data[0];
-                                let [i0, i1] = s.idxs;
-                                let xpad = (xd[i1] - xd[i0]) * this.props.x_padding_factor;
-                                let x0 = self.valToPos(xd[i0] - xpad, 'x', true) - self.axes[0].ticks.size * devicePixelRatio;
-                                let x1 = self.valToPos(xd[i1] + xpad, 'x', true);
-                                let y = self.valToPos(0, 'y', true);
-
-                                if (y > ctx.canvas.height - (self.axes[0].size as number)) {
-                                    return;
-                                }
-
-                                const lineWidth = 2 * devicePixelRatio;
-                                const offset = (lineWidth % 2) / 2;
-
-                                ctx.save();
-                                ctx.translate(offset, offset);
-                                ctx.beginPath();
-                                ctx.lineWidth = lineWidth;
-                                ctx.strokeStyle = 'rgb(0,0,0,0.2)';
-                                ctx.moveTo(x0, y);
-                                ctx.lineTo(x1, y);
-                                ctx.stroke();
-                                ctx.translate(-offset, -offset);
-                                ctx.restore();
-                            },
-                        ],
-                    },
-                },
-            ],
-        };
-
-        let div = this.div_ref.current;
-        this.uplot = new uPlot(options, [], div);
-
-        try {
-            this.observer = new ResizeObserver(() => {
-                this.resize();
-            });
-
-            this.observer.observe(div);
-        } catch (e) {
-            setInterval(() => {
-                this.resize();
-            }, 500);
-
-            window.addEventListener("resize", e => {
-                this.resize();
-            });
-        }
-
-        if (this.pending_data !== undefined) {
-            this.set_data(this.pending_data);
-        }
-    }
-
-    render(props?: UplotWrapperProps, state?: Readonly<{}>, context?: any): ComponentChild {
-        return <div ref={this.div_ref} class={props.class} style={`display: ${props.show ? 'block' : 'none'}; visibility: hidden;`} />;
-    }
-
-    resize() {
-        let size = this.get_size();
-
-        if (size.width == 0 || size.height == 0) {
-            return;
-        }
-
-        if (this.uplot) {
-            this.uplot.setSize(size);
-        }
-        else {
-            window.setTimeout(() => {
-                this.resize();
-            }, 100);
-        }
-    }
-
-    get_size() {
-        let div = this.div_ref.current;
-        let aspect_ratio = parseFloat(getComputedStyle(div).aspectRatio);
-
-        if (isNaN(aspect_ratio)) {
-            aspect_ratio = this.props.aspect_ratio;
-        }
-
-        return {
-            width: div.clientWidth,
-            height: Math.floor((div.clientWidth + (window.innerWidth - document.documentElement.clientWidth)) / aspect_ratio),
-        }
-    }
-
-    set_y_other_size(size: number) {
-        if (this.y_other_size == size) {
-            return;
-        }
-
-        this.y_other_size = size;
-
-        if (this.y_other_size != this.y_size) {
-            this.resize();
-        }
-    }
-
-    set_loading() {
-        this.div_ref.current.style.visibility = 'hidden';
-
-        if (this.props.legend_div_ref && this.props.legend_div_ref.current) {
-            this.props.legend_div_ref.current.style.visibility = 'hidden';
-        }
-    }
-
-    set_show(show: boolean) {
-        this.div_ref.current.style.display = show ? 'block' : 'none';
-
-        if (this.props.legend_div_ref && this.props.legend_div_ref.current) {
-            this.props.legend_div_ref.current.style.display = show ? 'block' : 'none';
-        }
-    }
-
-    get_series_opts(i: number): uPlot.Series {
-        let name = this.data.names[i];
-        let color = get_color(this.props.color_cache_group, name);
-
-        return {
-            show: this.series_visibility[this.data.keys[i]],
-            pxAlign: 0,
-            spanGaps: false,
-            label: this.props.legend_value_prefix + (name ? ' ' + name: ''),
-            value: (self: uPlot, rawValue: number, seriesIdx: number, idx: number | null) => {
-                if (rawValue !== null) {
-                    let prefix = '';
-
-                    if (this.data.extras && this.data.extra_names && this.data.extra_names[seriesIdx]) {
-                        prefix = this.data.extra_names[seriesIdx][this.data.extras[seriesIdx][idx]] + ' / ';
-                    }
-
-                    return prefix + util.toLocaleFixed(this.data.values[seriesIdx][idx], this.props.y_digits) + " " + this.props.y_unit;
-                }
-
-                return null;
-            },
-            stroke: color.stroke,
-            fill: this.data.stacked[i] || this.props.default_fill ? color.fill : undefined,
-            width: 2,
-            paths: this.data.bars[i] ? uPlot.paths.bars({size: [0.4, 100], align: this.data.stacked[i] ? 1 : -1}) : undefined,
-            points: {
-                show: false,
-            },
-        };
-    }
-
-    update_internal_data() {
-        let y_min: number = this.props.y_min;
-        let y_max: number = this.props.y_max;
-        let last_stacked_values: number[] = [];
-
-        this.uplot.delBand(null);
-
-        for (let i = this.data.values.length - 1; i > 0; --i) {
-            if (!this.data.stacked[i]) {
-                for (let k = 0; k < this.data.values[i].length; ++k) {
-                    let value = this.data.values[i][k];
-
-                    if (value !== null) {
-                        if (y_min === undefined || value < y_min) {
-                            y_min = value;
-                        }
-
-                        if (y_min === undefined || value > y_max) {
-                            y_max = value;
-                        }
-                    }
-                }
-            }
-            else {
-                let stacked_values: number[] = new Array(this.data.values[i].length);
-
-                for (let k = 0; k < this.data.values[i].length; ++k) {
-                    if (last_stacked_values[k] !== null
-                        && last_stacked_values[k] !== undefined
-                        && this.data.values[i][k] !== null
-                        && this.data.values[i][k] !== undefined) {
-                        stacked_values[k] = last_stacked_values[k] + this.data.values[i][k];
-                    } else {
-                        stacked_values[k] = this.data.values[i][k];
-                    }
-
-                    if (stacked_values[k] !== null) {
-                        if (stacked_values[k] < y_min) {
-                            y_min = stacked_values[k];
-                        }
-
-                        if (stacked_values[k] > y_max) {
-                            y_max = stacked_values[k];
-                        }
-                    }
-                }
-
-                last_stacked_values = stacked_values;
-            }
-        }
-
-        if (y_min === undefined && y_max === undefined) {
-            y_min = 0;
-            y_max = 0;
-        }
-        else if (y_min === undefined) {
-            y_min = y_max;
-        }
-        else if (y_max === undefined) {
-            y_max = y_min;
-        }
-
-        this.y_min = y_min;
-        this.y_max = y_max;
-
-        let uplot_values: number[][] = [];
-        last_stacked_values = [];
-
-        for (let i = this.data.values.length - 1; i >= 0; --i) {
-            if (!this.data.stacked[i] || !this.series_visibility[this.data.keys[i]]) {
-                uplot_values.unshift(this.data.values[i]);
-            }
-            else {
-                let stacked_values: number[] = new Array(this.data.values[i].length);
-
-                for (let k = 0; k < this.data.values[i].length; ++k) {
-                    if (last_stacked_values[k] !== null
-                        && last_stacked_values[k] !== undefined
-                        && this.data.values[i][k] !== null
-                        && this.data.values[i][k] !== undefined) {
-                        stacked_values[k] = last_stacked_values[k] + this.data.values[i][k];
-                    } else {
-                        stacked_values[k] = this.data.values[i][k];
-                    }
-                }
-
-                uplot_values.unshift(stacked_values);
-                last_stacked_values = stacked_values;
-            }
-        }
-
-        this.uplot.setData(uplot_values as any);
-
-        let last_stacked_index: number = null;
-
-        for (let i = this.data.values.length - 1; i > 0; --i) {
-            if (this.data.stacked[i] && this.series_visibility[this.data.keys[i]]) {
-                if (last_stacked_index === null) {
-                    this.uplot.delSeries(i);
-                    this.uplot.addSeries(this.get_series_opts(i), i);
-                } else {
-                    this.uplot.addBand({
-                        series: [i, last_stacked_index],
-                        fill: get_color(this.props.color_cache_group, this.data.names[i]).fill,
-                    });
-                }
-
-                last_stacked_index = i;
-            }
-        }
-    }
-
-    set_data(data: UplotData, visible?: boolean) {
-        if (!this.uplot || !this.visible) {
-            this.pending_data = data;
-            return;
-        }
-
-        this.data = data;
-        this.pending_data = undefined;
-
-        if (visible === false || (visible === undefined && (!this.data || this.data.keys.length <= 1))) {
-            this.div_ref.current.style.visibility = 'hidden';
-
-            if (this.props.legend_div_ref && this.props.legend_div_ref.current) {
-                this.props.legend_div_ref.current.style.visibility = 'hidden';
-            }
-        }
-        else {
-            this.div_ref.current.style.visibility = 'inherit';
-
-            if (this.props.legend_div_ref && this.props.legend_div_ref.current) {
-                this.props.legend_div_ref.current.style.visibility = 'inherit';
-            }
-
-            while (this.uplot.series.length > 1) {
-                this.uplot.delSeries(this.uplot.series.length - 1);
-            }
-
-            while (this.uplot.series.length < this.data.keys.length) {
-                if (this.series_visibility[this.data.keys[this.uplot.series.length]] === undefined) {
-                    let visibilty = true;
-
-                    if (this.data.default_visibilty) {
-                        visibilty = this.data.default_visibilty[this.uplot.series.length];
-                    }
-
-                    this.series_visibility[this.data.keys[this.uplot.series.length]] = visibilty;
-                }
-
-                this.uplot.addSeries(this.get_series_opts(this.uplot.series.length));
-            }
-
-            this.update_internal_data();
-        }
-    }
-}
-
 interface EMEnergyAnalysisStatusState {
     force_render: number,
     meter_slot: number,
@@ -1146,6 +160,8 @@ function get_meter_name(meter_configs: {[meter_slot: number]: MeterConfig}, mete
 }
 
 export class EMEnergyAnalysisStatus extends Component<{}, EMEnergyAnalysisStatusState> {
+    on_mount: () => void;
+    on_mount_pending = false;
     uplot_loader_ref = createRef();
     uplot_wrapper_ref = createRef();
 
@@ -1186,64 +202,72 @@ export class EMEnergyAnalysisStatus extends Component<{}, EMEnergyAnalysisStatus
         });
     }
 
-    render(props: {}, state: EMEnergyAnalysisStatusState) {
-        // Don't check util.render_allowed() here.
-        // We can receive graph data points with the first web socket packet and
-        // want to push them into the uplot graph immediately.
-        // This only works if the wrapper component is already created.
-        // Hide the form rows to fix any visual bugs instead.
-        let show = util.render_allowed() && API.hasFeature("energy_manager");
+    set_on_mount(on_mount: () => void) {
+        this.on_mount = on_mount;
 
-        // As we don't check util.render_allowed(),
-        // we have to handle rendering before the web socket connection is established.
-        let value_ids = API.get_unchecked(`meters/${state.meter_slot}/value_ids`);
-        let values = API.get_unchecked(`meters/${state.meter_slot}/values`);
-        let power = 0;
+        if (this.on_mount_pending && this.on_mount) {
+            this.on_mount_pending = false;
 
-        if (value_ids && value_ids.length > 0 && values && values.length > 0) {
-            let idx = value_ids.indexOf(MeterValueID.PowerActiveLSumImExDiff);
+            this.on_mount();
+        }
+    }
 
-            if (idx >= 0) {
-                power = values[idx];
-            }
+    render() {
+        if (!util.render_allowed() || !API.hasFeature("energy_manager"))
+            return <StatusSection name="em_energy_analysis" />;
+
+        let value_ids = API.get_unchecked(`meters/${this.state.meter_slot}/value_ids`);
+        let values = API.get_unchecked(`meters/${this.state.meter_slot}/values`);
+        let power: number = undefined;
+        let power_idx = get_meter_power_index(value_ids);
+
+        if (power_idx >= 0 && values && values.length > 0) {
+            power = values[power_idx];
         }
 
-        return (
-            <>
-                <FormRow label={__("em_energy_analysis_status.status.power_history")} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4" hidden={!show}>
-                    <div class="card pl-1 pb-1">
-                        <div style="position: relative;"> {/* this plain div is neccessary to make the size calculation stable in safari. without this div the height continues to grow */}
-                            <UplotLoader ref={this.uplot_loader_ref}
-                                         show={true}
-                                         marker_class={'h4'} >
-                                <UplotWrapper ref={this.uplot_wrapper_ref}
-                                              id="em_energy_analysis_status_chart"
-                                              class="em-energy-analysis-status-chart"
-                                              sidebar_id="status"
-                                              color_cache_group="status"
-                                              show={true}
-                                              legend_time_label={__("em_energy_analysis.script.time_5min")}
-                                              legend_time_with_minutes={true}
-                                              legend_value_prefix={""}
-                                              aspect_ratio={2}
-                                              x_format={{hour: '2-digit', minute: '2-digit'}}
-                                              x_padding_factor={0}
-                                              y_min={0}
-                                              y_max={1500}
-                                              y_unit={"W"}
-                                              y_label={__("em_energy_analysis.script.power") + " [Watt]"}
-                                              y_digits={0}
-                                              default_fill={true}
-                                              padding={[null, 15, null, 5] as uPlot.Padding} />
-                            </UplotLoader>
-                        </div>
+        return <StatusSection name="em_energy_analysis">
+            <FormRow label={__("em_energy_analysis.status.power_history")}>
+                <div class="card pl-1 pb-1">
+                    <div style="position: relative;"> {/* this plain div is neccessary to make the size calculation stable in safari. without this div the height continues to grow */}
+                        <UplotLoader ref={this.uplot_loader_ref}
+                                        show={true}
+                                        marker_class={'h4'}
+                                        no_data={__("em_energy_analysis.content.no_data")}
+                                        loading={__("em_energy_analysis.content.loading")}>
+                            <UplotWrapper ref={this.uplot_wrapper_ref}
+                                            class="em-energy-analysis-status-chart"
+                                            sub_page="status"
+                                            color_cache_group="em_energy_analysis.status"
+                                            show={true}
+                                            on_mount={() => {
+                                                if (this.on_mount) {
+                                                    this.on_mount();
+                                                }
+                                                else {
+                                                    this.on_mount_pending = true;
+                                                }
+                                            }}
+                                            legend_time_label={__("em_energy_analysis.script.time_5min")}
+                                            legend_time_with_minutes={true}
+                                            aspect_ratio={3}
+                                            x_height={30}
+                                            x_format={{hour: '2-digit', minute: '2-digit'}}
+                                            x_padding_factor={0}
+                                            y_min={0}
+                                            y_max={1500}
+                                            y_unit={"W"}
+                                            y_label={__("em_energy_analysis.script.power") + " [Watt]"}
+                                            y_digits={0}
+                                            default_fill={true}
+                                            padding={[null, 15, null, 5] as uPlot.Padding} />
+                        </UplotLoader>
                     </div>
-                </FormRow>
-                <FormRow label={__("em_energy_analysis_status.status.current_power")} label_muted={get_meter_name(state.meter_configs, state.meter_slot)} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4" hidden={!show}>
-                    <OutputFloat value={power} digits={0} scale={0} unit="W" maxFractionalDigitsOnPage={0} maxUnitLengthOnPage={1}/>
-                </FormRow>
-            </>
-        )
+                </div>
+            </FormRow>
+            <FormRow label={__("em_energy_analysis.status.current_power")} label_muted={get_meter_name(this.state.meter_configs, this.state.meter_slot)}>
+                <OutputFloat value={power} digits={0} scale={0} unit="W" maxFractionalDigitsOnPage={0} maxUnitLengthOnPage={1}/>
+            </FormRow>
+        </StatusSection>;
     }
 }
 
@@ -1286,7 +310,9 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
     uplot_5min_flags_cache: {[id: string]: UplotData} = {};
     uplot_5min_power_cache: {[id: string]: UplotData} = {};
     uplot_5min_status_cache: {[id: string]: UplotData} = {};
+    uplot_5min_cache_initalized: boolean = false;
     uplot_daily_cache: {[id: string]: UplotData} = {};
+    uplot_daily_cache_initalized: boolean = false;
     wallbox_5min_cache: {[id: number]: { [id: string]: Wallbox5minData}} = {};
     wallbox_daily_cache: {[id: string]: { [id: string]: WallboxDailyData}} = {};
     energy_manager_5min_cache: {[id: string]: EnergyManager5minData} = {};
@@ -1344,8 +370,8 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
             let chargers: Charger[] = [];
 
             for (let charger of state.chargers) {
-                if (charger.uid > 0) {
-                    chargers.push({uid: charger.uid, name: charger.name});
+                if (charger.u > 0) {
+                    chargers.push({uid: charger.u, name: charger.n});
                 }
             }
 
@@ -1554,10 +580,18 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
         });
     }
 
+    componentDidMount() {
+        this.props.status_ref.current.set_on_mount(() => this.update_status_uplot());
+    }
+
     date_to_5min_key(date: Date) {
         let year: number = date.getFullYear();
         let month: number = date.getMonth() + 1;
         let day: number = date.getDate();
+
+        if (isNaN(year)) {
+            return null;
+        }
 
         return `${year}-${month}-${day}`;
     }
@@ -1565,6 +599,10 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
     date_to_daily_key(date: Date) {
         let year: number = date.getFullYear();
         let month: number = date.getMonth() + 1;
+
+        if (isNaN(year)) {
+            return null;
+        }
 
         return`${year}-${month}`;
     }
@@ -1591,6 +629,11 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
 
     update_uplot_5min_power_cache(date: Date) {
         let key = this.date_to_5min_key(date);
+
+        if (key == null) {
+            return;
+        }
+
         let uplot_data = this.uplot_5min_power_cache[key];
         let needs_update = false;
         let now = Date.now();
@@ -1633,7 +676,7 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
             values: [null],
             extras: [null],
             stacked: [false],
-            bars: [false],
+            paths: [null],
             extra_names: [null],
         };
 
@@ -1650,7 +693,7 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
                     uplot_data.values.push(energy_manager_data.power[meter_slot]);
                     uplot_data.extras.push(null);
                     uplot_data.stacked.push(false);
-                    uplot_data.bars.push(false);
+                    uplot_data.paths.push(UplotPath.Line);
                     uplot_data.extra_names.push(null);
                 }
             }
@@ -1679,7 +722,7 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
                     uplot_data.values.push(wallbox_data.power);
                     uplot_data.extras.push(state);
                     uplot_data.stacked.push(true);
-                    uplot_data.bars.push(false);
+                    uplot_data.paths.push(UplotPath.Line);
                     uplot_data.extra_names.push(wb_state_names);
                 }
             }
@@ -1700,6 +743,11 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
 
     update_uplot_5min_flags_cache(date: Date) {
         let key = this.date_to_5min_key(date);
+
+        if (key == null) {
+            return;
+        }
+
         let uplot_data = this.uplot_5min_flags_cache[key];
         let needs_update = false;
         let now = Date.now();
@@ -1741,7 +789,7 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
             names: [null],
             values: [null],
             stacked: [false],
-            bars: [false],
+            paths: [null],
             value_names: [null],
             value_strokes: [null],
             value_fills: [null],
@@ -1801,7 +849,7 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
             uplot_data.names.push(__("em_energy_analysis.content.state_phase"));
             uplot_data.values.push(phase);
             uplot_data.stacked.push(false);
-            uplot_data.bars.push(false);
+            uplot_data.paths.push(UplotPath.Line);
             uplot_data.value_names.push(em_phase_names);
             uplot_data.value_strokes.push(em_phase_strokes);
             uplot_data.value_fills.push(em_phase_fills);
@@ -1811,7 +859,7 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
             uplot_data.names.push(__("em_energy_analysis.content.state_input3"));
             uplot_data.values.push(input3);
             uplot_data.stacked.push(false);
-            uplot_data.bars.push(false);
+            uplot_data.paths.push(UplotPath.Line);
             uplot_data.value_names.push(em_input_names);
             uplot_data.value_strokes.push(em_input_strokes);
             uplot_data.value_fills.push(em_input_fills);
@@ -1821,7 +869,7 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
             uplot_data.names.push(__("em_energy_analysis.content.state_input4"));
             uplot_data.values.push(input4);
             uplot_data.stacked.push(false);
-            uplot_data.bars.push(false);
+            uplot_data.paths.push(UplotPath.Line);
             uplot_data.value_names.push(em_input_names);
             uplot_data.value_strokes.push(em_input_strokes);
             uplot_data.value_fills.push(em_input_fills);
@@ -1831,7 +879,7 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
             uplot_data.names.push(__("em_energy_analysis.content.state_relay"));
             uplot_data.values.push(relay);
             uplot_data.stacked.push(false);
-            uplot_data.bars.push(false);
+            uplot_data.paths.push(UplotPath.Line);
             uplot_data.value_names.push(em_relay_names);
             uplot_data.value_strokes.push(em_relay_strokes);
             uplot_data.value_fills.push(em_relay_fills);
@@ -1863,7 +911,7 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
                     uplot_data.names.push(charger.name);
                     uplot_data.values.push(state);
                     uplot_data.stacked.push(true);
-                    uplot_data.bars.push(false);
+                    uplot_data.paths.push(UplotPath.Line);
                     uplot_data.value_names.push(wb_state_names);
                     uplot_data.value_strokes.push(wb_state_strokes);
                     uplot_data.value_fills.push(wb_state_fills);
@@ -1887,6 +935,11 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
 
     update_uplot_5min_status_cache(date: Date) {
         let key = this.date_to_5min_key(date);
+
+        if (key == null) {
+            return;
+        }
+
         let uplot_data = this.uplot_5min_status_cache[key];
         let needs_update = false;
         let now = Date.now();
@@ -1915,7 +968,7 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
             names: [null],
             values: [null],
             stacked: [false],
-            bars: [false],
+            paths: [null],
         };
 
         let timestamp_slot_count: number = 0;
@@ -1928,7 +981,7 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
             uplot_data.names.push(get_meter_name(this.state.meter_configs, this.state.meter_slot_status));
             uplot_data.values.push(energy_manager_data.power[this.state.meter_slot_status]);
             uplot_data.stacked.push(false);
-            uplot_data.bars.push(false);
+            uplot_data.paths.push(UplotPath.Line);
         }
 
         let timestamps: number[] = new Array(timestamp_slot_count);
@@ -1946,6 +999,11 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
 
     update_uplot_daily_cache(date: Date) {
         let key = this.date_to_daily_key(date);
+
+        if (key == null) {
+            return;
+        }
+
         let previous_key = this.date_to_daily_key(new Date(date.getFullYear(), date.getMonth() - 1));
         let uplot_data = this.uplot_daily_cache[key];
         let needs_update = false;
@@ -2003,7 +1061,7 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
             names: [null],
             values: [null],
             stacked: [false],
-            bars: [false],
+            paths: [null],
         };
 
         let timestamp_slot_count: number = 0;
@@ -2055,7 +1113,7 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
                     uplot_data.names.push(`${get_meter_name(this.state.meter_configs, meter_slot)} (${__("em_energy_analysis.content.import")})`);
                     uplot_data.values.push(energy_import);
                     uplot_data.stacked.push(false);
-                    uplot_data.bars.push(true);
+                    uplot_data.paths.push(UplotPath.Bar);
                 }
 
                 let energy_export = new Array(energy_manager_data.energy_export[meter_slot].length);
@@ -2098,7 +1156,7 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
                     uplot_data.names.push(`${get_meter_name(this.state.meter_configs, meter_slot)} (${__("em_energy_analysis.content.export")})`);
                     uplot_data.values.push(energy_export);
                     uplot_data.stacked.push(false);
-                    uplot_data.bars.push(true);
+                    uplot_data.paths.push(UplotPath.Bar);
                 }
             }
 
@@ -2160,7 +1218,7 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
                     uplot_data.names.push(charger.name);
                     uplot_data.values.push(energy);
                     uplot_data.stacked.push(true);
-                    uplot_data.bars.push(true);
+                    uplot_data.paths.push(UplotPath.Bar);
 
                     this.setState((prevState) => ({
                         wallbox_5min_cache_energy_total: {
@@ -2238,6 +1296,10 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
 
         let key = this.date_to_5min_key(date);
 
+        if (key == null) {
+            return true;
+        }
+
         if (this.wallbox_5min_cache[uid]
             && this.wallbox_5min_cache[uid][key]
             && (this.wallbox_5min_cache[uid][key].complete
@@ -2304,6 +1366,10 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
         }
 
         let key = this.date_to_5min_key(date);
+
+        if (key == null) {
+            return true;
+        }
 
         if (this.energy_manager_5min_cache[key]
             && (this.energy_manager_5min_cache[key].complete
@@ -2419,6 +1485,10 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
 
         let key = this.date_to_daily_key(date);
 
+        if (key == null) {
+            return;
+        }
+
         if (this.wallbox_daily_cache[uid]
             && this.wallbox_daily_cache[uid][key]
             && (this.wallbox_daily_cache[uid][key].complete
@@ -2488,6 +1558,10 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
         }
 
         let key = this.date_to_daily_key(date);
+
+        if (key == null) {
+            return true;
+        }
 
         if (this.energy_manager_daily_cache[key]
             && (this.energy_manager_daily_cache[key].complete
@@ -2584,7 +1658,12 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
                     return;
                 }
 
-                this.update_uplot();
+                if (this.state.data_type == '5min') {
+                    this.update_5min_uplot();
+                }
+                else {
+                    this.update_daily_uplot();
+                }
             });
     }
 
@@ -2628,7 +1707,10 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
                     return;
                 }
 
-                this.update_uplot();
+                this.uplot_5min_cache_initalized = true;
+
+                this.update_5min_uplot();
+                this.update_status_uplot();
             });
     }
 
@@ -2650,7 +1732,9 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
                     return;
                 }
 
-                this.update_uplot();
+                this.uplot_daily_cache_initalized = true;
+
+                this.update_daily_uplot();
             });
     }
 
@@ -2661,80 +1745,89 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
 
         this.uplot_update_timeout = window.setTimeout(() => {
             this.uplot_update_timeout = null;
-            this.update_uplot();
+
+            if (this.state.data_type == '5min') {
+                this.update_5min_uplot();
+            }
+            else {
+                this.update_daily_uplot();
+            }
+
+            this.update_status_uplot();
         }, 100);
     }
 
-    update_uplot() {
-        if (this.state.data_type == '5min') {
-            if (this.uplot_loader_5min_ref.current && this.uplot_wrapper_5min_power_ref.current && this.uplot_wrapper_5min_flags_ref.current) {
-                this.update_uplot_5min_power_cache(this.state.current_5min_date);
-                this.update_uplot_5min_flags_cache(this.state.current_5min_date);
+    update_5min_uplot() {
+        if (this.uplot_5min_cache_initalized && this.uplot_loader_5min_ref.current && this.uplot_wrapper_5min_power_ref.current && this.uplot_wrapper_5min_flags_ref.current) {
+            this.update_uplot_5min_power_cache(this.state.current_5min_date);
+            this.update_uplot_5min_flags_cache(this.state.current_5min_date);
 
-                let current_daily_date: Date = new Date(this.state.current_5min_date);
+            let current_daily_date: Date = new Date(this.state.current_5min_date);
 
-                current_daily_date.setDate(1);
-                current_daily_date.setHours(0);
-                current_daily_date.setMinutes(0);
-                current_daily_date.setSeconds(0);
-                current_daily_date.setMilliseconds(0);
+            current_daily_date.setDate(1);
+            current_daily_date.setHours(0);
+            current_daily_date.setMinutes(0);
+            current_daily_date.setSeconds(0);
+            current_daily_date.setMilliseconds(0);
 
-                this.update_uplot_daily_cache(current_daily_date);
+            this.update_uplot_daily_cache(current_daily_date);
 
-                let key = this.date_to_5min_key(this.state.current_5min_date);
-                let data_power = this.uplot_5min_power_cache[key];
-                let data_flags = this.uplot_5min_flags_cache[key];
+            let key = this.date_to_5min_key(this.state.current_5min_date);
+            let data_power = this.uplot_5min_power_cache[key];
+            let data_flags = this.uplot_5min_flags_cache[key];
 
-                let visible_flags = data_flags !== undefined && data_flags.keys.length > 1;
-                let visible_power = data_power !== undefined && data_power.keys.length > 1;
-                let visible = visible_flags || visible_power;
+            let has_flags = data_flags && data_flags.keys.length > 1;
+            let has_power = data_power && data_power.keys.length > 1;
+            let visible = has_flags || has_power;
 
-                if (visible_flags && !visible_power) {
-                    data_power = {
-                        update_timestamp: null,
-                        use_timestamp: null,
-                        keys: [null],
-                        names: [null],
-                        values: [data_flags.values[0]],
-                        extras: [null],
-                        stacked: [false],
-                        bars: [false],
-                        extra_names: [null],
-                    };
-                }
-
-                if (!visible_flags && visible_power) {
-                    data_flags = {
-                        update_timestamp: null,
-                        use_timestamp: null,
-                        keys: [null],
-                        names: [null],
-                        values: [data_power.values[0]],
-                        extras: [null],
-                        stacked: [false],
-                        bars: [false],
-                        extra_names: [null],
-                    };
-                }
-
-                this.uplot_loader_5min_ref.current.set_data(data_flags, visible);
-                this.uplot_wrapper_5min_power_ref.current.set_data(data_power, visible);
-                this.uplot_wrapper_5min_flags_ref.current.set_data(data_flags, visible);
+            if (has_flags && !has_power) {
+                data_power = {
+                    update_timestamp: null,
+                    use_timestamp: null,
+                    keys: [null],
+                    names: [null],
+                    values: [data_flags.values[0]],
+                    extras: [null],
+                    stacked: [false],
+                    paths: [null],
+                    extra_names: [null],
+                };
             }
-        }
-        else {
-            if (this.uplot_loader_daily_ref.current && this.uplot_wrapper_daily_ref.current) {
-                this.update_uplot_daily_cache(this.state.current_daily_date);
 
-                let key = this.date_to_daily_key(this.state.current_daily_date);
-                let data = this.uplot_daily_cache[key];
-
-                this.uplot_loader_daily_ref.current.set_data(data);
-                this.uplot_wrapper_daily_ref.current.set_data(data);
+            if (!has_flags && has_power) {
+                data_flags = {
+                    update_timestamp: null,
+                    use_timestamp: null,
+                    keys: [null],
+                    names: [null],
+                    values: [data_power.values[0]],
+                    extras: [null],
+                    stacked: [false],
+                    paths: [null],
+                    extra_names: [null],
+                };
             }
-        }
 
-        if (this.props.status_ref.current && this.props.status_ref.current.uplot_wrapper_ref.current) {
+            this.uplot_loader_5min_ref.current.set_data(visible);
+            this.uplot_wrapper_5min_power_ref.current.set_data(data_power, visible);
+            this.uplot_wrapper_5min_flags_ref.current.set_data(data_flags, visible);
+        }
+    }
+
+    update_daily_uplot() {
+        if (this.uplot_daily_cache_initalized && this.uplot_loader_daily_ref.current && this.uplot_wrapper_daily_ref.current) {
+            this.update_uplot_daily_cache(this.state.current_daily_date);
+
+            let key = this.date_to_daily_key(this.state.current_daily_date);
+            let data = this.uplot_daily_cache[key];
+
+            this.uplot_loader_daily_ref.current.set_data(data && data.keys.length > 1);
+            this.uplot_wrapper_daily_ref.current.set_data(data);
+        }
+    }
+
+    update_status_uplot() {
+        if (this.uplot_5min_cache_initalized && this.props.status_ref.current && this.props.status_ref.current.uplot_loader_ref.current && this.props.status_ref.current.uplot_wrapper_ref.current) {
             let status_date: Date = new Date();
 
             status_date.setHours(0);
@@ -2747,15 +1840,14 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
             let key = this.date_to_5min_key(status_date);
             let data = this.uplot_5min_status_cache[key];
 
-            this.props.status_ref.current.uplot_loader_ref.current.set_data(data);
+            this.props.status_ref.current.uplot_loader_ref.current.set_data(data && data.keys.length > 1);
             this.props.status_ref.current.uplot_wrapper_ref.current.set_data(data);
         }
     }
 
     render(props: {}, state: Readonly<EMEnergyAnalysisState>) {
-        if (!util.render_allowed()) {
-            return (<></>);
-        }
+        if (!util.render_allowed())
+            return <SubPage name="em_energy_analysis" />;
 
         let total_5min = () => {
             let key = this.date_to_daily_key(state.current_5min_date);
@@ -2877,6 +1969,8 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
                             this.uplot_wrapper_5min_power_ref.current.set_show(true);
                             this.uplot_loader_daily_ref.current.set_show(false);
                             this.uplot_wrapper_daily_ref.current.set_show(false);
+
+                            this.update_5min_uplot();
                         }
                         else {
                             this.uplot_loader_daily_ref.current.set_show(true);
@@ -2884,9 +1978,9 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
                             this.uplot_loader_5min_ref.current.set_show(false);
                             this.uplot_wrapper_5min_flags_ref.current.set_show(false);
                             this.uplot_wrapper_5min_power_ref.current.set_show(false);
-                        }
 
-                        this.update_uplot();
+                            this.update_daily_uplot();
+                        }
                     });
                 }}
                 items={[
@@ -2895,44 +1989,42 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
                 ]}/>;
 
         return (
-            <SubPage colClasses="col-xl-10">
-                <PageHeader title={__("em_energy_analysis.content.em_energy_analysis")}>
-                    <div>
-                        {state.data_type == '5min'
-                        ? <InputDate date={state.current_5min_date} onDate={this.set_current_5min_date.bind(this)} buttons="day" style="width: 11rem">{data_select}</InputDate>
-                        : <InputMonth date={state.current_daily_date} onDate={this.set_current_daily_date.bind(this)} buttons="month" style="width: 11rem">{data_select}</InputMonth>}
-                    </div>
+            <SubPage name="em_energy_analysis" colClasses="col-xl-10">
+                <PageHeader title={__("em_energy_analysis.content.em_energy_analysis")} titleClass="col-12 col-sm text-center text-sm-left" childrenClass="col-12 col-sm-auto mb-2">
+                    {this.state.data_type == '5min'
+                    ? <InputDate date={this.state.current_5min_date} onDate={(date) => this.set_current_5min_date(date)} buttons="day" style="width: 11rem">{data_select}</InputDate>
+                    : <InputMonth date={this.state.current_daily_date} onDate={(date) => this.set_current_daily_date(date)} buttons="month" style="width: 11rem">{data_select}</InputMonth>}
                 </PageHeader>
 
                 <div style="position: relative;"> {/* this plain div is neccessary to make the size calculation stable in safari. without this div the height continues to grow */}
                     <UplotLoader ref={this.uplot_loader_5min_ref}
                                     show={true}
-                                    marker_class={'h3'} >
+                                    marker_class={'h3'}
+                                    no_data={__("em_energy_analysis.content.no_data")}
+                                    loading={__("em_energy_analysis.content.loading")} >
                         <UplotFlagsWrapper ref={this.uplot_wrapper_5min_flags_ref}
-                                            id="em_energy_analysis_5min_flags_chart"
                                             class="em-energy-analysis-flags-chart"
-                                            sidebar_id="em_energy_analysis"
+                                            sub_page="em_energy_analysis"
                                             show={true}
                                             sync={this.uplot_sync}
                                             legend_time_label={__("em_energy_analysis.script.time_5min")}
                                             legend_time_with_minutes={true}
-                                            legend_value_prefix={""}
                                             legend_div_ref={this.uplot_legend_div_5min_flags_ref}
                                             x_format={{hour: '2-digit', minute: '2-digit'}}
                                             x_padding_factor={0}
                                             y_sync_ref={this.uplot_wrapper_5min_power_ref} />
                         <UplotWrapper ref={this.uplot_wrapper_5min_power_ref}
-                                        id="em_energy_analysis_5min_power_chart"
                                         class="em-energy-analysis-chart pb-4"
-                                        sidebar_id="em_energy_analysis"
-                                        color_cache_group="analsyis"
+                                        sub_page="em_energy_analysis"
+                                        color_cache_group="em_energy_analysis.analysis_5min"
                                         show={true}
+                                        on_mount={() => this.update_5min_uplot()}
                                         sync={this.uplot_sync}
                                         legend_time_label={__("em_energy_analysis.script.time_5min")}
                                         legend_time_with_minutes={true}
-                                        legend_value_prefix={""}
                                         legend_div_ref={this.uplot_legend_div_5min_power_ref}
                                         aspect_ratio={3}
+                                        x_height={30}
                                         x_format={{hour: '2-digit', minute: '2-digit'}}
                                         x_padding_factor={0}
                                         y_min={0}
@@ -2948,17 +2040,19 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
                     </UplotLoader>
                     <UplotLoader ref={this.uplot_loader_daily_ref}
                                     show={false}
-                                    marker_class={'h3'} >
+                                    marker_class={'h3'}
+                                    no_data={__("em_energy_analysis.content.no_data")}
+                                    loading={__("em_energy_analysis.content.loading")} >
                         <UplotWrapper ref={this.uplot_wrapper_daily_ref}
-                                        id="em_energy_analysis_daily_chart"
                                         class="em-energy-analysis-chart pb-4"
-                                        sidebar_id="em_energy_analysis"
-                                        color_cache_group="analsyis"
+                                        sub_page="em_energy_analysis"
+                                        color_cache_group="em_energy_analysis.analysis_daily"
                                         show={false}
+                                        on_mount={() => this.update_daily_uplot()}
                                         legend_time_label={__("em_energy_analysis.script.time_daily")}
                                         legend_time_with_minutes={false}
-                                        legend_value_prefix={""}
                                         aspect_ratio={3}
+                                        x_height={30}
                                         x_format={{month: '2-digit', day: '2-digit'}}
                                         x_padding_factor={0.015}
                                         y_min={0}
@@ -2990,18 +2084,5 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
     }
 }
 
-let status_ref = createRef();
-
-render(<EMEnergyAnalysisStatus ref={status_ref} />, $('#status-em_energy_analysis_status')[0]);
-
-render(<EMEnergyAnalysis status_ref={status_ref} />, $('#em_energy_analysis')[0]);
-
 export function init() {
-}
-
-export function add_event_listeners(source: API.APIEventTarget) {
-}
-
-export function update_sidebar_state(module_init: any) {
-    $('#sidebar-em_energy_analysis').prop('hidden', !module_init.energy_manager);
 }

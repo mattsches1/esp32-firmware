@@ -7,6 +7,7 @@ if sys.hexversion < 0x3060000:
 import os
 import json
 import shutil
+import shlex
 from urllib.request import urlretrieve
 from zipfile import ZipFile
 
@@ -28,13 +29,16 @@ for name in sorted(os.listdir('packages')):
     if name == 'config.json':
         continue
 
+    package_path = os.path.join('packages', name)
+
+    if not os.path.exists(package_path):
+        continue  # directory content changed while listing the directory
+
     if name.endswith('-dev'):
         util.log('Ignoring {0}'.format(name))
         continue
 
     if name not in config:
-        package_path = os.path.join('packages', name)
-
         if not os.path.isdir(package_path):
             print('Removing {0}'.format(name))
             os.remove(package_path)
@@ -79,8 +83,10 @@ for name in sorted(os.listdir('packages')):
 
     zip_path = os.path.join('packages', '{0}.zip'.format(name))
 
-    if os.path.exists(zip_path):
+    try:
         os.remove(zip_path)
+    except FileNotFoundError:
+        pass
 
     print('Downloading {0}'.format(name))
 
@@ -89,7 +95,23 @@ for name in sorted(os.listdir('packages')):
     except FileNotFoundError:
         pass
 
-    urlretrieve('{0}/archive/{1}.zip'.format(url, commit), zip_path + '.tmp')
+    zip_url = '{0}/archive/{1}.zip'.format(url, commit)
+
+    try:
+        urlretrieve(zip_url, zip_path + '.tmp')
+    except Exception as e:
+        print('Error while downloading {0}: {1}'.format(zip_url, e))
+        print('Retrying with curl')
+
+        command = shlex.join(['curl', '-s', '-L', zip_url, '-o', zip_path + '.tmp'])
+
+        if sys.platform == 'win32':
+            command = 'powershell.exe ' + command
+
+        if os.system(command) != 0:
+            print('Error while downloading {0} with curl'.format(zip_url))
+            sys.exit(1)
+
     os.rename(zip_path + '.tmp', zip_path)
 
     print('Unpacking {0}'.format(name))

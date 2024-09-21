@@ -18,18 +18,16 @@
  */
 
 #include "ethernet.h"
-#include "module_dependencies.h"
 
 #define ETH_ADDR        0
 #define ETH_POWER_PIN   5
 #define ETH_TYPE        ETH_PHY_KSZ8081
 
 #include <ETH.h>
-
 #include <esp_eth.h>
 
-#include "api.h"
-#include "task_scheduler.h"
+#include "event_log_prefix.h"
+#include "module_dependencies.h"
 #include "build.h"
 #include "tools.h"
 
@@ -75,7 +73,7 @@ void Ethernet::pre_setup()
     }};
 
     state = Config::Object({
-        {"connection_state", Config::Uint((uint)EthernetState::NOT_CONFIGURED)},
+        {"connection_state", Config::Uint((uint)EthernetState::NotConfigured)},
         {"connection_start", Config::Uint(0)},
         {"connection_end", Config::Uint(0)},
         {"ip", Config::Str("0.0.0.0", 7, 15)},
@@ -92,9 +90,9 @@ void Ethernet::print_con_duration()
         uint32_t now = millis();
         uint32_t connected_for = now - last_connected;
         if (connected_for < 0x7FFFFFFF) {
-            logger.printfln("Ethernet was connected for %u seconds.", connected_for / 1000);
+            logger.printfln("Was connected for %u seconds.", connected_for / 1000);
         } else {
-            logger.printfln("Ethernet was connected for a long time.");
+            logger.printfln("Was connected for a long time.");
         }
     }
 }
@@ -106,8 +104,8 @@ void Ethernet::setup()
 
     config_in_use = config.get_owned_copy();
 
-    connection_state = EthernetState::NOT_CONFIGURED;
-    state.get("connection_state")->updateUint((uint)connection_state);
+    connection_state = EthernetState::NotConfigured;
+    state.get("connection_state")->updateEnum(connection_state);
 
     initialized = true;
 
@@ -120,17 +118,17 @@ void Ethernet::setup()
     hostname = String(BUILD_HOST_PREFIX) + "-" + local_uid_str;
 #endif
 
-    connection_state = EthernetState::NOT_CONNECTED;
-    state.get("connection_state")->updateUint((uint)EthernetState::NOT_CONNECTED);
+    connection_state = EthernetState::NotConnected;
+    state.get("connection_state")->updateEnum(connection_state);
 
     WiFi.onEvent([this](arduino_event_id_t event, arduino_event_info_t info) {
-            logger.printfln("Ethernet started");
+            logger.printfln("Started");
             ETH.setHostname(hostname.c_str());
 
-            connection_state = EthernetState::NOT_CONNECTED;
+            connection_state = EthernetState::NotConnected;
 
             task_scheduler.scheduleOnce([this](){
-                state.get("connection_state")->updateUint((uint)connection_state);
+                state.get("connection_state")->updateEnum(connection_state);
             }, 0);
         },
         ARDUINO_EVENT_ETH_START);
@@ -138,7 +136,7 @@ void Ethernet::setup()
     WiFi.onEvent([this](arduino_event_id_t event, arduino_event_info_t info) {
             uint32_t link_speed = ETH.linkSpeed();
             bool full_duplex    = ETH.fullDuplex();
-            logger.printfln("Ethernet connected: %u Mbps %s Duplex, MAC: %s", link_speed, full_duplex ? "Full" : "Half", ETH.macAddress().c_str());
+            logger.printfln("Connected: %u Mbps %s Duplex, MAC: %s", link_speed, full_duplex ? "Full" : "Half", ETH.macAddress().c_str());
 
             IPAddress ip, subnet, gateway, dns, dns2;
             ip.fromString(config_in_use.get("ip")->asEphemeralCStr());
@@ -156,17 +154,17 @@ void Ethernet::setup()
                 ETH.config((uint32_t)0, (uint32_t)0, (uint32_t)0);
             }
 
-            connection_state = EthernetState::CONNECTING;
+            connection_state = EthernetState::Connecting;
 
             task_scheduler.scheduleOnce([this, link_speed, full_duplex](){
-                state.get("connection_state")->updateUint((uint)connection_state);
+                state.get("connection_state")->updateEnum(connection_state);
                 state.get("link_speed" )->updateUint(link_speed);
                 state.get("full_duplex")->updateBool(full_duplex);
 
 #if MODULE_WIFI_AVAILABLE()
                 if (wifi.is_sta_enabled()) {
                     logger.printfln("Warning: Ethernet is connected and WiFi station is enabled at the same time.");
-                    logger.printfln("         This can lead to connectivity issues and is not recommended.");
+                    logger.printfln_plain("         This can lead to connectivity issues and is not recommended.");
                 }
 #endif
             }, 0);
@@ -176,16 +174,16 @@ void Ethernet::setup()
     WiFi.onEvent([this](arduino_event_id_t event, arduino_event_info_t info) {
             auto ip = ETH.localIP().toString();
             auto subnet = ETH.subnetMask();
-            logger.printfln("Ethernet got IP address: %s/%u", ip.c_str(), WiFiGenericClass::calculateSubnetCIDR(subnet));
+            logger.printfln("Got IP address: %s/%u", ip.c_str(), WiFiGenericClass::calculateSubnetCIDR(subnet));
 
             uint32_t now = millis();
             was_connected = true;
             last_connected = now;
 
-            connection_state = EthernetState::CONNECTED;
+            connection_state = EthernetState::Connected;
 
             task_scheduler.scheduleOnce([this, now, ip, subnet](){
-                state.get("connection_state")->updateUint((uint)connection_state);
+                state.get("connection_state")->updateEnum(connection_state);
                 state.get("ip")->updateString(ip);
                 state.get("subnet")->updateString(subnet.toString());
                 state.get("connection_start")->updateUint(now);
@@ -194,20 +192,20 @@ void Ethernet::setup()
         ARDUINO_EVENT_ETH_GOT_IP);
 
     WiFi.onEvent([this](arduino_event_id_t event, arduino_event_info_t info) {
-            logger.printfln("Ethernet got IPv6 address: %s.", ETH.localIPv6().toString().c_str());
+            logger.printfln("Got IPv6 address: %s.", ETH.localIPv6().toString().c_str());
         },
         ARDUINO_EVENT_ETH_GOT_IP6);
 
     WiFi.onEvent([this](arduino_event_id_t event, arduino_event_info_t info) {
-            logger.printfln("Ethernet lost IP address.");
+            logger.printfln("Lost IP address.");
             this->print_con_duration();
 
             uint32_t now = millis();
 
-            connection_state = EthernetState::CONNECTING;
+            connection_state = EthernetState::Connecting;
 
             task_scheduler.scheduleOnce([this, now](){
-                state.get("connection_state")->updateUint((uint)connection_state);
+                state.get("connection_state")->updateEnum(connection_state);
                 state.get("ip")->updateString("0.0.0.0");
                 state.get("subnet")->updateString("0.0.0.0");
                 state.get("connection_end")->updateUint(now);
@@ -216,15 +214,15 @@ void Ethernet::setup()
         ARDUINO_EVENT_ETH_LOST_IP);
 
     WiFi.onEvent([this](arduino_event_id_t event, arduino_event_info_t info) {
-            logger.printfln("Ethernet disconnected");
+            logger.printfln("Disconnected");
             this->print_con_duration();
 
             uint32_t now = millis();
 
-            connection_state = EthernetState::NOT_CONNECTED;
+            connection_state = EthernetState::NotConnected;
 
             task_scheduler.scheduleOnce([this, now](){
-                state.get("connection_state")->updateUint((uint)connection_state);
+                state.get("connection_state")->updateEnum(connection_state);
                 state.get("ip")->updateString("0.0.0.0");
                 state.get("subnet")->updateString("0.0.0.0");
                 state.get("connection_end")->updateUint(now);
@@ -233,15 +231,15 @@ void Ethernet::setup()
         ARDUINO_EVENT_ETH_DISCONNECTED);
 
     WiFi.onEvent([this](arduino_event_id_t event, arduino_event_info_t info) {
-            logger.printfln("Ethernet stopped");
+            logger.printfln("Stopped");
             this->print_con_duration();
 
             uint32_t now = millis();
 
-            connection_state = EthernetState::NOT_CONNECTED;
+            connection_state = EthernetState::NotConnected;
 
             task_scheduler.scheduleOnce([this, now](){
-                state.get("connection_state")->updateUint((uint)connection_state);
+                state.get("connection_state")->updateEnum(connection_state);
                 state.get("connection_end")->updateUint(now);
             }, 0);
         },
@@ -267,7 +265,7 @@ void Ethernet::register_urls()
 EthernetState Ethernet::get_connection_state() const
 {
     if (!initialized)
-        return EthernetState::NOT_CONFIGURED;
+        return EthernetState::NotConfigured;
     return this->connection_state;
 }
 

@@ -19,11 +19,13 @@
 
 #include "config/private.h"
 
+#include <math.h>
+
+#include "event_log_prefix.h"
+#include "main_dependencies.h"
 #include "config/visitors.h"
-
-#include "math.h"
-
 #include "tools.h"
+#include "string_builder.h"
 
 #define UINT_SLOTS 512
 Config::ConfUint::Slot *uint_buf = nullptr;
@@ -114,7 +116,7 @@ Config Config::Array(std::initializer_list<Config> arr, const Config *prototype,
     return Config{ConfArray{arr, prototype, minElements, maxElements, (int8_t)variantType}};
 }
 
-Config Config::Object(std::initializer_list<std::pair<String, Config>> obj)
+Config Config::Object(std::initializer_list<std::pair<const char *, Config>> obj)
 {
     if (boot_stage < BootStage::PRE_SETUP)
         esp_system_abort("constructing configs before the pre_setup is not allowed!");
@@ -148,7 +150,7 @@ ConfigRoot *Config::Confirm()
 
     if (confirmconf == nullptr) {
         confirmconf = new ConfigRoot{Config::Object({
-            {Config::ConfirmKey(), Config::Bool(false)}
+            {Config::confirm_key, Config::Bool(false)}
         })};
     }
 
@@ -157,7 +159,7 @@ ConfigRoot *Config::Confirm()
 
 String Config::ConfirmKey()
 {
-    return "do_i_know_what_i_am_doing";
+    return Config::confirm_key;
 }
 
 Config Config::Uint8(uint8_t u)
@@ -194,8 +196,7 @@ Config::Wrap Config::get()
 {
     ASSERT_MAIN_THREAD();
     if (!this->is<Config::ConfUnion>()) {
-        logger.printfln("Config is not a union!");
-        esp_system_abort("");
+        esp_system_abort("Config is not a union!");
     }
     Wrap wrap(value.val.un.getVal());
 
@@ -206,8 +207,7 @@ const Config::ConstWrap Config::get() const
 {
     ASSERT_MAIN_THREAD();
     if (!this->is<Config::ConfUnion>()) {
-        logger.printfln("Config is not a union!");
-        esp_system_abort("");
+        esp_system_abort("Config is not a union!");
     }
     ConstWrap wrap(value.val.un.getVal());
 
@@ -218,8 +218,8 @@ Config::Wrap Config::get(const String &s)
 {
     ASSERT_MAIN_THREAD();
     if (!this->is<Config::ConfObject>()) {
-        logger.printfln("Config key %s not in this node: is not an object!", s.c_str());
-        esp_system_abort("");
+        char *message;
+        esp_system_abort(asprintf(&message, "Config key %s not in this node: is not an object!", s.c_str()) < 0 ? "" : message);
     }
     Wrap wrap(value.val.o.get(s));
 
@@ -230,8 +230,8 @@ Config::Wrap Config::get(uint16_t i)
 {
     ASSERT_MAIN_THREAD();
     if (!this->is<Config::ConfArray>()) {
-        logger.printfln("Config index %u not in this node: is not an array!", i);
-        esp_system_abort("");
+        char *message;
+        esp_system_abort(asprintf(&message, "Config index %u not in this node: is not an array!", i) < 0 ? "" : message);
     }
     Wrap wrap(value.val.a.get(i));
 
@@ -242,8 +242,8 @@ const Config::ConstWrap Config::get(const String &s) const
 {
     ASSERT_MAIN_THREAD();
     if (!this->is<Config::ConfObject>()) {
-        logger.printfln("Config key %s not in this node: is not an object!", s.c_str());
-        esp_system_abort("");
+        char *message;
+        esp_system_abort(asprintf(&message, "Config key %s not in this node: is not an object!", s.c_str()) < 0 ? "" : message);
     }
     ConstWrap wrap(value.val.o.get(s));
 
@@ -254,8 +254,8 @@ const Config::ConstWrap Config::get(uint16_t i) const
 {
     ASSERT_MAIN_THREAD();
     if (!this->is<Config::ConfArray>()) {
-        logger.printfln("Config index %u not in this node: is not an array!", i);
-        esp_system_abort("");
+        char *message;
+        esp_system_abort(asprintf(&message, "Config index %u not in this node: is not an array!", i) < 0 ? "" : message);
     }
     ConstWrap wrap(value.val.a.get(i));
 
@@ -266,8 +266,7 @@ Config::Wrap Config::add()
 {
     ASSERT_MAIN_THREAD();
     if (!this->is<Config::ConfArray>()) {
-        logger.printfln("Tried to add to a node that is not an array!");
-        esp_system_abort("");
+        esp_system_abort("Tried to add to a node that is not an array!");
     }
 
     std::vector<Config> &children = this->asArray();
@@ -277,8 +276,8 @@ Config::Wrap Config::add()
 
     const auto max_elements = slot->maxElements;
     if (children.size() >= max_elements) {
-        logger.printfln("Tried to add to an ConfArray that already has the max allowed number of elements (%u).", max_elements);
-        esp_system_abort("");
+        char *message;
+        esp_system_abort(asprintf(&message, "Tried to add to an ConfArray that already has the max allowed number of elements (%u).", max_elements) < 0 ? "" : message);
     }
 
     auto copy = *slot->prototype;
@@ -296,8 +295,7 @@ bool Config::removeLast()
 {
     ASSERT_MAIN_THREAD();
     if (!this->is<Config::ConfArray>()) {
-        logger.printfln("Tried to remove the last element from a node that is not an array!");
-        esp_system_abort("");
+        esp_system_abort("Tried to remove the last element from a node that is not an array!");
     }
 
     std::vector<Config> &children = this->asArray();
@@ -313,8 +311,7 @@ bool Config::removeAll()
 {
     ASSERT_MAIN_THREAD();
     if (!this->is<Config::ConfArray>()) {
-        logger.printfln("Tried to remove all from a node that is not an array!");
-        esp_system_abort("");
+        esp_system_abort("Tried to remove all from a node that is not an array!");
     }
 
     std::vector<Config> &children = this->asArray();
@@ -328,8 +325,7 @@ bool Config::remove(size_t i)
 {
     ASSERT_MAIN_THREAD();
     if (!this->is<Config::ConfArray>()) {
-        logger.printfln("Tried to remove from a node that is not an array!");
-        esp_system_abort("");
+        esp_system_abort("Tried to remove from a node that is not an array!");
     }
     std::vector<Config> &children = this->asArray();
 
@@ -345,8 +341,7 @@ size_t Config::count() const
 {
     ASSERT_MAIN_THREAD();
     if (!this->is<Config::ConfArray>()) {
-        logger.printfln("Tried to get count of a node that is not an array!");
-        esp_system_abort("");
+        esp_system_abort("Tried to get count of a node that is not an array!");
     }
     const std::vector<Config> &children = this->asArray();
     return children.size();
@@ -356,8 +351,7 @@ std::vector<Config>::iterator Config::begin()
 {
     ASSERT_MAIN_THREAD();
     if (!this->is<Config::ConfArray>()) {
-        logger.printfln("Tried to get begin iterator of a node that is not an array!");
-        esp_system_abort("");
+        esp_system_abort("Tried to get begin iterator of a node that is not an array!");
     }
     return this->asArray().begin();
 }
@@ -366,8 +360,7 @@ std::vector<Config>::iterator Config::end()
 {
     ASSERT_MAIN_THREAD();
     if (!this->is<Config::ConfArray>()) {
-        logger.printfln("Tried to get end iterator of a node that is not an array!");
-        esp_system_abort("");
+        esp_system_abort("Tried to get end iterator of a node that is not an array!");
     }
     return this->asArray().end();
 }
@@ -376,8 +369,7 @@ std::vector<Config>::const_iterator Config::begin() const
 {
     ASSERT_MAIN_THREAD();
     if (!this->is<Config::ConfArray>()) {
-        logger.printfln("Tried to get begin iterator of a node that is not an array!");
-        esp_system_abort("");
+        esp_system_abort("Tried to get begin iterator of a node that is not an array!");
     }
     return this->asArray().cbegin();
 }
@@ -386,8 +378,7 @@ std::vector<Config>::const_iterator Config::end() const
 {
     ASSERT_MAIN_THREAD();
     if (!this->is<Config::ConfArray>()) {
-        logger.printfln("Tried to get end iterator of a node that is not an array!");
-        esp_system_abort("");
+        esp_system_abort("Tried to get end iterator of a node that is not an array!");
     }
     return this->asArray().cend();
 }
@@ -409,7 +400,7 @@ const char *Config::asUnsafeCStr() const
 
 float Config::asFloat() const
 {
-    return *this->get<ConfFloat>()->getVal();
+    return this->get<ConfFloat>()->getVal();
 }
 
 uint32_t Config::asUint() const
@@ -440,8 +431,7 @@ const std::vector<Config> &Config::asArray() const
 bool Config::clearString()
 {
     if (!this->is<ConfString>()) {
-        logger.printfln("Config is not a string!");
-        esp_system_abort("");
+        esp_system_abort("Config is not a string!");
     }
     CoolString *val = this->get<ConfString>()->getVal();
     val->clear();
@@ -449,8 +439,57 @@ bool Config::clearString()
     return true;
 }
 
+// Specialize update_value and fillArray:
+// ConfFloat::getVal does not return a pointer to the value
+// because it is stored as uint32_t in the IRAM.
+template<>
+inline bool Config::update_value<float, Config::ConfFloat>(float value, const char *value_type) {
+    ASSERT_MAIN_THREAD();
+    if (!this->is<ConfFloat>()) {
+        char *message;
+        int result = -1;
+#ifndef DEBUG_FS_ENABLE
+        result = asprintf(&message, "update_value: Config has wrong type. This is a %s. new value is a %s", this->value.getVariantName(), value_type);
+#else
+        result = asprintf(&message, "update_value: Config has wrong type. This is a %s. new value is a %s\nContent is %s\nvalue is %s", this->value.getVariantName(), value_type, this->to_string().c_str(), String(value).c_str());
+#endif
+        esp_system_abort(result < 0 ? "" : message);
+    }
+    float old_value = get<ConfFloat>()->getVal();
+    get<ConfFloat>()->setVal(value);
+
+    if (old_value != value)
+        this->value.updated = 0xFF;
+
+    return old_value != value;
+}
+
+template<>
+inline size_t Config::fillArray<float, Config::ConfFloat>(float *arr, size_t elements) {
+    ASSERT_MAIN_THREAD();
+    if (!this->is<ConfArray>()) {
+        esp_system_abort("Can't fill array, Config is not an array");
+    }
+
+    const ConfArray &confArr = this->value.val.a;
+    size_t toWrite = std::min(confArr.getVal()->size(), elements);
+
+    for (size_t i = 0; i < toWrite; ++i) {
+        const Config *entry = confArr.get(i);
+        if (!entry->is<Config::ConfFloat>()) {
+            esp_system_abort("Config entry has wrong type.");
+        }
+        arr[i] = entry->get<Config::ConfFloat>()->getVal();
+    }
+
+    return toWrite;
+}
+
 bool Config::updateString(const String &value)
 {
+    if (!value) {
+        esp_system_abort("Can't update string, value is invalid string!");
+    }
     return update_value<String, ConfString>(value, "String");
 }
 
@@ -524,7 +563,7 @@ size_t Config::string_length() const
     return Config::apply_visitor(string_length_visitor{}, value);
 }
 
-DynamicJsonDocument Config::to_json(const String *keys_to_censor, size_t keys_to_censor_len) const
+DynamicJsonDocument Config::to_json(const char *const *keys_to_censor, size_t keys_to_censor_len) const
 {
     DynamicJsonDocument doc(json_size(true));
 
@@ -563,7 +602,7 @@ void Config::write_to_stream(Print &output)
     write_to_stream_except(output, nullptr, 0);
 }
 
-void Config::write_to_stream_except(Print &output, const String *keys_to_censor, size_t keys_to_censor_len)
+void Config::write_to_stream_except(Print &output, const char *const *keys_to_censor, size_t keys_to_censor_len)
 {
     auto doc = this->to_json(keys_to_censor, keys_to_censor_len);
 
@@ -586,7 +625,7 @@ String Config::to_string() const
     return this->to_string_except(nullptr, 0);
 }
 
-String Config::to_string_except(const String *keys_to_censor, size_t keys_to_censor_len) const
+String Config::to_string_except(const char *const *keys_to_censor, size_t keys_to_censor_len) const
 {
     auto doc = this->to_json(keys_to_censor, keys_to_censor_len);
 
@@ -605,20 +644,24 @@ String Config::to_string_except(const String *keys_to_censor, size_t keys_to_cen
     }
     return result;
 }
-size_t Config::to_string_except(const String *keys_to_censor, size_t keys_to_censor_len, char *buf, size_t buf_size) const
+
+void Config::to_string_except(const char *const *keys_to_censor, size_t keys_to_censor_len, StringBuilder *sb) const
 {
     auto doc = this->to_json(keys_to_censor, keys_to_censor_len);
+    char *ptr = sb->getRemainingPtr();
+    size_t written = serializeJson(doc, ptr, sb->getRemainingLength());
 
-    size_t written = serializeJson(doc, buf, buf_size);
+    sb->setLength(sb->getLength() + written);
 
     if (doc.overflowed()) {
         auto capacity = doc.capacity();
         if (capacity == 0) {
-            logger.printfln("JSON doc overflow while converting to string! Doc capacity is %u but needed %u.", capacity, json_size(false));
+            logger.printfln("JSON doc overflow while converting to string! Doc capacity is zero but needed %u.", json_size(false));
+        } else {
+            logger.printfln("JSON doc overflow while converting to string! Doc capacity is %u. Truncated doc follows.", capacity);
+            logger.write(ptr, written);
         }
     }
-
-    return written;
 }
 
 uint8_t Config::was_updated(uint8_t api_backend_flag)

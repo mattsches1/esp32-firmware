@@ -19,9 +19,8 @@
 
 import { h, ComponentChildren } from "preact";
 import { __ } from "../../ts/translation";
-import { AutomationTriggerID } from "../automation/automation_defs";
-import { AutomationTrigger } from "../automation/types";
-import { IS_ENERGY_MANAGER } from "src/build";
+import { AutomationTriggerID } from "../automation/automation_trigger_id.enum";
+import { AutomationTrigger, InitResult } from "../automation/types";
 
 export type ChargeManagerWdAutomationTrigger = [
     AutomationTriggerID.ChargeManagerWd,
@@ -43,19 +42,16 @@ function new_charge_manager_wd_config(): AutomationTrigger {
     ];
 }
 
-export function init() {
-    if (!IS_ENERGY_MANAGER) {
-        return {
-            trigger_components: {
-                [AutomationTriggerID.ChargeManagerWd]: {
-                    name: __("charge_manager.automation.charge_manager_wd"),
-                    clone_config: (action: AutomationTrigger) => [action[0], {...action[1]}] as AutomationTrigger,
-                    new_config: new_charge_manager_wd_config,
-                    get_table_children: get_charge_manager_wd_table_children,
-                    get_edit_children: get_charge_manager_wd_edit_children,
-                },
+export function init(): InitResult {
+    return {
+        trigger_components: {
+            [AutomationTriggerID.ChargeManagerWd]: {
+                name: __("charge_manager.automation.charge_manager_wd"),
+                clone_config: (action: AutomationTrigger) => [action[0], {...action[1]}] as AutomationTrigger,
+                new_config: new_charge_manager_wd_config,
+                get_table_children: get_charge_manager_wd_table_children,
+                get_edit_children: get_charge_manager_wd_edit_children,
             },
-        };
-    }
-    return {};
+        },
+    };
 }

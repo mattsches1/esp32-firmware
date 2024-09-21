@@ -4,30 +4,21 @@ let x = {
     "charge_manager": {
         "status": {
             "charge_manager": "Charge Manager"
-        },
-        "navbar": {
-            "charge_manager": "Charge Management"
-        },
-        "content": {
-            "charge_manager": "Charge Management"
         }
     },
-    "event_log": {
-        "content": {
-            "debug_report_desc_muted": "complete report of all status information of this charger except passwords"
-        }
-    },
-    "firmware_update": {
+    "system": {
         "content": {
             "factory_reset_modal_text": <>A factory reset will reset all configuration to their default values. All tracked charges are lost. <b>This action cannot be undone!</b> The charger will re-open the WiFi access point with the default SSID and passphrase from the manual. Continue?</>,
             "config_reset_modal_text": <>Resets only the configuration to default values. Tracked charges will be preserved. <b>This action cannot be undone!</b> The charger will re-open the WiFi access point with the default SSID and passphrase from the manual. Continue?</>,
             "reboot_desc": "charging will not be interrupted",
             "factory_reset_desc": "removes the configuration and all tracked charges",
             "config_reset_desc": "tracked charges will be preserved"
-        },
+        }
+    },
+    "firmware_update": {
         "script": {
-            "no_info_page": "Firmware file corrupted or for WARP 1 (info page missing)",
-            "wrong_firmware_type": "Firmware file does not match the type of this charger"
+            "install_state_19": "Firmware file corrupted or for WARP1 Charger (info page missing)",
+            "install_state_21": "Firmware file does not match the type of this charger"
         }
     },
     "mqtt": {
@@ -57,6 +48,11 @@ let x = {
     "meters": {
         "status": {
             "power_history": "Charge history"
+        }
+    },
+    "power_manager": {
+        "content": {
+            "cm_requirements_warning": "To use the PV excess charging, charge management must be enabled and set to “Charge manager” and the charger should only manage itself."
         }
     }
 }

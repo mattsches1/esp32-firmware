@@ -22,8 +22,8 @@
 #include <atomic>
 #include <vector>
 
-#include "api.h"
-
+#include "module.h"
+#include "modules/api/api.h"
 
 enum class EventResult {
     OK = 0,
@@ -37,7 +37,7 @@ struct StateUpdateRegistration {
     std::function<EventResult(const Config *)> callback;
 };
 
-class Event final : public IAPIBackend
+class Event final : public IModule, public IAPIBackend
 {
 public:
     Event() {}
@@ -55,7 +55,6 @@ public:
     // IAPIBackend implementation
     void addCommand(size_t commandIdx, const CommandRegistration &reg) override;
     void addState(size_t stateIdx, const StateRegistration &reg) override;
-    void addRawCommand(size_t rawCommandIdx, const RawCommandRegistration &reg) override;
     void addResponse(size_t responseIdx, const ResponseRegistration &reg) override;
     bool pushStateUpdate(size_t stateIdx, const String &payload, const String &path) override;
     bool pushRawStateUpdate(const String &payload, const String &path) override;

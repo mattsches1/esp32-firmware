@@ -12,10 +12,13 @@
             "cpu_usage": "CPU-Nutzung",
             "cpu_usage_muted": "grobe Schätzung",
 
+            "main_loop_max": "Maximale Laufzeit des Main-Loops",
+
             "memory_header": "Speicherstatistik",
-            "heap_used": "Belegte Heap-Bytes",
-            "heap_free": "Freie Heap-Bytes",
+            "heap_used": "Belegter Heap",
+            "heap_free": "Freier Heap",
             "heap_block": "Größter freier Heap-Block",
+            "heap_min_free": "Minimal freier Heap",
             "heap_size": "Heap-Größe",
             "static": "Statische Nutzung",
             "total_size": "Gesamtgröße",
@@ -28,6 +31,15 @@
             "free_stack": "Freier Stack",
             "used_stack": "Genutzter Stack",
             "stack_size": "Stackgröße",
+
+            "config_buffers": "Config-Buffer",
+            "conf_uint_buf": "ConfUint",
+            "conf_int_buf": "ConfInt",
+            "conf_float_buf": "ConfFloat",
+            "conf_string_buf": "ConfString",
+            "conf_array_buf": "ConfArray",
+            "conf_object_buf": "ConfObject",
+            "conf_union_buf": "ConfUnion",
 
             "heap_integrity_header": "Heap-Integrität",
             "heap_integrity_result": "Prüfergebnis",

@@ -21,10 +21,10 @@ let x = {
             "protocol_mqtts": "MQTTS (MQTT über TLS; verschlüsselt)",
             "protocol_ws": "WS (MQTT über WebSocket; unverschlüsselt)",
             "protocol_wss": "WSS (MQTT über WebSocket Secure; verschlüsselt)",
-            "cert": "Serverzertifikat",
-            "client_cert": "Clientzertifikat",
-            "client_key": "Clientkey",
-            "use_cert_bundle": "Eingebettetes Zertifikatsbundle",
+            "cert": "Server-Zertifikat",
+            "client_cert": "Client-Zertifikat",
+            "client_key": "Client-Key",
+            "use_cert_bundle": "Eingebettetes Zertifikats-Bundle",
             "no_cert": "Nicht verwendet",
             "path": "Broker-Pfad",
             "path_muted": "optional; Teil der MQTT-über-WS-URL hinter dem Hostnamen. Muss mit / beginnen.",
@@ -52,7 +52,7 @@ let x = {
         },
         "automation": {
             "mqtt": "Sende MQTT-Nachricht",
-            "match_all": "Alle Nachrichten werden akzeptiert",
+            "match_any": "Jede Nachricht wird akzeptiert",
             "send_topic": "An Topic",
             "send_payload": "Nachricht",
             "topic": "Überwachtes Topic",
@@ -73,7 +73,7 @@ let x = {
                 </>
             }/*NF*/,
             "automation_trigger_text": /*FFN*/(topic: string, payload: string, retained: boolean) => {
-                let ret = <></>;
+                let ret;
                 if (payload.length == 0) {
                     ret = <>Wenn eine beliebige MQTT-Nachricht</>;
                 } else {

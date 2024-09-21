@@ -19,12 +19,25 @@
 
 #pragma once
 
-#include "config.h"
-
 #include "module.h"
-#include "module_dependencies.h"
+#include "config.h"
+#include "module_available.h"
+
+#if MODULE_AUTOMATION_AVAILABLE()
+#include "modules/automation/automation_backend.h"
+#endif
+
+#include "current_limits.h"
+
+struct CurrentAllocatorConfig;
+struct CurrentAllocatorState;
+struct ChargerState;
+struct ChargerAllocationState;
 
 class ChargeManager final : public IModule
+#if MODULE_AUTOMATION_AVAILABLE()
+                          , public IAutomationBackend
+#endif
 {
 public:
     ChargeManager(){}
@@ -32,10 +45,9 @@ public:
     void setup() override;
     void register_urls() override;
 
-    void distribute_current();
     void start_manager_task();
     void check_watchdog();
-    bool have_chargers();
+    bool get_charger_count();
     bool seen_all_chargers();
     bool is_charging_stopped(uint32_t last_update_cutoff);
     void set_all_control_pilot_disconnect(bool disconnect);
@@ -46,78 +58,51 @@ public:
     const char *get_charger_name(uint8_t idx);
 
 #if MODULE_AUTOMATION_AVAILABLE()
-    bool action_triggered(Config *config, void *data);
+    bool has_triggered(const Config *conf, void *data) override;
 #endif
 
+    void update_charger_state_config(uint8_t idx);
+
     ConfigRoot config;
+    ConfigRoot low_level_config;
 
     ConfigRoot state;
+    ConfigRoot low_level_state;
 
     ConfigRoot available_current;
     ConfigRoot available_current_update;
-    ConfigRoot available_phases;
-    ConfigRoot available_phases_update;
     ConfigRoot control_pilot_disconnect;
 
     uint32_t last_available_current_update = 0;
     bool watchdog_triggered = false;
 
-    struct ChargerState {
-        uint32_t last_update;
-        uint32_t uid;
-        uint32_t uptime;
-        uint32_t last_sent_config;
-        uint32_t power_total_count;
-        float power_total_sum;
-        float energy_abs;
-
-        // last current limit send to the charger
-        uint16_t allocated_current;
-
-        // maximum current supported by the charger
-        uint16_t supported_current;
-
-        // last current limit reported by the charger
-        uint16_t allowed_current;
-
-        // requested current calculated with the line currents reported by the charger
-        uint16_t requested_current;
-
-        // 0 - no vehicle, 1 - user blocked, 2 - manager blocked, 3 - car blocked, 4 - charging, 5 - error, 6 - charged
-        uint8_t state;
-
-        // 0 - okay, 1 - unreachable, 2 - FW mismatch, 3 - not managed
-        uint8_t error;
-        uint8_t charger_state;
-        bool wants_to_charge;
-        bool wants_to_charge_low_priority;
-        bool is_charging;
-
-        // last CP disconnect support reported by the charger: false - CP disconnect not supported, true - CP disconnect supported
-        bool cp_disconnect_supported;
-
-        // last CP disconnect state reported by the charger: false - automatic, true - disconnected
-        bool cp_disconnect_state;
-
-        // last CP disconnect request sent to charger: false - automatic/don't care, true - disconnect
-        bool cp_disconnect;
-        bool meter_supported;
-    };
-
-    ChargerState *charger_state = nullptr;
     size_t charger_count = 0;
+    ChargerState *charger_state = nullptr;
+
+    CurrentLimits *get_limits() {
+        // TODO: Maybe add separate function for this?
+        static_cm = false;
+        return &limits;
+    }
+    const Cost *get_allocated_currents() {return &allocated_currents;}
+
+    void trigger_allocator_run() {next_allocation = 0_us;}
 
 private:
-    bool all_chargers_seen = false;
-    bool printed_all_chargers_seen = false;
-    std::function<void(uint32_t)> allocated_current_callback;
+    CurrentLimits limits, limits_post_allocation;
+    Cost allocated_currents;
 
-    std::unique_ptr<char[]> distribution_log;
+    micros_t next_allocation = 0_us;
+    bool static_cm = true;
+
+    bool all_chargers_seen = false;
 
     std::unique_ptr<const char *[]> hosts;
     uint32_t default_available_current;
-    uint32_t minimum_current;
-    uint32_t minimum_current_1p;
     uint16_t requested_current_threshold;
     uint16_t requested_current_margin;
+
+    ChargerAllocationState *charger_allocation_state = nullptr;
+    CurrentAllocatorConfig *ca_config = nullptr;
+    CurrentAllocatorState *ca_state = nullptr;
 };

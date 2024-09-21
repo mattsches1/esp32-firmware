@@ -46,43 +46,43 @@ let x = {
                         <td>Firmware Version Major</td>
                         <td>uint32</td>
                         <td>---</td>
-                        <td>For example 2 for firmware 2.0.8-​63218f23</td>
+                        <td>For example 2 for firmware 2.4.0+66558ade</td>
                     </tr>
                     <tr>
                         <td>4</td>
                         <td>Firmware Version Minor</td>
                         <td>uint32</td>
                         <td>---</td>
-                        <td>For example 0 for firmware 2.0.8-​63218f23</td>
+                        <td>For example 4 for firmware 2.4.0+66558ade</td>
                     </tr>
                     <tr>
                         <td>6</td>
                         <td>Firmware Version Patch</td>
                         <td>uint32</td>
                         <td>---</td>
-                        <td>For example 8 for firmware 2.0.8-​63218f23</td>
+                        <td>For example 0 for firmware 2.4.0+66558ade</td>
                     </tr>
                     <tr>
                         <td>8</td>
                         <td>Firmware build timestamp</td>
                         <td>uint32</td>
                         <td>---</td>
-                        <td>Unix timestamp of the point in time when the firmware was built. For example 0x63218f23 for firmware
-                            2.0.8-​63218f23 (1663143715 in decimal), i.e. 09/14/2022 08:21:55 UTC.</td>
+                        <td>Unix timestamp of the point in time when the firmware was built. For example 0x66558ADE for firmware
+                            2.4.0+66558ade (1716882142 in decimal), i.e. 04/28/2024 07:42:22 UTC.</td>
                     </tr>
                     <tr>
                         <td>10</td>
                         <td>Box ID</td>
                         <td>uint32</td>
                         <td>---</td>
-                        <td>Decoded form of the base58 UID used for the default hostname, SSID, etc.. For example 185460 for X8A</td>
+                        <td>Decoded form of the base58 UID used for the default hostname, SSID, etc. For example 185460 for X8A.</td>
                     </tr>
                     <tr>
                         <td>12</td>
                         <td>Uptime (s)</td>
                         <td>uint32</td>
                         <td>---</td>
-                        <td>Time in seconds since the boot-up of the charger firmware</td>
+                        <td>Time in seconds since the boot-up of the charger firmware.</td>
                     </tr>
                     <tr>
                         <td>1000</td>
@@ -120,7 +120,7 @@ let x = {
                         <td>uint32</td>
                         <td>evse</td>
                         <td>ID of the user who started a charge. 0 if the charge is not assigned to a user. 0xFFFFFFFF if no charge is
-                            running</td>
+                            running.</td>
                     </tr>
                     <tr>
                         <td>1006</td>
@@ -145,9 +145,9 @@ let x = {
                         <td>Maximum allowed current that a vehicle is allowed to draw. Minimum of all active charging slots.</td>
                     </tr>
                     <tr>
-                        <td>1012</td>
+                        <td>1012 to 1050</td>
                         <td>Charging slots (mA)</td>
-                        <td>uint32 (x20)</td>
+                        <td>uint32 (20x)</td>
                         <td>evse</td>
                         <td>Value of all charging slots in milliampere. 0xFFFFFFFF if a slot is not active. 0 if a slot blocks. Else
                             between 6000 (6 A) and 32000 (32 A).</td>
@@ -163,6 +163,10 @@ let x = {
                                 <li>1: SDM72 (WARP1 only)</li>
                                 <li>2: SDM630</li>
                                 <li>3: SDM72 V2</li>
+                                <li>4: SDM72CTM</li>
+                                <li>5: SDM630MCT V2</li>
+                                <li>6: DSZ15DZMOD</li>
+                                <li>7: DEM4A</li>
                             </ul>
                         </td>
                     </tr>
@@ -171,21 +175,21 @@ let x = {
                         <td>Power (W)</td>
                         <td>float32</td>
                         <td>meter</td>
-                        <td>The current charging power in watt</td>
+                        <td>The current charging power in watt.</td>
                     </tr>
                     <tr>
                         <td>2004</td>
                         <td>Absolute energy (kWh)</td>
                         <td>float32</td>
                         <td>meter</td>
-                        <td>The charged energy since manufacturing of the energy meter</td>
+                        <td>The charged energy since manufacturing of the energy meter.</td>
                     </tr>
                     <tr>
                         <td>2006</td>
                         <td>Relative energy (kWh)</td>
                         <td>float32</td>
                         <td>meter</td>
-                        <td>The charged energy since the last reset (see Holding Reg 2000)</td>
+                        <td>The charged energy since the last reset (see holding register 2000).</td>
                     </tr>
                     <tr>
                         <td>2008</td>
@@ -195,11 +199,11 @@ let x = {
                         <td>The charged energy since the start of the current charge.</td>
                     </tr>
                     <tr>
-                        <td>2100</td>
+                        <td>2100 to 2268</td>
                         <td>More meter values</td>
-                        <td>float32 (x85)</td>
+                        <td>float32 (85x)</td>
                         <td>all_values</td>
-                        <td>See <a href="https://www.warp-charger.com/api.html#meter_all_values">API Documentation</a></td>
+                        <td>See <a href="https://docs.warp-charger.com/docs/mqtt_http/api_reference/meter/#meter_all_values_any">API Documentation</a></td>
                     </tr>
                     <tr>
                         <td>3000</td>
@@ -209,14 +213,14 @@ let x = {
                         <td>Not implemented yet!</td>
                     </tr>
                     <tr>
-                        <td>4000</td>
+                        <td>4000 to 4009</td>
                         <td>ID of the last NFC tag</td>
-                        <td>uint32 (x5)</td>
+                        <td>uint8 (20x)</td>
                         <td>nfc</td>
                         <td>ID of the last seen NFC tag as ASCII coded hex string.</td>
                     </tr>
                     <tr>
-                        <td>4011</td>
+                        <td>4010</td>
                         <td>Age of the last NFC tag</td>
                         <td>uint32</td>
                         <td>nfc</td>
@@ -235,7 +239,7 @@ let x = {
                         <td>Reboot</td>
                         <td>uint32</td>
                         <td>---</td>
-                        <td>Reboots the charger (in other words the ESP Brick) to for example apply configuration changes. Password
+                        <td>Reboots the charger (in other words the ESP Brick) to for example apply configuration changes. Password:
                             0x012EB007</td>
                     </tr>
                     <tr>
@@ -244,7 +248,7 @@ let x = {
                         <td>uint32</td>
                         <td>evse</td>
                         <td><strong>Deprecated. Use coil 1000 instead!</strong> 0 to block charging; a value not equal to 0 to allow
-                            charging</td>
+                            charging.</td>
                     </tr>
                     <tr>
                         <td>1002</td>
@@ -258,15 +262,17 @@ let x = {
                         <td>Front LED blink pattern</td>
                         <td>uint32</td>
                         <td>evse</td>
-                        <td>Controls the LED in the charger's front button. <ul>
+                        <td>
+                            Controls the LED in the charger's front button.
+                            <ul>
                                 <li>-1: EVSE controls LED</li>
                                 <li>0: LED off</li>
-                                <li>1-254: LED dimmed</li>
+                                <li>1 to 254: LED dimmed</li>
                                 <li>255: LED on</li>
                                 <li>1001: known NFC tag seen</li>
                                 <li>1002: unknown NFC tag seen</li>
                                 <li>1003: NFC tag required</li>
-                                <li>2001-2010: blink 1-10x</li>
+                                <li>2001 to 2010: blink 1 to 10 times</li>
                             </ul>
                         </td>
                     </tr>
@@ -283,7 +289,7 @@ let x = {
                         <td>Reset relative energy</td>
                         <td>uint32</td>
                         <td>meter</td>
-                        <td>Resets the relative energy value (Input register 2006). Password 0x3E12E5E7</td>
+                        <td>Resets the relative energy value (input register 2006). Password: 0x3E12E5E7</td>
                     </tr>
                     <tr>
                         <td>3000</td>
@@ -320,14 +326,14 @@ let x = {
                         <td>Feature "phases" available</td>
                         <td>bool</td>
                         <td>---</td>
-                        <td>The detected energy meter supports phase-wise measurements</td>
+                        <td>The detected energy meter supports phase-wise measurements.</td>
                     </tr>
                     <tr>
                         <td>3</td>
                         <td>Feature "all_values" available</td>
                         <td>bool</td>
                         <td>---</td>
-                        <td>The detected energy meter supports more measurements</td>
+                        <td>The detected energy meter supports more measurements.</td>
                     </tr>
                     <tr>
                         <td>4</td>
@@ -341,7 +347,7 @@ let x = {
                         <td>Feature "nfc" available</td>
                         <td>bool</td>
                         <td>---</td>
-                        <td>A NFC-Bricklet is connected and active.</td>
+                        <td>A NFC Bricklet is connected and active.</td>
                     </tr>
                     <tr>
                         <td>2100</td>
@@ -397,7 +403,7 @@ let x = {
                         <td>Charge release</td>
                         <td>bool</td>
                         <td>evse</td>
-                        <td>false or 0 to block charging. true or 1 to allow charging. (Identical to holding register 1000)</td>
+                        <td>false or 0 to block charging. true or 1 to allow charging. Identical to holding register 1000.</td>
                     </tr>
                     <tr>
                         <td>1001</td>
@@ -408,7 +414,6 @@ let x = {
                             web interface, the API or (depending on the button configuration) the button.</td>
                     </tr>
                 </tbody>
-
             </>
         },
         "script": {

@@ -19,17 +19,13 @@
 
 #pragma once
 
-#include "module_dependencies.h"
-
 #include <math.h>
 
-#include "bindings/bricklet_rs485.h"
-
+#include "modules/meters/imeter.h"
 #include "config.h"
 #include "modules/meters/meter_defs.h"
-#include "modules/meters/imeter.h"
-
 #include "meter_defs.h"
+#include "bindings/bricklet_rs485.h"
 
 #if defined(__GNUC__)
     #pragma GCC diagnostic push

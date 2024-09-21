@@ -19,15 +19,8 @@
 
 #include "http.h"
 
-#include "api.h"
-#include "task_scheduler.h"
-#include "web_server.h"
-
-#if defined(BOARD_HAS_PSRAM)
-#define RECV_BUF_SIZE 4096
-#else
-#define RECV_BUF_SIZE 2048
-#endif
+#include "event_log_prefix.h"
+#include "module_dependencies.h"
 
 class HTTPChunkedResponse : public IBaseChunkedResponse
 {
@@ -67,8 +60,6 @@ protected:
 private:
     WebServerRequest *request;
 };
-
-static char recv_buf[RECV_BUF_SIZE] = {0};
 
 bool custom_uri_match(const char *ref_uri, const char *in_uri, size_t len)
 {
@@ -116,10 +107,6 @@ bool custom_uri_match(const char *ref_uri, const char *in_uri, size_t len)
         if (api.states[i].path_len == len - 1 && memcmp(api.states[i].path, in_uri + 1, len - 1) == 0)
             return true;
 
-    for (size_t i = 0; i < api.raw_commands.size(); i++)
-        if (api.raw_commands[i].path_len == len - 1 && memcmp(api.raw_commands[i].path, in_uri + 1, len - 1) == 0)
-            return true;
-
     for (size_t i = 0; i < api.responses.size(); i++)
         if (api.responses[i].path_len == len - 1 && memcmp(api.responses[i].path, in_uri + 1, len - 1) == 0)
             return true;
@@ -127,9 +114,32 @@ bool custom_uri_match(const char *ref_uri, const char *in_uri, size_t len)
     return false;
 }
 
+#if MODULE_AUTOMATION_AVAILABLE()
+enum class HttpTriggerMethod : uint8_t {
+    GET = 0,
+    POST,
+    PUT,
+    POST_PUT,
+    GET_POST_PUT
+};
+#endif
+
 void Http::pre_setup()
 {
     api.registerBackend(this);
+
+#if MODULE_AUTOMATION_AVAILABLE()
+    automation.register_trigger(
+        AutomationTriggerID::HTTP,
+        Config::Object({
+            {"method", Config::Uint((uint8_t)HttpTriggerMethod::GET_POST_PUT,
+                                    (uint8_t)HttpTriggerMethod::GET,
+                                    (uint8_t)HttpTriggerMethod::GET_POST_PUT)},
+            {"url_suffix", Config::Str("", 0, 32)},
+            {"payload", Config::Str("", 0, 32)}
+        })
+    );
+#endif
 }
 
 void Http::setup()
@@ -141,8 +151,11 @@ static WebServerRequestReturnProtect run_command(WebServerRequest req, size_t cm
 {
     CommandRegistration &reg = api.commands[cmdidx];
 
+    // Check stack usage after increasing buffer size.
+    char recv_buf[4096];
+
     // TODO: Use streamed parsing
-    int bytes_written = req.receive(recv_buf, RECV_BUF_SIZE);
+    int bytes_written = req.receive(recv_buf, ARRAY_SIZE(recv_buf));
     if (bytes_written == -1) {
         // buffer was not large enough
         return req.send(413);
@@ -166,16 +179,48 @@ static WebServerRequestReturnProtect run_command(WebServerRequest req, size_t cm
     return req.send(400, "text/plain; charset=utf-8", message.c_str());
 }
 
-// strcmp is safe here: both String::c_str() and req.uriCStr() return null terminated strings.
-// Also we know (because of the custom matcher) that req.uriCStr() contains an API path,
-// we only have to find out which one.
+WebServerRequestReturnProtect Http::run_response(WebServerRequest req, ResponseRegistration &reg)
+{
+    // Check stack usage after increasing buffer size.
+    char recv_buf[2048];
+
+    // TODO: Use streamed parsing
+    int bytes_written = req.receive(recv_buf, ARRAY_SIZE(recv_buf));
+    if (bytes_written == -1) {
+        // buffer was not large enough
+        return req.send(413);
+    } else if (bytes_written < 0) {
+        logger.printfln("Failed to receive response payload: error code %d", bytes_written);
+        return req.send(400);
+    }
+
+    uint32_t response_owner_id = response_ownership.current();
+    HTTPChunkedResponse http_response(&req);
+    QueuedChunkedResponse queued_response(&http_response, 500);
+    BufferedChunkedResponse buffered_response(&queued_response);
+
+    task_scheduler.scheduleOnce(
+        [this, &reg, &recv_buf, bytes_written, &buffered_response, response_owner_id] {
+            api.callResponse(reg, recv_buf, bytes_written, &buffered_response, &response_ownership, response_owner_id);
+        },
+        0);
+
+    String error = queued_response.wait();
+
+    if (!error.isEmpty()) {
+        logger.printfln("Response processing failed after update: %s (%s %s)", error.c_str(), req.methodString(), req.uriCStr());
+    }
+
+    response_ownership.next();
+    return WebServerRequestReturnProtect{};
+}
+
 // Use + 1 to compare: req.uriCStr() starts with /; the api paths don't.
 WebServerRequestReturnProtect Http::api_handler_get(WebServerRequest req)
 {
     size_t req_uri_len = strlen(req.uriCStr() + 1);
 
-    for (size_t i = 0; i < api.states.size(); i++)
-    {
+    for (size_t i = 0; i < api.states.size(); i++) {
         if (api.states[i].path_len != req_uri_len || memcmp(api.states[i].path, req.uriCStr() + 1, req_uri_len) != 0)
             continue;
 
@@ -206,76 +251,15 @@ WebServerRequestReturnProtect Http::api_handler_put(WebServerRequest req)
         if (api.commands[i].path_len == req_uri_len && memcmp(api.commands[i].path, req.uriCStr() + 1, req_uri_len) == 0)
             return run_command(req, i);
 
-    for (size_t i = 0; i < api.raw_commands.size(); i++)
-    {
-        if (api.raw_commands[i].path_len != req_uri_len || memcmp(api.raw_commands[i].path, req.uriCStr() + 1, req_uri_len) != 0)
-            continue;
-
-        // TODO: Use streamed parsing
-        int bytes_written = req.receive(recv_buf, RECV_BUF_SIZE);
-        if (bytes_written == -1) {
-            // buffer was not large enough
-            return req.send(413);
-        } else if (bytes_written <= 0) {
-            logger.printfln("Failed to receive raw command payload: error code %d", bytes_written);
-            return req.send(400);
-        }
-
-        String message;
-        auto result = task_scheduler.await([&message, i, bytes_written]() {
-            message = api.raw_commands[i].callback(recv_buf, bytes_written);
-        });
-        if (result == TaskScheduler::AwaitResult::Timeout)
-            return req.send(500, "text/plain", "Failed to call raw command. Task timed out.");
-
-        if (message.isEmpty()) {
-            return req.send(200);
-        }
-        return req.send(400, "text/plain; charset=utf-8", message.c_str());
-    }
-
     for (size_t i = 0; i < api.responses.size(); i++)
-    {
-        if (api.responses[i].path_len != req_uri_len || memcmp(api.responses[i].path, req.uriCStr() + 1, req_uri_len) != 0)
-            continue;
-
-        // TODO: Use streamed parsing
-        int bytes_written = req.receive(recv_buf, RECV_BUF_SIZE);
-        if (bytes_written == -1) {
-            // buffer was not large enough
-            return req.send(413);
-        } else if (bytes_written < 0) {
-            logger.printfln("Failed to receive response payload: error code %d", bytes_written);
-            return req.send(400);
-        }
-
-        uint32_t response_owner_id = response_ownership.current();
-        HTTPChunkedResponse http_response(&req);
-        QueuedChunkedResponse queued_response(&http_response, 500);
-        BufferedChunkedResponse buffered_response(&queued_response);
-
-        task_scheduler.scheduleOnce(
-            [this, i, bytes_written, &buffered_response, response_owner_id] {
-                api.callResponse(api.responses[i], recv_buf, bytes_written, &buffered_response, &response_ownership, response_owner_id);
-            },
-            0);
-
-        String error = queued_response.wait();
-
-        if (!error.isEmpty()) {
-            logger.printfln("Response processing failed after update: %s (%s %s)", error.c_str(), req.methodString(), req.uriCStr());
-        }
-
-        response_ownership.next();
-        return WebServerRequestReturnProtect{};
-    }
+        if (api.responses[i].path_len == req_uri_len && memcmp(api.responses[i].path, req.uriCStr() + 1, req_uri_len) == 0)
+            return run_response(req, api.responses[i]);
 
     if (req.uri().endsWith("_update")) {
         return req.send(405, "text/plain", "Request method for this URI is not handled by server");
     }
 
-    for (size_t i = 0; i < api.states.size(); i++)
-    {
+    for (size_t i = 0; i < api.states.size(); i++) {
         if (api.states[i].path_len != req_uri_len || memcmp(api.states[i].path, req.uriCStr() + 1, req_uri_len) != 0)
             continue;
 
@@ -294,8 +278,139 @@ WebServerRequestReturnProtect Http::api_handler_put(WebServerRequest req)
     return req.send(405, "text/plain", "Request method for this URI is not handled by server");
 }
 
+#if MODULE_AUTOMATION_AVAILABLE()
+bool Http::has_triggered(const Config *conf, void *data)
+{
+    const Config *cfg = static_cast<const Config *>(conf->get());
+    auto *trigger = (HttpTrigger *)data;
+
+    auto method = trigger->req.method();
+    switch (cfg->get("method")->asEnum<HttpTriggerMethod>()) {
+        case HttpTriggerMethod::GET:
+            if (method != HTTP_GET) {
+                trigger->most_specific_error = MAX(trigger->most_specific_error, HttpTriggerActionResult::WrongMethod);
+                return false;
+            }
+
+            break;
+        case HttpTriggerMethod::POST:
+            if (method != HTTP_POST) {
+                trigger->most_specific_error = MAX(trigger->most_specific_error, HttpTriggerActionResult::WrongMethod);
+                return false;
+            }
+
+            break;
+        case HttpTriggerMethod::PUT:
+            if (method != HTTP_PUT) {
+                trigger->most_specific_error = MAX(trigger->most_specific_error, HttpTriggerActionResult::WrongMethod);
+                return false;
+            }
+
+            break;
+        case HttpTriggerMethod::POST_PUT:
+            if (method != HTTP_POST
+             && method != HTTP_PUT) {
+                trigger->most_specific_error = MAX(trigger->most_specific_error, HttpTriggerActionResult::WrongMethod);
+                return false;
+            }
+
+            break;
+        case HttpTriggerMethod::GET_POST_PUT:
+            if (method != HTTP_GET
+             && method != HTTP_POST
+             && method != HTTP_PUT) {
+                trigger->most_specific_error = MAX(trigger->most_specific_error, HttpTriggerActionResult::WrongMethod);
+                return false;
+            }
+
+            break;
+    }
+
+    if (trigger->uri_suffix != cfg->get("url_suffix")->asEphemeralCStr()) {
+        trigger->most_specific_error = MAX(trigger->most_specific_error, HttpTriggerActionResult::WrongUrl);
+        return false;
+    }
+
+    const auto &expected_payload = cfg->get("payload")->asString();
+
+    if (expected_payload.length() != 0 && expected_payload.length() != trigger->req.contentLength()) {
+        trigger->most_specific_error = MAX(trigger->most_specific_error, HttpTriggerActionResult::WrongPayloadLength);
+        return false;
+    }
+
+    if (expected_payload.length() == 0) {
+        trigger->most_specific_error = MAX(trigger->most_specific_error, HttpTriggerActionResult::OK);
+        return true;
+    }
+
+    if (trigger->payload == nullptr) {
+        auto size = trigger->req.contentLength();
+        trigger->payload = heap_alloc_array<char>(size + 1);
+
+        if (trigger->req.receive(trigger->payload.get(), size) < 0) {
+            trigger->payload_receive_failed = true;
+            trigger->most_specific_error = MAX(trigger->most_specific_error, HttpTriggerActionResult::FailedToReceivePayload);
+            return false;
+        }
+
+        trigger->payload[size] = '\0';
+        trigger->payload_receive_failed = false;
+    } else if (trigger->payload_receive_failed) {
+        trigger->most_specific_error = MAX(trigger->most_specific_error, HttpTriggerActionResult::FailedToReceivePayload);
+        return false;
+    }
+
+    if (expected_payload != trigger->payload.get()) {
+        trigger->most_specific_error = MAX(trigger->most_specific_error, HttpTriggerActionResult::WrongPayload);
+        return false;
+    }
+
+    trigger->most_specific_error = MAX(trigger->most_specific_error, HttpTriggerActionResult::OK);
+    return true;
+}
+#endif
+
+WebServerRequestReturnProtect Http::automation_trigger_handler(WebServerRequest req)
+{
+#if MODULE_AUTOMATION_AVAILABLE()
+    String uri = req.uri();
+    int idx = uri.indexOf("automation_trigger/");
+    if (idx < 0) {
+        return req.send(405, "text/plain", "Request method for this URI is not handled by server");
+    }
+    uri = uri.substring(idx + strlen("automation_trigger/"));
+
+    HttpTrigger trigger{req, uri, nullptr, false, HttpTriggerActionResult::WrongUrl};
+    automation.trigger(AutomationTriggerID::HTTP, &trigger, this);
+
+    switch (trigger.most_specific_error) {
+        case HttpTriggerActionResult::WrongUrl:
+            return req.send(404, "text/plain", "No automation rule matches this URL");
+        case HttpTriggerActionResult::WrongMethod:
+            return req.send(405, "text/plain", "No automation rule for this URL matches this method");
+        case HttpTriggerActionResult::WrongPayloadLength:
+            return req.send(400, "text/plain", "No automation rule for this URL and method matches this payload length");
+        case HttpTriggerActionResult::FailedToReceivePayload:
+            return req.send(500, "text/plain", "Failed to receive payload");
+        case HttpTriggerActionResult::WrongPayload:
+            return req.send(400, "text/plain", "No automation rule for this URL and method matches this payload");
+        case HttpTriggerActionResult::OK:
+            return req.send(200);
+    }
+
+    // The switch above should be exhaustive. Return "normal" 405 if it is not.
+#endif
+    return req.send(405, "text/plain", "Request method for this URI is not handled by server");
+}
+
 void Http::register_urls()
 {
+#if MODULE_AUTOMATION_AVAILABLE()
+    server.on("/automation_trigger/*", HTTP_GET, [this](WebServerRequest request){return automation_trigger_handler(request);});
+    server.on("/automation_trigger/*", HTTP_PUT, [this](WebServerRequest request){return automation_trigger_handler(request);});
+    server.on("/automation_trigger/*", HTTP_POST, [this](WebServerRequest request){return automation_trigger_handler(request);});
+#endif
+
     server.on_HTTPThread("/*", HTTP_GET, [this](WebServerRequest request){return api_handler_get(request);});
     server.on_HTTPThread("/*", HTTP_PUT, [this](WebServerRequest request){return api_handler_put(request);});
     server.on_HTTPThread("/*", HTTP_POST, [this](WebServerRequest request){return api_handler_put(request);});
@@ -306,10 +421,6 @@ void Http::addCommand(size_t commandIdx, const CommandRegistration &reg)
 }
 
 void Http::addState(size_t stateIdx, const StateRegistration &reg)
-{
-}
-
-void Http::addRawCommand(size_t rawCommandIdx, const RawCommandRegistration &reg)
 {
 }
 

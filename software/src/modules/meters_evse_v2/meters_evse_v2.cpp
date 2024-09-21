@@ -19,6 +19,9 @@
 
 #include "meters_evse_v2.h"
 
+#include "event_log_prefix.h"
+#include "module_dependencies.h"
+
 #include "gcc_warnings.h"
 
 void MetersEVSEV2::pre_setup()
@@ -49,10 +52,10 @@ MeterClassID MetersEVSEV2::get_class() const
     return MeterClassID::EVSEV2;
 }
 
-IMeter * MetersEVSEV2::new_meter(uint32_t slot, Config *state, Config * errors)
+IMeter *MetersEVSEV2::new_meter(uint32_t slot, Config *state, Config * errors)
 {
     if (meter_instance) {
-        logger.printfln("meters_evsev2: Cannot create more than one meter of class EVSEV2.");
+        logger.printfln("Cannot create more than one meter of class EVSEV2.");
         return nullptr;
     }
     meter_instance = new MeterEVSEV2(slot, state, errors);
@@ -60,26 +63,34 @@ IMeter * MetersEVSEV2::new_meter(uint32_t slot, Config *state, Config * errors)
 }
 
 [[gnu::const]]
-const Config * MetersEVSEV2::get_config_prototype()
+const Config *MetersEVSEV2::get_config_prototype()
 {
     return &config_prototype;
 }
 
 [[gnu::const]]
-const Config * MetersEVSEV2::get_state_prototype()
+const Config *MetersEVSEV2::get_state_prototype()
 {
     return &state_prototype;
 }
 
-const Config * MetersEVSEV2::get_errors_prototype()
+const Config *MetersEVSEV2::get_errors_prototype()
 {
     return &errors_prototype;
 }
 
-void MetersEVSEV2::update_from_evse_v2_all_data(EVSEV2::meter_data *meter_data)
+void MetersEVSEV2::update_from_evse_v2_all_data(EVSEV2MeterData *meter_data)
 {
     if (!meter_instance)
         return;
 
     meter_instance->update_from_evse_v2_all_data(meter_data);
+}
+
+void MetersEVSEV2::energy_meter_values_callback(float power, float current[3])
+{
+    if (!meter_instance)
+        return;
+
+    meter_instance->energy_meter_values_callback(power, current);
 }

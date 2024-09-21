@@ -19,15 +19,12 @@
 
 #include "ocpp.h"
 
-#include "build.h"
-#include "api.h"
-#include "task_scheduler.h"
-#include "module_dependencies.h"
-
-#include "modules/certs/certs.h"
-
 #include <ctype.h>
 #include <string.h>
+
+#include "event_log_prefix.h"
+#include "module_dependencies.h"
+#include "build.h"
 
 extern char local_uid_str[32];
 
@@ -126,43 +123,14 @@ void Ocpp::pre_setup()
 #endif
 }
 
-static const char *lookup = "0123456789ABCDEFabcdef";
-
-static uint8_t hex_digit_to_byte(char digit)
-{
-    for (size_t i = 0; i < strlen(lookup); ++i) {
-        if (lookup[i] == digit)
-            return i > 15 ? (i - 6) : i;
-    }
-    return 0xFF;
-}
-
 bool Ocpp::start_client()
 {
     if (!config_in_use.get("enable_auth")->asBool()) {
-        return cp->start(config_in_use.get("url")->asEphemeralCStr(), config_in_use.get("identity")->asEphemeralCStr(), nullptr, 0);
+        return cp->start(config_in_use.get("url")->asEphemeralCStr(), config_in_use.get("identity")->asEphemeralCStr(), nullptr, 0, BasicAuthPassType::NONE);
     }
 
     String pass = config_in_use.get("pass")->asString();
-    bool pass_is_hex = pass.length() == 40;
-    if (pass_is_hex) {
-        for (size_t i = 0; i < 40; ++i) {
-            if (!isxdigit(pass[i])) {
-                pass_is_hex = false;
-                break;
-            }
-        }
-    }
-
-    if (!pass_is_hex) {
-        return cp->start(config.get("url")->asEphemeralCStr(), config_in_use.get("identity")->asEphemeralCStr(), (const uint8_t *)pass.c_str(), pass.length());
-    }
-
-    uint8_t pass_bytes[20] = {};
-    for (size_t i = 0; i < 20; ++i) {
-        pass_bytes[i] = hex_digit_to_byte(pass[2 * i]) << 4 | hex_digit_to_byte(pass[2 * i + 1]);
-    }
-    return cp->start(config.get("url")->asEphemeralCStr(), config_in_use.get("identity")->asEphemeralCStr(), pass_bytes, 20);
+    return cp->start(config_in_use.get("url")->asEphemeralCStr(), config_in_use.get("identity")->asEphemeralCStr(), (const uint8_t *)pass.c_str(), pass.length(), BasicAuthPassType::TRY_BOTH);
 }
 
 void Ocpp::setup()
@@ -172,10 +140,10 @@ void Ocpp::setup()
         config.get("identity")->updateString(String(BUILD_HOST_PREFIX) + "-" + local_uid_str);
     }
 
-    config_in_use = config;
-
     if (!config.get("enable")->asBool() || config.get("url")->asString().length() == 0)
         return;
+
+    config_in_use = config;
 
     cp = std::unique_ptr<OcppChargePoint>(new OcppChargePoint());
 

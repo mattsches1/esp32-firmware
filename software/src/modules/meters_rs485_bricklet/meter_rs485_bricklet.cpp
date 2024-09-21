@@ -17,19 +17,21 @@
  * Boston, MA 02111-1307, USA.
  */
 
+#define EVENT_LOG_PREFIX "meters_rs485_brk"
+
 #include "meter_rs485_bricklet.h"
 
+#include "event_log_prefix.h"
+#include "module_dependencies.h"
 #include "meters_rs485_bricklet.h"
 #include "modules/meters/meter_value_id.h"
 #include "modules/meters/sdm_helpers.h"
-#include "task_scheduler.h"
 #include "tools.h"
-
-//#include "gcc_warnings.h"
-
 #include "sdm630_defs.h"
 #include "sdm72dmv2_defs.h"
 #include "sdm72dm_defs.h"
+
+//#include "gcc_warnings.h"
 
 static uint16_t write_buf[100];
 static uint16_t registers[400];
@@ -80,7 +82,7 @@ void MeterRS485Bricklet::cb_read_meter_type(TF_RS485 *rs485, uint8_t request_id,
     }
 
     if (callback_data.value_to_write == nullptr) {
-        logger.printfln("value to write was nullptr");
+        logger.printfln("Value to write was nullptr");
         callback_data.done = MeterRS485Bricklet::UserDataDone::ERROR;
         return;
     }
@@ -91,7 +93,7 @@ void MeterRS485Bricklet::cb_read_meter_type(TF_RS485 *rs485, uint8_t request_id,
 
     uint16_t meter_id = *callback_data.value_to_write;
 
-    for (size_t i = 0; i < sizeof(supported_meters) / sizeof(supported_meters[0]); ++i) {
+    for (size_t i = 0; i < ARRAY_SIZE(supported_meters); ++i) {
         if (meter_id != supported_meters[i]->meter_id)
             continue;
 
@@ -120,7 +122,7 @@ void MeterRS485Bricklet::cb_read_values(TF_RS485 *device, uint8_t request_id, in
     }
 
     if (callback_data.value_to_write == nullptr) {
-        logger.printfln("value to write was nullptr");
+        logger.printfln("Value to write was nullptr");
         callback_data.done = MeterRS485Bricklet::UserDataDone::ERROR;
         return;
     }
@@ -284,7 +286,7 @@ void MeterRS485Bricklet::tick()
         return;
 
     if (callback_data.done == UserDataDone::NOT_DONE) {
-        logger.printfln("rs485 deadline reached!");
+        logger.printfln("RS485 deadline reached!");
         generator->checkRS485State();
     }
 

@@ -19,8 +19,8 @@
 
 import { h } from "preact";
 import { __ } from "../../ts/translation";
-import { AutomationActionID } from "../automation/automation_defs";
-import { AutomationAction } from "../automation/types";
+import { AutomationActionID } from "../automation/automation_action_id.enum";
+import { AutomationAction, InitResult } from "../automation/types";
 import { InputSelect } from "../../ts/components/input_select";
 import { FormRow } from "../../ts/components/form_row";
 import * as util from "../../ts/util";
@@ -62,7 +62,7 @@ function new_evse_gp_output_config(): AutomationAction {
     ];
 }
 
-export function init() {
+export function init(): InitResult {
     return {
         action_components: {
             [AutomationActionID.EVSEGPOutput]: {
@@ -71,7 +71,6 @@ export function init() {
                 clone_config: (action: AutomationAction) => [action[0], {...action[1]}] as AutomationAction,
                 get_edit_children: get_evse_gp_output_edit_children,
                 get_table_children: get_evse_gp_output_table_children,
-                require_feature: "button_configuration",
             },
         },
     };

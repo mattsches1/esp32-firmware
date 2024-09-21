@@ -19,11 +19,8 @@
 
 #pragma once
 
-#include "config.h"
-
 #include "module.h"
-
-#include "../rtc/rtc.h"
+#include "modules/rtc/rtc.h"
 
 class EmRtc final : public IModule, public IRtcBackend
 {
@@ -32,9 +29,8 @@ public:
     void setup() override;
     void register_urls() override;
 
-    void set_time(const tm &tm) override;
-    void set_time(const timeval &tv) override;
+    // IRtcBackend implementation
+    void set_time(const tm &time) override;
     struct timeval get_time() override;
-    bool update_system_time() override;
-    void reset() override {}
+    void reset() override;
 };

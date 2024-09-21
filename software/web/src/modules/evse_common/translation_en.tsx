@@ -17,11 +17,11 @@ let x = {
         },
         "navbar": {
             "evse": "Charge Status",
-            "evse_settings": "Charge Settings"
+            "evse_settings": "Settings"
         },
         "content": {
             "status": "Charge Status",
-            "settings": "Charge Settings",
+            "evse_settings": "Wallbox",
             "iec_state": "IEC 61851 state",
             "iec_state_a": "A (disconnected)",
             "iec_state_b": "B (connected)",
@@ -30,8 +30,8 @@ let x = {
             "iec_state_ef": "E/F (error)",
             "contactor_state": "Contactor check",
             "contactor_names": /*SFN*/(is_evse_v3: boolean) => is_evse_v3 ? "contactor L1+N, contactor L2+L3, state" : "before contactor, behind contactor, state"/*NF*/,
-            "contactor_not_live": "Not live",
-            "contactor_live": "Live",
+            "contactor_not_live": /*SFN*/(is_evse_v3: boolean) => is_evse_v3 ? "Open" : "Not live"/*NF*/,
+            "contactor_live": /*SFN*/(is_evse_v3: boolean) => is_evse_v3 ? "Closed" : "Live"/*NF*/,
             "contactor_ok": "OK",
             "contactor_error": /*SFN*/(contactor_error: number) => {
                 if (contactor_error == 0)
@@ -155,17 +155,29 @@ let x = {
             "user_calibration_reset": "Reset",
 
             // EVSE V2 only
+            "evse_v2_gpio_names_0": "current configuration 0, motor fault, DC fault, current configuration 1",
+            "evse_v2_gpio_names_1": "DC fault protector test, GP shutdown, button, CP PWM",
+            "evse_v2_gpio_names_2": "motor input switch, contactor, GP output, CP disconnect",
+            "evse_v2_gpio_names_3": "motor active, motor phase, contactor check before, contactor check behind",
+            "evse_v2_gpio_names_4": "GP input, DC X6, DC X30, LED",
+            "evse_v2_gpio_names_5": "unused",
+
+            // EVSE V3 only
+            "evse_v3_gpio_names_0": "DC X30, DC X6, DC fault, DC fault protector test",
+            "evse_v3_gpio_names_1": "EVSE status LED, button, LED red, LED blue",
+            "evse_v3_gpio_names_2": "LED green, CP PWM, contactor 1, contactor 0",
+            "evse_v3_gpio_names_3": "contactor 1 feedback, contactor 0 feedback, PE check, current configuration 1",
+            "evse_v3_gpio_names_4": "CP disconnect, current configuration 0, GP shutdown, version detect",
+            "evse_v3_gpio_names_5": "unused",
+
+            // EVSE V2 and V3
             "energy_meter_type": "Energy meter type",
-            "gpio_names_0": "current configuration 0, motor fault, DC fault, current configuration 1",
-            "gpio_names_1": "DC fault protector test, shutdown, button, CP-PWM",
-            "gpio_names_2": "motor input switch, contactor, GP output, CP separation",
-            "gpio_names_3": "motor active, motor phase, contactor check before, contactor check behind",
-            "gpio_names_4": "GP input, DC X6, DC X30, LED",
-            "gpio_names_5": "unused",
             "gpio_shutdown_muted": <><a href="{{{manual_url}}}">see manual for details</a></>,
             "gpio_shutdown_not_configured": "Not configured",
             "gpio_shutdown_on_open": "Shut down on open",
             "gpio_shutdown_on_close": "Shut down on close",
+            "gpio_4200w_on_open": "Limit to 4200 W on open (§14 EnWG)",
+            "gpio_4200w_on_close": "Limit to 4200 W on close (§14 EnWG)",
             "not_configured": "Not configured",
             "active_low_blocked": "Blocks if closed",
             "active_low_prefix": "Limits charge current to ",
@@ -186,6 +198,10 @@ let x = {
             "ev_wakeup_desc": "EV Wakeup",
             "ev_wakeup_desc_muted": <><a href="{{{manual_url}}}">see manual for details</a></>,
             "ev_wakeup": "Attempts to wake up the charge controller of the connected vehicle by fake-un and -re-plugging the charge cable.",
+
+            "phase_auto_switch_desc": "Automatic phase switch",
+            "phase_auto_switch_desc_muted": <><a href="{{{manual_url}}}">see manual for details</a></>,
+            "phase_auto_switch": "Automatically switches to single phase charging if the connected vehicle only draws current on L1.",
 
             "dc_fault_current_state": "DC fault protector state",
             "dc_fault_current_state_desc": "",
@@ -214,9 +230,12 @@ let x = {
             "temperature": "Temperature",
             "phases_current": "Phases current",
             "phases_requested": "Phases requested",
-            "phases_status": "Phases status",
-            "switch_to_one_phase": "Switch to one phase",
-            "switch_to_three_phases": "Switch to three phases"
+            "phases_state": "Phase switching state",
+
+            "phases_connected": "Supply",
+            "phases_connected_muted": <><a href="{{{manual_url}}}">see manual for details</a></>,
+            "phases_connected_1": "Single-phase",
+            "phases_connected_3": "Three-phase"
         },
         "automation": {
             "external_current_wd": "External control watchdog triggered",
@@ -224,6 +243,7 @@ let x = {
             "state_change": "Charge status changed",
             "led_duration": "Duration",
             "indication": "Indication",
+            "color": "Color",
             "led_indication": "Show on status LED",
             "led_indication_off": "Off",
             "led_indication_on": "On",
@@ -251,7 +271,14 @@ let x = {
                 }
                 return <>limit the allowed charging current to <b>{current} A</b>.</>
             }/*NF*/,
-            "automation_led_action_text": /*FFN*/(state: string, duration: number) => state == "An" || state == "Aus" ? <>turn the status LED <b>{state}</b> for <b>{duration} seconds</b>.</> : <>show <b>{state}</b> for <b>{duration / 1000} seconds</b> on the status LED.</>/*NF*/
+            "automation_led_action_text": /*FFN*/(indication_number: number, indication_text: string, duration: number, color: string) => {
+                let c = color == "" ? "" : <>in <span class="px-2 mr-1" style={"background-color: " + color + "; border: 1px solid black;"}></span></>
+                if (indication_number == 0)
+                    return <>turn the status LED <b>{indication_text}</b> for <b>{duration} seconds</b>.</>
+                if (indication_number == 255)
+                    return <>turn the status LED <b>{indication_text}</b> {c} for <b>{duration} seconds</b>.</>
+                return<>show <b>{indication_text}</b> {c} for <b>{duration / 1000} seconds</b> on the status LED.</>
+            }/*NF*/
         },
         "script": {
             "set_charging_current_failed": "Failed to set charging current",
@@ -268,6 +295,7 @@ let x = {
             "debug_stop_failed": "Stopping charge log capture failed",
             "debug_stopped": "Stopped charge log capture",
             "debug_done": "Done",
+            "debug_file": "EVSE-charge-protocol",
 
             "acc_blocked": "Blocked",
             "by": "by",

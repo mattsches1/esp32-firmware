@@ -19,43 +19,60 @@
 
 #pragma once
 
-#include "module.h"
-#include "config.h"
 #include <map>
 #include <vector>
-#include "automation_defs.h"
 
-typedef std::function<void(const Config *)>                             ActionCb;
-typedef std::function<String (const Config *)>                          ValidatorCb;
-typedef std::map<AutomationActionID, std::pair<ActionCb, ValidatorCb>>        ActionMap;
-typedef std::map<AutomationTriggerID, ValidatorCb>                            TriggerMap;
-typedef std::vector<std::pair<size_t, Config *>>                        ConfigVec;
+#include "module.h"
+#include "config.h"
+#include "automation_trigger_id.enum.h"
+#include "automation_action_id.enum.h"
+#include "automation_backend.h"
 
-class Automation : public IModule {
-    ConfigRoot config;
-    ConfigRoot config_in_use;
-    ConfigRoot enabled;
-    ConfigRoot enabled_in_use;
-
-    ActionMap   action_map;
-    TriggerMap  trigger_map;
-    std::vector<ConfUnionPrototype<AutomationTriggerID>>    trigger_vec;
-    std::vector<ConfUnionPrototype<AutomationActionID>>     action_vec;
-
+class Automation : public IModule, public IAutomationBackend
+{
 public:
+    typedef std::function<void(const Config *)>    ActionCb;
+    typedef std::function<String(const Config *)> ValidatorCb;
+
+    struct ActionValue {
+        ActionCb callback;
+        ValidatorCb validator;
+        bool enable;
+    };
+
+    struct TriggerValue {
+        ValidatorCb validator;
+        bool enable;
+    };
+
+    typedef std::map<AutomationActionID, ActionValue>   ActionMap;
+    typedef std::map<AutomationTriggerID, TriggerValue> TriggerMap;
+    typedef std::vector<std::pair<size_t, Config *>>    ConfigVec;
+
     Automation();
 
     void pre_setup() override;
     void setup() override;
     void register_urls() override;
 
-    void register_action(AutomationActionID id, Config cfg, ActionCb callback, ValidatorCb validator = nullptr);
-    void register_trigger(AutomationTriggerID id, Config cfg, ValidatorCb validator = nullptr);
+    void register_action(AutomationActionID id, Config cfg, ActionCb &&callback, ValidatorCb &&validator = nullptr, bool enable = true);
+    void register_trigger(AutomationTriggerID id, Config cfg, ValidatorCb &&validator = nullptr, bool enable = true);
 
-    bool trigger_action(AutomationTriggerID number, void *data, std::function<bool(Config *, void *)> cb);
-    bool is_trigger_active(AutomationTriggerID number);
+    void set_enabled(AutomationActionID id, bool enable);
+    void set_enabled(AutomationTriggerID id, bool enable);
 
-    bool action_triggered(Config *conf, void *data);
-
+    bool trigger(AutomationTriggerID number, void *data, IAutomationBackend *backend);
+    bool has_task_with_trigger(AutomationTriggerID number);
+    bool has_triggered(const Config *conf, void *data) override;
     ConfigVec get_configured_triggers(AutomationTriggerID number);
+
+private:
+    ConfigRoot config;
+    ConfigRoot config_in_use;
+    ConfigRoot state;
+
+    ActionMap   action_map;
+    TriggerMap  trigger_map;
+    std::vector<ConfUnionPrototype<AutomationTriggerID>>    trigger_prototypes;
+    std::vector<ConfUnionPrototype<AutomationActionID>>     action_prototypes;
 };

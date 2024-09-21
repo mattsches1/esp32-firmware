@@ -49,6 +49,8 @@ VOLTAGE_ON_THRESHOLD = 200.0 # Volt
 IEC_STATE_CHECK_DURATION = 5.0 # seconds
 IEC_STATE_CHECK_INTERVAL = 0.01 # seconds
 
+PHASE_SWITCH_SETTLE_DURATION = 7.0 # seconds
+
 STACK_MASTER_UIDS = {
     '0': '61SMKP',
     '1': '6jEhrp',
@@ -84,11 +86,12 @@ EXPECTED_DEVICE_IDENTIFIERS = {
 }
 
 class Stage3:
-    def __init__(self, is_front_panel_button_pressed_function, has_evse_error_function, get_iec_state_function, reset_dc_fault_function):
+    def __init__(self, is_front_panel_button_pressed_function, has_evse_error_function, get_iec_state_function, reset_dc_fault_function, switch_phases_function):
         self.is_front_panel_button_pressed_function = is_front_panel_button_pressed_function
         self.has_evse_error_function = has_evse_error_function
         self.get_iec_state_function = get_iec_state_function
         self.reset_dc_fault_function = reset_dc_fault_function
+        self.switch_phases_function = switch_phases_function
         self.ipcon = IPConnection()
         self.inventory = Inventory(self.ipcon)
         self.devices = {} # by position path
@@ -289,7 +292,10 @@ class Stage3:
             fatal_error('Action did not complete in time')
 
     # internal
-    def change_meter_state(self, state):
+    def change_meter_state(self, state, quiet=False):
+        if not quiet:
+            print('Changing meter state to {0}'.format(state))
+
         if state == 'Type2-L1':
             value = [(True,  True),  (False, False), (False, False)]
         elif state == 'Type2-L2':
@@ -424,10 +430,30 @@ class Stage3:
         return text
 
     # internal
-    def is_front_panel_led_on(self):
+    def is_front_panel_led_blue(self):
+        color = self.try_action('20D', lambda device: device.get_color())
+        return color[2] / color[3] > 0.65 and color[3] > 10000
+
+    def is_front_panel_led_red(self):
         color = self.try_action('20D', lambda device: device.get_color())
 
-        return color[2] - color[0] > 1000
+        return color[0] / color[3] > 0.85 and color[3] > 10000
+
+    def is_front_panel_led_green(self):
+        color = self.try_action('20D', lambda device: device.get_color())
+
+        return color[1] / color[3] > 0.60 and color[3] > 10000
+
+    def is_front_panel_led_white(self):
+        color = self.try_action('20D', lambda device: device.get_color())
+
+        # White can saturate the sensor
+        if color[0] == 65535 and color[1] == 65535 and color[2] == 65535 and color[3] == 65535:
+            return True
+
+
+        return color[0] / color[3] < 0.5 and color[1] / color[3] < 0.5 and color[2] / color[3] < 0.5 and color[3] > 10000
+
 
     # internal
     def check_iec_state(self, expected_state):
@@ -559,7 +585,7 @@ class Stage3:
         self.connect_front_panel(False)
         self.connect_type2_pe(True)
         self.change_cp_pe_state('A', quiet=True)
-        self.change_meter_state('Type2-L1')
+        self.change_meter_state('Type2-L1', quiet=True)
 
         time.sleep(RELAY_SETTLE_DURATION)
 
@@ -578,7 +604,7 @@ class Stage3:
         self.connect_front_panel(False)
         self.connect_type2_pe(True)
         self.change_cp_pe_state('A', quiet=True)
-        self.change_meter_state('Type2-L1')
+        self.change_meter_state('Type2-L1', quiet=True)
 
         time.sleep(RELAY_SETTLE_DURATION)
 
@@ -595,7 +621,7 @@ class Stage3:
 
         try:
             button_before = self.is_front_panel_button_pressed_function()
-            led_before = self.is_front_panel_led_on() if automatic else True
+            led_before = self.is_front_panel_led_blue() if automatic else True
 
             if button_before:
                 fatal_error('Front panel button is already pressed before test')
@@ -621,7 +647,7 @@ class Stage3:
                 print('Front panel button is pressed')
 
             button_pressed = self.is_front_panel_button_pressed_function()
-            led_pressed = self.is_front_panel_led_on() if automatic else False
+            led_pressed = self.is_front_panel_led_blue() if automatic else False
 
             if automatic:
                 self.set_servo_position(servo, channel, -3000)
@@ -644,7 +670,7 @@ class Stage3:
                 self.beep_notify()
 
             button_after = self.is_front_panel_button_pressed_function()
-            led_after = self.is_front_panel_led_on() if automatic else True
+            led_after = self.is_front_panel_led_blue() if automatic else True
 
             if button_after:
                 fatal_error('Front panel button is still pressed after test')
@@ -692,7 +718,7 @@ class Stage3:
         self.try_action('03B', lambda device: device.set_beep(2400, volume, beep_duration))
         time.sleep(beep_duration / 1000)
 
-    def reset_dc_fault(self):
+    def reset_dc_fault(self, cp_pe_state):
         print('Resetting DC fault')
 
         self.reset_dc_fault_function()
@@ -714,18 +740,21 @@ class Stage3:
 
         time.sleep(30)
 
-        self.change_cp_pe_state('C')
+        if cp_pe_state != 'A':
+            self.change_cp_pe_state(cp_pe_state)
 
-        time.sleep(RELAY_SETTLE_DURATION + EVSE_SETTLE_DURATION)
+            time.sleep(RELAY_SETTLE_DURATION + EVSE_SETTLE_DURATION)
 
-        if not self.check_iec_state('C'):
-            fatal_error('Wallbox not in IEC state C')
+            if not self.check_iec_state(cp_pe_state):
+                fatal_error('Wallbox not in IEC state ' + cp_pe_state)
 
     # requires power_on
-    def test_wallbox(self):
+    def test_wallbox(self, has_phase_switch):
         assert self.has_evse_error_function != None
         assert self.get_iec_state_function != None
         assert self.reset_dc_fault_function != None
+        if has_phase_switch:
+            assert self.switch_phases_function != None
 
         if self.read_meter_qr_code() != '01':
             fatal_error('Meter in wrong step')
@@ -856,8 +885,58 @@ class Stage3:
         print('Connecting power to L1, L2 and L3')
 
         self.connect_warp_power(['L1', 'L2', 'L3'])
-        self.connect_voltage_monitors(False)
 
+        if has_phase_switch:
+            time.sleep(RELAY_SETTLE_DURATION + VOLTAGE_SETTLE_DURATION)
+
+            voltages = self.read_voltage_monitors()
+
+            print('Reading voltages as {0}'.format(voltages))
+
+            if voltages[0] < VOLTAGE_ON_THRESHOLD:
+                fatal_error('Missing voltage on L1')
+
+            if voltages[1] < VOLTAGE_OFF_THRESHOLD:
+                fatal_error('Missing voltage on L2')
+
+            if voltages[2] < VOLTAGE_ON_THRESHOLD:
+                fatal_error('Missing voltage on L3')
+
+            print('Testing phase switch')
+
+            self.switch_phases_function(1)
+            time.sleep(PHASE_SWITCH_SETTLE_DURATION + VOLTAGE_SETTLE_DURATION)
+
+            voltages = self.read_voltage_monitors()
+
+            print('Reading voltages as {0}'.format(voltages))
+
+            if voltages[0] < VOLTAGE_ON_THRESHOLD:
+                fatal_error('Missing voltage on L1')
+
+            if voltages[1] > VOLTAGE_OFF_THRESHOLD:
+                fatal_error('Unexpected voltage on L2')
+
+            if voltages[2] > VOLTAGE_ON_THRESHOLD:
+                fatal_error('Unexpected voltage on L3')
+
+            self.switch_phases_function(3)
+            time.sleep(PHASE_SWITCH_SETTLE_DURATION + VOLTAGE_SETTLE_DURATION)
+
+            voltages = self.read_voltage_monitors()
+
+            print('Reading voltages as {0}'.format(voltages))
+
+            if voltages[0] < VOLTAGE_ON_THRESHOLD:
+                fatal_error('Missing voltage on L1')
+
+            if voltages[1] < VOLTAGE_OFF_THRESHOLD:
+                fatal_error('Missing voltage on L2')
+
+            if voltages[2] < VOLTAGE_ON_THRESHOLD:
+                fatal_error('Missing voltage on L3')
+
+        self.connect_voltage_monitors(False)
         time.sleep(RELAY_SETTLE_DURATION)
 
         # step 01: test PE disconnect
@@ -894,10 +973,7 @@ class Stage3:
         if not self.check_iec_state('C'):
             fatal_error('Wallbox not in IEC state C. Check contactor!')
 
-        print('Changing meter state to Type2-L1')
-
         self.change_meter_state('Type2-L1')
-
         time.sleep(RELAY_SETTLE_DURATION)
 
         self.click_meter_run_button() # skip QR code
@@ -931,10 +1007,8 @@ class Stage3:
 
         # step 04: test voltage L2
         print('Testing wallbox, step 04/15, test voltage L2')
-        print('Changing meter state to Type2-L2')
 
         self.change_meter_state('Type2-L2')
-
         time.sleep(RELAY_SETTLE_DURATION)
 
         self.click_meter_run_button() # skip QR code
@@ -956,10 +1030,8 @@ class Stage3:
 
         # step 06: test voltage L3
         print('Testing wallbox, step 06/15, test voltage L3')
-        print('Changing meter state to Type2-L3')
 
         self.change_meter_state('Type2-L3')
-
         time.sleep(RELAY_SETTLE_DURATION)
 
         self.click_meter_run_button() # skip QR code
@@ -981,9 +1053,9 @@ class Stage3:
 
         # step 08: test RCD positive
         print('Testing wallbox, step 08/15, test RCD positive')
-        print('Changing meter state to Type2-L1')
 
         self.change_meter_state('Type2-L1')
+
         time.sleep(RELAY_SETTLE_DURATION)
 
         self.click_meter_run_button() # skip QR code
@@ -999,7 +1071,7 @@ class Stage3:
         if self.read_meter_qr_code(timeout=30) != '09':
             fatal_error('Step 08 timeouted')
 
-        self.reset_dc_fault()
+        self.reset_dc_fault('C')
 
         # step 09: test RCD negative
         print('Testing wallbox, step 09/15, test RCD negative')
@@ -1017,17 +1089,10 @@ class Stage3:
         if self.read_meter_qr_code(timeout=30) != '10':
             fatal_error('Step 09 timeouted')
 
-        self.reset_dc_fault()
+        self.reset_dc_fault('A')
 
         # step 10: test R iso L1
         print('Testing wallbox, step 10/15, test R iso L1')
-
-        self.change_cp_pe_state('A')
-
-        time.sleep(RELAY_SETTLE_DURATION + EVSE_SETTLE_DURATION)
-
-        if not self.check_iec_state('A'):
-            fatal_error('Wallbox not in IEC state A')
 
         self.click_meter_run_button() # skip QR code
 
@@ -1038,7 +1103,6 @@ class Stage3:
 
         # step 11: test R iso L2
         print('Testing wallbox, step 11/15, test R iso L2')
-        print('Changing meter state to Type2-L2')
 
         self.change_meter_state('Type2-L2')
         time.sleep(RELAY_SETTLE_DURATION)
@@ -1052,7 +1116,6 @@ class Stage3:
 
         # step 12: test R iso L3
         print('Testing wallbox, step 12/15, test R iso L3')
-        print('Changing meter state to Type2-L3')
 
         self.change_meter_state('Type2-L3')
         time.sleep(RELAY_SETTLE_DURATION)
@@ -1066,7 +1129,6 @@ class Stage3:
 
         # step 13: test R iso N
         print('Testing wallbox, step 13/15, test R iso N')
-        print('Changing meter state to Type2-L1')
 
         self.change_meter_state('Type2-L1')
         time.sleep(RELAY_SETTLE_DURATION)
@@ -1111,7 +1173,8 @@ def main():
     stage3 = Stage3(is_front_panel_button_pressed_function=lambda: False,
                     has_evse_error_function=lambda: False,
                     get_iec_state_function=lambda: 'A',
-                    reset_dc_fault_function=lambda: None)
+                    reset_dc_fault_function=lambda: None,
+                    switch_phases_function=lambda x: None)
 
     stage3.setup()
 
@@ -1122,25 +1185,34 @@ def main():
     button_power_on_smart.grid(row=0, column=0, padx=10, pady=10)
 
     button_power_on_pro = tk.Button(root, text='Power On - Pro', width=50, command=lambda: stage3.power_on('Pro'))
-    button_power_on_pro.grid(row=1, column=0, padx=10, pady=10)
+    button_power_on_pro.grid(row=1, column=0, padx=10, pady=0)
 
     button_power_on_cee = tk.Button(root, text='Power On - CEE', width=50, command=lambda: stage3.power_on('CEE'))
     button_power_on_cee.grid(row=2, column=0, padx=10, pady=10)
 
     button_power_off = tk.Button(root, text='Power Off', width=50, command=lambda: stage3.power_off())
-    button_power_off.grid(row=3, column=0, padx=10, pady=10)
+    button_power_off.grid(row=3, column=0, padx=10, pady=0)
 
     button_cp_pe_state_a = tk.Button(root, text='CP/PE State A', width=50, command=lambda: stage3.change_cp_pe_state('A'))
     button_cp_pe_state_a.grid(row=4, column=0, padx=10, pady=10)
 
     button_cp_pe_state_b = tk.Button(root, text='CP/PE State B', width=50, command=lambda: stage3.change_cp_pe_state('B'))
-    button_cp_pe_state_b.grid(row=5, column=0, padx=10, pady=10)
+    button_cp_pe_state_b.grid(row=5, column=0, padx=10, pady=0)
 
     button_cp_pe_state_c = tk.Button(root, text='CP/PE State C', width=50, command=lambda: stage3.change_cp_pe_state('C'))
     button_cp_pe_state_c.grid(row=6, column=0, padx=10, pady=10)
 
     button_cp_pe_state_d = tk.Button(root, text='CP/PE State D', width=50, command=lambda: stage3.change_cp_pe_state('D'))
-    button_cp_pe_state_d.grid(row=7, column=0, padx=10, pady=10)
+    button_cp_pe_state_d.grid(row=7, column=0, padx=10, pady=0)
+
+    button_meter_state_type2_l1 = tk.Button(root, text='Meter State Type2 L1', width=50, command=lambda: stage3.change_meter_state('Type2-L1'))
+    button_meter_state_type2_l1.grid(row=8, column=0, padx=10, pady=10)
+
+    button_meter_state_type2_l2 = tk.Button(root, text='Meter State Type2 L2', width=50, command=lambda: stage3.change_meter_state('Type2-L2'))
+    button_meter_state_type2_l2.grid(row=9, column=0, padx=10, pady=0)
+
+    button_meter_state_type2_l3 = tk.Button(root, text='Meter State Type2 L3', width=50, command=lambda: stage3.change_meter_state('Type2-L3'))
+    button_meter_state_type2_l3.grid(row=10, column=0, padx=10, pady=10)
 
     root.mainloop()
 

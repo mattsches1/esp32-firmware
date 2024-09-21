@@ -21,11 +21,8 @@
 
 #include <Arduino.h>
 
-#include "api.h"
-#include "task_scheduler.h"
-#include "tools.h"
-
 #include "module_dependencies.h"
+#include "tools.h"
 
 // This is here so I stop commiting changes meant for debugging
 #ifndef CHARGE_LIMITS_TIME_MODIFIER
@@ -125,13 +122,6 @@ void ChargeLimits::setup()
     initialized = true;
 }
 
-#if MODULE_AUTOMATION_AVAILABLE()
-static bool trigger_action(Config *cfg, void *data)
-{
-    return charge_limits.action_triggered(cfg, data);
-}
-#endif
-
 void ChargeLimits::register_urls()
 {
     api.addPersistentConfig("charge_limits/default_limits", &config);
@@ -141,13 +131,20 @@ void ChargeLimits::register_urls()
     api.addCommand("charge_limits/override_duration", &override_duration, {}, [this]() {
         was_triggered = false;
         config_in_use.get("duration")->updateUint(override_duration.get("duration")->asUint());
-        state.get("target_timestamp_ms")->updateUint(state.get("start_timestamp_ms")->asUint() + map_duration(override_duration.get("duration")->asUint()));
+
+        if (override_duration.get("duration")->asUint() == 0)
+            state.get("target_timestamp_ms")->updateUint(0);
+        else
+            state.get("target_timestamp_ms")->updateUint(state.get("start_timestamp_ms")->asUint() + map_duration(override_duration.get("duration")->asUint()));
     }, true);
 
     api.addCommand("charge_limits/override_energy", &override_energy, {}, [this]() {
         was_triggered = false;
         config_in_use.get("energy_wh")->updateUint(override_energy.get("energy_wh")->asUint());
-        state.get("target_energy_kwh")->updateFloat(state.get("start_energy_kwh")->asFloat() + override_energy.get("energy_wh")->asUint() / 1000.0);
+        if (override_energy.get("energy_wh")->asUint() == 0)
+            state.get("target_energy_kwh")->updateFloat(NAN);
+        else
+            state.get("target_energy_kwh")->updateFloat(state.get("start_energy_kwh")->asFloat() + override_energy.get("energy_wh")->asUint() / 1000.0);
     }, true);
 
     api.addCommand("charge_limits/restart", Config::Null(), {}, [this]() {
@@ -233,7 +230,7 @@ void ChargeLimits::register_urls()
 
 #if MODULE_AUTOMATION_AVAILABLE()
         if (target_current == 0 && !was_triggered) {
-            automation.trigger_action(AutomationTriggerID::ChargeLimits, nullptr, &trigger_action);
+            automation.trigger(AutomationTriggerID::ChargeLimits, nullptr, this);
             was_triggered = true;
         } else if (!charging) {
             was_triggered = false;
@@ -248,14 +245,14 @@ void ChargeLimits::register_urls()
 }
 
 #if MODULE_AUTOMATION_AVAILABLE()
-    bool ChargeLimits::action_triggered(Config *config, void *data) {
-        switch (config->getTag<AutomationTriggerID>()) {
-        case AutomationTriggerID::ChargeLimits:
-            return true;
+bool ChargeLimits::has_triggered(const Config *conf, void *data) {
+    switch (conf->getTag<AutomationTriggerID>()) {
+    case AutomationTriggerID::ChargeLimits:
+        return true;
 
-        default:
-            break;
-        }
-        return false;
+    default:
+        break;
     }
+    return false;
+}
 #endif

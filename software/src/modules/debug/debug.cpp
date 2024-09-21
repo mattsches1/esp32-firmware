@@ -20,27 +20,62 @@
 #include "debug.h"
 
 #include <Arduino.h>
-#include "esp_system.h"
-#include "esp_task.h"
-#include "LittleFS.h"
-#include "lwipopts.h"
-#include "soc/rtc.h"
-#include "soc/spi_reg.h"
+#include <esp_debug_helpers.h>
+#include <esp_system.h>
+#include <esp_task.h>
+#include <LittleFS.h>
+#include <lwipopts.h>
+#include <soc/rtc.h>
+#include <soc/spi_reg.h>
 
-#include "api.h"
-#include "task_scheduler.h"
+#include "event_log_prefix.h"
+#include "module_dependencies.h"
+#include "backtrace.h"
+#include "string_builder.h"
+
+#include "config/private.h"
 
 #include "gcc_warnings.h"
 
 #define BENCHMARK_BLOCKSIZE 32768
 
-static float benchmark_area(uint8_t *start_address, size_t max_length);
+static float benchmark_area(uint32_t *start_address, size_t max_length);
 static void get_spi_settings(uint32_t spi_num, uint32_t apb_clk, uint32_t *spi_clk, uint32_t *dummy_cyclelen, const char **spi_mode);
 
-extern uint8_t _text_start;
+extern uint32_t _text_start;
+
+[[gnu::noinline]]
+static void malloc_failed_log_detailed(size_t size, uint32_t caps, const char *function_name, const char *task_name)
+{
+    multi_heap_info_t ram_info;
+    heap_caps_get_info(&ram_info, caps);
+
+    char backtrace_buf[384];
+    size_t backtrace_len = strn_backtrace(backtrace_buf, sizeof(backtrace_buf), 1);
+
+    logger.printfln("malloc_failed_hook sz=%u frBl=%u frTot=%u caps=0x%x fn=%s t=%s", size, ram_info.largest_free_block, ram_info.total_free_bytes, caps, function_name, task_name);
+    logger.write(backtrace_buf, backtrace_len);
+}
+
+// Called on affected task's stack, which might be small.
+static void malloc_failed_hook(size_t size, uint32_t caps, const char *function_name)
+{
+    const char *task_name = pcTaskGetName(xTaskGetCurrentTaskHandle());
+
+    if (strcmp(task_name, "loopTask") == 0 || strcmp(task_name, "httpd") == 0 || strcmp(task_name, "wifi") == 0) {
+        malloc_failed_log_detailed(size, caps, function_name, task_name);
+    } else {
+        logger.write("malloc_failed_hook from other task", 34);
+        logger.write(task_name, strlen(task_name));
+
+        esp_backtrace_print(INT32_MAX);
+    }
+}
 
 void Debug::pre_setup()
 {
+    heap_caps_register_failed_alloc_callback(malloc_failed_hook);
+
     size_t internal_heap_size = heap_caps_get_total_size(MALLOC_CAP_INTERNAL);
     size_t dram_heap_size     = heap_caps_get_total_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     size_t iram_heap_size     = internal_heap_size - dram_heap_size;
@@ -67,13 +102,21 @@ void Debug::pre_setup()
 
     float psram_speed = 0;
 #if defined(BOARD_HAS_PSRAM)
-    psram_speed = benchmark_area(reinterpret_cast<uint8_t *>(0x3FB00000), 128*1024); // 128KiB inside the fourth MiB
+    psram_speed = benchmark_area(reinterpret_cast<uint32_t *>(0x3FB00000), 128*1024); // 128KiB inside the fourth MiB
 #endif
 
+    float dram_speed  = benchmark_area(reinterpret_cast<uint32_t *>(0x3FFAE000), 200*1024);
+    float iram_speed  = benchmark_area(reinterpret_cast<uint32_t *>(0x40080000), 128*1024);
     float flash_speed = benchmark_area(&_text_start, 128*1024); // 128KiB at the beginning of the code
 
     rtc_cpu_freq_config_t cpu_freq_conf;
     rtc_clk_cpu_freq_get_config(&cpu_freq_conf);
+
+    state_spi_bus_prototype = Config::Object({
+        {"clk",          Config::Uint32(0)},
+        {"dummy_cycles", Config::Uint32(0)},
+        {"spi_mode",     Config::Str("", 0, 14)}
+    });
 
     state_static = Config::Object({
         {"heap_dram",  Config::Uint32(dram_heap_size)},
@@ -83,16 +126,14 @@ void Debug::pre_setup()
         {"cpu_clk",    Config::Uint32(cpu_freq_conf.freq_mhz * 1000000)},
         {"apb_clk",    Config::Uint32(rtc_clk_apb_freq_get())},
         {"spi_buses",  Config::Array({},
-            new Config{Config::Object({
-                {"clk",          Config::Uint32(0)},
-                {"dummy_cycles", Config::Uint32(0)},
-                {"spi_mode",     Config::Str("", 0, 14)}
-            })},
+            &state_spi_bus_prototype,
             0, 4, Config::type_id<Config::ConfObject>()
         )},
-        {"flash_mode", Config::Str(flash_mode, 0, 8)},
-        {"flash_benchmark", Config::Float(flash_speed)},
+        {"dram_benchmark",  Config::Float(dram_speed)},
+        {"iram_benchmark",  Config::Float(iram_speed)},
         {"psram_benchmark", Config::Float(psram_speed)},
+        {"flash_benchmark", Config::Float(flash_speed)},
+        {"flash_mode",      Config::Str(flash_mode, 0, 8)},
     });
 
     for (uint32_t i = 0; i < 4; i++) {
@@ -114,14 +155,26 @@ void Debug::pre_setup()
         {"largest_free_dram_block",  Config::Uint32(0)},
         {"largest_free_psram_block", Config::Uint32(0)},
         {"heap_integrity_ok", Config::Bool(true)},
+        {"main_loop_max_runtime_us", Config::Uint32(0)},
+        {"min_free_dram", Config::Uint32(0)},
+        {"min_free_psram", Config::Uint32(0)},
+        {"conf_uint_buf_size", Config::Uint32(0)},
+        {"conf_int_buf_size", Config::Uint32(0)},
+        {"conf_float_buf_size", Config::Uint32(0)},
+        {"conf_string_buf_size", Config::Uint32(0)},
+        {"conf_array_buf_size", Config::Uint32(0)},
+        {"conf_object_buf_size", Config::Uint32(0)},
+        {"conf_union_buf_size", Config::Uint32(0)},
+    });
+
+    state_hwm_prototype = Config::Object({
+        {"task_name",  Config::Str("", 0, CONFIG_FREERTOS_MAX_TASK_NAME_LEN)},
+        {"hwm",        Config::Uint32(0)},
+        {"stack_size", Config::Uint32(0)},
     });
 
     state_hwm = Config::Array({},
-        new Config{Config::Object({
-            {"task_name",  Config::Str("", 0, CONFIG_FREERTOS_MAX_TASK_NAME_LEN)},
-            {"hwm",        Config::Uint32(0)},
-            {"stack_size", Config::Uint32(0)},
-        })},
+        &state_hwm_prototype,
         0, 64, Config::type_id<Config::ConfObject>()
     );
 
@@ -161,17 +214,32 @@ void Debug::setup()
 
         state_slow.get("largest_free_dram_block")->updateUint(dram_info.largest_free_block);
         state_slow.get("largest_free_psram_block")->updateUint(psram_info.largest_free_block);
+        state_slow.get("min_free_dram")->updateUint(dram_info.minimum_free_bytes);
+        state_slow.get("min_free_psram")->updateUint(psram_info.minimum_free_bytes);
 
+        state_slow.get("conf_uint_buf_size")->updateUint(uint_buf_size * sizeof(ConfUintSlot));
+        state_slow.get("conf_int_buf_size")->updateUint(int_buf_size * sizeof(ConfIntSlot));
+        state_slow.get("conf_float_buf_size")->updateUint(float_buf_size * sizeof(ConfFloatSlot));
+        state_slow.get("conf_string_buf_size")->updateUint(string_buf_size * sizeof(ConfStringSlot));
+        state_slow.get("conf_array_buf_size")->updateUint(array_buf_size * sizeof(ConfArraySlot));
+        state_slow.get("conf_object_buf_size")->updateUint(object_buf_size * sizeof(ConfObjectSlot));
+        state_slow.get("conf_union_buf_size")->updateUint(union_buf_size * sizeof(ConfUnionSlot));
+
+        if (dram_info.largest_free_block < 2000) {
+            logger.printfln("Heap full. Largest block is %u bytes.", dram_info.largest_free_block);
+        }
 
         uint32_t task_count = this->task_handles.size();
         for (uint16_t i = 0; i < task_count; i++) {
             uint32_t hwm = uxTaskGetStackHighWaterMark(this->task_handles[i]);
             Config *conf_task_hwm = static_cast<Config *>(this->state_hwm.get(i));
-            if (conf_task_hwm->get("hwm")->updateUint(hwm) && hwm < 400 && this->show_hwm_changes) {
-                logger.printfln("debug: HWM of task '%s' changed: %u", conf_task_hwm->get("task_name")->asUnsafeCStr(), hwm);
+            if (conf_task_hwm->get("hwm")->updateUint(hwm) && hwm < 256) {
+                const char *task_name = conf_task_hwm->get("task_name")->asUnsafeCStr();
+                if (hwm < 120 || strcmp(task_name, "watchdog_task") != 0) {
+                    logger.printfln("HWM of task '%s' changed: %u", task_name, hwm);
+                }
             }
         }
-
 
         uint32_t runtime_avg;
         if (this->integrity_check_runs == 0) {
@@ -192,11 +260,6 @@ void Debug::setup()
         this->integrity_check_runtime_sum = 0;
         this->integrity_check_runtime_max = 0;
     }, 1000, 1000);
-
-    // Don't show HWM changes during the first two minutes after boot.
-    task_scheduler.scheduleOnce([this](){
-        this->show_hwm_changes = true;
-    }, 2 * 60 * 1000);
 
     last_state_update = now_us();
 
@@ -283,16 +346,14 @@ void Debug::register_urls()
     });
 
     server.on_HTTPThread("/debug/state_sizes", HTTP_GET, [](WebServerRequest req) {
-        char str[3968]; // on httpd stack, which is large enough
-        ssize_t len = 0;
-        task_scheduler.await([&str, &len]() {
-            size_t offset = 0;
+        char buf[3072]; // on httpd stack, which is large enough
+        StringWriter sw(buf, sizeof(buf));
+        task_scheduler.await([&sw]() {
             for (const auto &reg : api.states) {
-                offset += snprintf_u(str + offset, sizeof(str) - offset, "%4u %s\n", reg.config->string_length(), reg.path);
+                sw.printf("%4u %s\n", reg.config->string_length(), reg.path);
             }
-            len = static_cast<ssize_t>(offset);
         });
-        return req.send(200, "text/plain", str, len);
+        return req.send(200, "text/plain", sw.getPtr(), static_cast<ssize_t>(sw.getLength()));
     });
 
 #ifdef DEBUG_FS_ENABLE
@@ -385,9 +446,13 @@ void Debug::register_urls()
         }
 
         File f = LittleFS.open(path, "w");
-        char *payload = request.receive();
-        f.write(reinterpret_cast<uint8_t *>(payload), request.contentLength());
-        free(payload);
+
+        auto size = request.contentLength();
+        auto payload = heap_alloc_array<char>(size);
+        if (request.receive(payload.get(), size) < 0)
+            return request.send(500, "text/plain", "failed to receive");
+
+        f.write(reinterpret_cast<uint8_t *>(payload.get()), size);
         return request.send(200, "text/plain", ("File " + path + " created.").c_str());
     });
 #endif
@@ -415,7 +480,7 @@ void Debug::register_events()
 
     register_task("tiT",            TCPIP_THREAD_STACKSIZE);
     register_task("emac_rx",        2048, Optional); // stack size from esp_eth_mac.h
-    register_task("wifi",           0,    Optional); // stack size unknown, from closed source libpp
+    register_task("wifi",           6656, Optional); // stack size observed at runtime from task creation
     register_task("sys_evt",        ESP_TASKD_EVENT_STACK); // created in WiFiGeneric.cpp
     register_task("arduino_events", 4096); // stack size from WiFiGeneric.cpp
 
@@ -433,10 +498,24 @@ void Debug::register_events()
     register_task("wpsT",            0, ExpectMissing);
 }
 
+#if defined(BOARD_HAS_PSRAM) && BOARD_HAS_PSRAM == 1
+#define CHECK_PSRAM 1
+#else
+#define CHECK_PSRAM 0
+#endif
+
 void Debug::loop()
 {
     micros_t start = now_us();
-    bool check_ok = heap_caps_check_integrity_all(integrity_check_print_errors);
+    if (CHECK_PSRAM && check_psram_next) {
+        psram_heap_valid = heap_caps_check_integrity(MALLOC_CAP_SPIRAM, integrity_check_print_errors);
+        check_psram_next = false;
+    } else {
+        internal_heap_valid = heap_caps_check_integrity(MALLOC_CAP_INTERNAL, integrity_check_print_errors);
+        if (CHECK_PSRAM) {
+            check_psram_next = true;
+        }
+    }
     uint32_t runtime = static_cast<uint32_t>(static_cast<int64_t>(now_us() - start));
 
     integrity_check_runs++;
@@ -446,10 +525,17 @@ void Debug::loop()
         integrity_check_runtime_max = runtime;
     }
 
-    if (!check_ok) {
+    if (!(internal_heap_valid & psram_heap_valid)) {
         state_slow.get("heap_integrity_ok")->updateBool(false);
         integrity_check_print_errors = false;
     }
+
+    uint32_t run = static_cast<uint32_t>(static_cast<int64_t>(start - last_run));
+    if (run > run_max && last_run != 0_us) {
+        run_max = run;
+        state_slow.get("main_loop_max_runtime_us")->updateUint(run_max);
+    }
+    last_run = start;
 }
 
 void Debug::register_task(const char *task_name, uint32_t stack_size, TaskAvailability availability)
@@ -457,12 +543,12 @@ void Debug::register_task(const char *task_name, uint32_t stack_size, TaskAvaila
     TaskHandle_t handle = xTaskGetHandle(task_name);
     if (!handle) {
         if (availability == ExpectPresent) {
-            logger.printfln("debug: Can't find task '%s'", task_name);
+            logger.printfln("Can't find task '%s'", task_name);
         }
         return;
     }
     if (availability == ExpectMissing) {
-        logger.printfln("debug: Found task '%s'", task_name);
+        logger.printfln("Found task '%s'", task_name);
     }
     register_task(handle, stack_size);
 }
@@ -470,13 +556,13 @@ void Debug::register_task(const char *task_name, uint32_t stack_size, TaskAvaila
 void Debug::register_task(TaskHandle_t handle, uint32_t stack_size)
 {
     if (!handle) {
-        logger.printfln("debug: register_task called with invalid handle.");
+        logger.printfln("register_task called with invalid handle.");
         return;
     }
 
     const char *task_name = pcTaskGetName(handle);
     if (!task_name) {
-        logger.printfln("debug: register_task couldn't find task.");
+        logger.printfln("register_task couldn't find task.");
         return;
     }
 
@@ -488,30 +574,51 @@ void Debug::register_task(TaskHandle_t handle, uint32_t stack_size)
     conf->get("stack_size")->updateUint(stack_size);
 }
 
-static float benchmark_area(uint8_t *start_address, size_t max_length)
+static float benchmark_area(uint32_t *start_address, size_t max_length)
 {
-    uint8_t *buffer = static_cast<uint8_t *>(heap_caps_malloc(BENCHMARK_BLOCKSIZE, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
-    if (!buffer) {
-        logger.printfln("debug: Can't malloc %i bytes for benchmark buffer.", BENCHMARK_BLOCKSIZE);
-        return 0;
-    }
-
-    size_t blocks = max_length / BENCHMARK_BLOCKSIZE;
-    size_t test_length = blocks * BENCHMARK_BLOCKSIZE;
+    uint32_t *end_address = start_address + (max_length / 4);
 
     micros_t start_time = now_us();
-    while (blocks > 0) {
-        memcpy(buffer, start_address, BENCHMARK_BLOCKSIZE);
-        start_address += BENCHMARK_BLOCKSIZE;
-        blocks--;
+    while (start_address < end_address) {
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
+        asm volatile ("" : /* No outputs */ : "r" (*start_address++));
     }
     micros_t runtime = now_us() - start_time;
+
     uint32_t runtime32 = static_cast<uint32_t>(static_cast<int64_t>(runtime));
     float runtime_f = static_cast<float>(runtime32);
-    float test_length_f = static_cast<float>(test_length);
+    float test_length_f = static_cast<float>(max_length);
     float speed_MiBps = (test_length_f * 1000000.0F) / (runtime_f * 1024 * 1024);
-
-    free(buffer);
 
     return speed_MiBps;
 }
@@ -544,7 +651,7 @@ static void get_spi_settings(uint32_t spi_num, uint32_t apb_clk, uint32_t *spi_c
         }
     } else {
         *spi_mode = "invalid mode";
-        logger.printfln("debug: fread_qio=%u fread_dio=%u fread_quad=%u fread_dual=%u", fread_qio, fread_dio, fread_quad, fread_dual);
+        logger.printfln("fread_qio=%u fread_dio=%u fread_quad=%u fread_dual=%u", fread_qio, fread_dio, fread_quad, fread_dual);
     }
 
     // Clock

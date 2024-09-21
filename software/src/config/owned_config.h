@@ -1,14 +1,33 @@
+/* esp32-firmware
+ * Copyright (C) 2020-2024 Erik Fleckstein <erik@tinkerforge.com>
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the
+ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+ * Boston, MA 02111-1307, USA.
+ */
+
 #pragma once
 
 #include <vector>
 #include <memory>
-
-#include "event_log.h"
-#include "cool_string.h"
+#include <esp_system.h>
 
 #define STRICT_VARIANT_ASSUME_MOVE_NOTHROW true
-#include "strict_variant/variant.hpp"
-#include "strict_variant/mpl/find_with.hpp"
+#include <strict_variant/variant.hpp>
+#include <strict_variant/mpl/find_with.hpp>
+
+#include "cool_string.h"
 
 struct OwnedConfig {
     struct OwnedConfigArray;
@@ -64,8 +83,7 @@ struct OwnedConfig {
     template<typename ConfigT>
     const ConfigT *as() const {
         if (!this->is<ConfigT>()) {
-            logger.printfln("as: Config has wrong type.");
-            esp_system_abort("");
+            esp_system_abort("as: Config has wrong type.");
         }
         return strict_variant::get<ConfigT>(&value);
     }
@@ -88,8 +106,7 @@ struct OwnedConfig {
         } else if (this->is<int32_t>()) {
             return (T) this->asInt();
         } else {
-            logger.printfln("asEnum: Config has wrong type.");
-            esp_system_abort("");
+            esp_system_abort("asEnum: Config has wrong type.");
         }
     }
 
@@ -127,8 +144,7 @@ private:
     template<typename T, typename ConfigT>
     size_t fillArray(T *arr, size_t count) const{
         if (!this->is<OwnedConfigArray>()) {
-            logger.printfln("Can't fill array, Config is not an array");
-            esp_system_abort("");
+            esp_system_abort("Can't fill array, Config is not an array");
         }
 
         const auto &elements = strict_variant::get<OwnedConfig::OwnedConfigArray>(&value)->elements;
@@ -137,8 +153,7 @@ private:
         for (size_t i = 0; i < toWrite; ++i) {
             const OwnedConfig *entry = &elements[i];
             if (!entry->is<ConfigT>()) {
-                logger.printfln("Config entry has wrong type.");
-                esp_system_abort("");
+                esp_system_abort("Config entry has wrong type.");
             }
             arr[i] = *strict_variant::get<ConfigT>(&entry->value);
         }

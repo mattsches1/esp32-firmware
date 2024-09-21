@@ -20,9 +20,10 @@
 #pragma once
 
 #include <stdint.h>
-#include "WString.h"
-#include "meters_defs.h"
+#include <WString.h>
+
 #include "config.h"
+#include "meter_class_id.enum.h"
 
 class IMeter
 {
@@ -32,6 +33,7 @@ public:
     virtual MeterClassID get_class() const = 0;
     virtual void setup(const Config &ephemeral_config) {}
     virtual void register_urls(const String &base_url) {}
+    virtual void pre_reboot() {}
 
     virtual bool supports_power()         {return false;}
     virtual bool supports_energy_import() {return false;}

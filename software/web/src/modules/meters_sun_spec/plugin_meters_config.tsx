@@ -21,7 +21,7 @@ import * as API from "../../ts/api";
 import * as util from "../../ts/util";
 import { h, Fragment, Component, ComponentChildren } from "preact";
 import { __, translate_unchecked } from "../../ts/translation";
-import { MeterClassID } from "../meters/meters_defs";
+import { MeterClassID } from "../meters/meter_class_id.enum";
 import { MeterConfig } from "../meters/types";
 import { InputText } from "../../ts/components/input_text";
 import { InputNumber } from "../../ts/components/input_number";
@@ -41,7 +41,11 @@ export type SunSpecMetersConfig = [
         host: string;
         port: number;
         device_address: number;
+        manufacturer_name: string;
+        model_name: string;
+        serial_number: string;
         model_id: number;
+        model_instance: number;
     },
 ];
 
@@ -50,11 +54,10 @@ interface DeviceScannerResult {
     manufacturer_name: string;
     model_name: string;
     display_name: string;
-    options: string;
-    version: string;
     serial_number: string;
     device_address: number;
     model_id: number;
+    model_instance: number;
 }
 
 interface DeviceScannerProps {
@@ -64,6 +67,8 @@ interface DeviceScannerProps {
 }
 
 interface DeviceScannerState {
+    scan_device_address_first: number;
+    scan_device_address_last: number;
     scan_running: boolean;
     scan_cookie: number;
     scan_progress: number;
@@ -79,6 +84,8 @@ class DeviceScanner extends Component<DeviceScannerProps, DeviceScannerState> {
         super();
 
         this.state = {
+            scan_device_address_first: 1,
+            scan_device_address_last: 247,
             scan_running: false,
             scan_cookie: null,
             scan_progress: 0,
@@ -117,17 +124,16 @@ class DeviceScanner extends Component<DeviceScannerProps, DeviceScannerState> {
             // this combination must be unique according to sunspec specification
             let unique_id = scan_result.manufacturer_name + scan_result.model_name + scan_result.serial_number;
 
-            if (this.state.scan_results.filter((other) => other.unique_id == unique_id && other.model_id == scan_result.model_id).length == 0) {
+            if (this.state.scan_results.filter((other) => other.unique_id == unique_id && other.model_id == scan_result.model_id && other.model_instance == scan_result.model_instance).length == 0) {
                 this.setState({scan_results: this.state.scan_results.concat({
                     unique_id: unique_id,
                     manufacturer_name: scan_result.manufacturer_name,
                     model_name: scan_result.model_name,
-                    display_name: scan_result.model_name.startsWith(scan_result.manufacturer_name) ? scan_result.model_name : scan_result.manufacturer_name + ' ' + scan_result.model_name,
-                    options: scan_result.options,
-                    version: scan_result.version,
+                    display_name: scan_result.model_name.startsWith(scan_result.manufacturer_name) ? scan_result.model_name.trim() : scan_result.manufacturer_name.trim() + ' ' + scan_result.model_name.trim(),
                     serial_number: scan_result.serial_number,
                     device_address: scan_result.device_address,
                     model_id: scan_result.model_id,
+                    model_instance: scan_result.model_instance,
                 })});
             }
         });
@@ -144,7 +150,7 @@ class DeviceScanner extends Component<DeviceScannerProps, DeviceScannerState> {
                 this.scan_continue_timer = undefined;
             }
 
-            this.setState({scan_running: false, scan_cookie: null});
+            this.setState({scan_running: false, scan_cookie: null, scan_progress: 100});
         });
     }
 
@@ -213,7 +219,8 @@ class DeviceScanner extends Component<DeviceScannerProps, DeviceScannerState> {
             </div>
             <div class="d-flex w-100 justify-content-between">
                 <span class="text-left">{__("meters_sun_spec.content.config_device_address")}: {scan_result.device_address}</span>
-                <span class="text-right">{__("meters_sun_spec.content.config_model_id") + ": " + translate_unchecked(`meters_sun_spec.content.model_${scan_result.model_id}`)}</span>
+                <span class="text-center">{__("meters_sun_spec.content.config_serial_number")}: {scan_result.serial_number}</span>
+                <span class="text-right">{__("meters_sun_spec.content.config_model_id")}: {translate_unchecked(`meters_sun_spec.content.model_${scan_result.model_id}`)} / {scan_result.model_instance}</span>
             </div>
         </ListGroupItem>;
     }
@@ -255,7 +262,31 @@ class DeviceScanner extends Component<DeviceScannerProps, DeviceScannerState> {
 
     render() {
         return <>
-            <FormRow label={__("meters_sun_spec.content.scan_title")}>
+            <FormRow label={__("meters_sun_spec.content.scan_title")} label_muted={__("meters_sun_spec.content.scan_title_muted")}>
+                <div class="row">
+                    <div class="col-sm-6">
+                        <InputNumber
+                            required
+                            min={1}
+                            max={247}
+                            value={this.state.scan_device_address_first}
+                            onValue={(v) => {
+                                this.setState({scan_device_address_first: v});
+                            }} />
+                    </div>
+                    <div class="col-sm-6">
+                        <InputNumber
+                            required
+                            min={1}
+                            max={247}
+                            value={this.state.scan_device_address_last}
+                            onValue={(v) => {
+                                this.setState({scan_device_address_last: v});
+                            }} />
+                    </div>
+                </div>
+            </FormRow>
+            <FormRow label="">
             {!this.state.scan_running ?
                 <Button variant="primary"
                         className="form-control"
@@ -273,8 +304,13 @@ class DeviceScanner extends Component<DeviceScannerProps, DeviceScannerState> {
                                 let result;
 
                                 try {
-                                    result = await (await util.put('/meters_sun_spec/scan',
-                                                                   {host: this.props.host, port: this.props.port, cookie: scan_cookie})).text();
+                                    result = await (await util.put('/meters_sun_spec/scan', {
+                                        host: this.props.host,
+                                        port: this.props.port,
+                                        device_address_first: this.state.scan_device_address_first,
+                                        device_address_last: this.state.scan_device_address_last,
+                                        cookie: scan_cookie,
+                                    })).text();
                                 }
                                 catch (e) {
                                     this.setState({
@@ -317,7 +353,7 @@ class DeviceScanner extends Component<DeviceScannerProps, DeviceScannerState> {
                     <Button variant="primary"
                             disabled={this.state.scan_running || this.state.scan_log.length == 0}
                             className="form-control"
-                            onClick={() => util.downloadToFile(this.state.scan_log, "sun-spec-scan-log", "txt", "text/plain")}>
+                            onClick={() => util.downloadToFile(this.state.scan_log, __("meters_sun_spec.content.scan_log_file"), "txt", "text/plain")}>
                         <span class="mr-2">{__("meters_sun_spec.content.scan_log")}</span>
                         <Download/>
                     </Button>
@@ -344,7 +380,7 @@ export function init() {
     return {
         [MeterClassID.SunSpec]: {
             name: __("meters_sun_spec.content.meter_class"),
-            new_config: () => [MeterClassID.SunSpec, {display_name: "", host: "", port: 502, device_address: null, model_id: null}] as MeterConfig,
+            new_config: () => [MeterClassID.SunSpec, {display_name: "", host: "", port: 502, device_address: null, manufacturer_name: null, model_name: null, serial_number: null, model_id: null}] as MeterConfig,
             clone_config: (config: MeterConfig) => [config[0], {...config[1]}] as MeterConfig,
             get_edit_children: (config: SunSpecMetersConfig, on_config: (config: SunSpecMetersConfig) => void): ComponentChildren => {
                 let model_ids: [string, string][] = [];
@@ -355,7 +391,7 @@ export function init() {
                     }
                 }
 
-                return [<>
+                return [
                     <FormRow label={__("meters_sun_spec.content.config_host")}>
                         <InputText
                             required
@@ -366,8 +402,8 @@ export function init() {
                                 on_config(util.get_updated_union(config, {host: v}));
                             }}
                             invalidFeedback={__("meters_sun_spec.content.config_host_invalid")} />
-                    </FormRow>
-                    <FormRow label={__("meters_sun_spec.content.config_port")}>
+                    </FormRow>,
+                    <FormRow label={__("meters_sun_spec.content.config_port")} label_muted={__("meters_sun_spec.content.config_port_muted")}>
                         <InputNumber
                             required
                             min={1}
@@ -376,12 +412,20 @@ export function init() {
                             onValue={(v) => {
                                 on_config(util.get_updated_union(config, {port: v}));
                             }} />
-                    </FormRow>
-                    <hr/>
+                    </FormRow>,
+                    <hr/>,
                     <DeviceScanner host={config[1].host} port={config[1].port} onResultSelected={(result: DeviceScannerResult) => {
-                        on_config(util.get_updated_union(config, {display_name: result.display_name, device_address: result.device_address, model_id: result.model_id}));
-                    }} />
-                    <hr/>
+                        on_config(util.get_updated_union(config, {
+                            display_name: result.display_name,
+                            device_address: result.device_address,
+                            manufacturer_name: result.manufacturer_name,
+                            model_name: result.model_name,
+                            serial_number: result.serial_number,
+                            model_id: result.model_id,
+                            model_instance: result.model_instance,
+                        }));
+                    }} />,
+                    <hr/>,
                     <FormRow label={__("meters_sun_spec.content.config_display_name")}>
                         <InputText
                             required
@@ -390,7 +434,7 @@ export function init() {
                             onValue={(v) => {
                                 on_config(util.get_updated_union(config, {display_name: v}));
                             }} />
-                    </FormRow>
+                    </FormRow>,
                     <FormRow label={__("meters_sun_spec.content.config_device_address")}>
                         <InputNumber
                             required
@@ -400,7 +444,35 @@ export function init() {
                             onValue={(v) => {
                                 on_config(util.get_updated_union(config, {device_address: v}));
                             }} />
-                    </FormRow>
+                    </FormRow>,
+                    <FormRow label={__("meters_sun_spec.content.config_unique_id")} label_muted={__("meters_sun_spec.content.config_unique_id_muted")}>
+                        <div class="row">
+                            <div class="col-sm-4">
+                                <InputText
+                                    maxLength={32}
+                                    value={config[1].manufacturer_name}
+                                    onValue={(v) => {
+                                        on_config(util.get_updated_union(config, {manufacturer_name: v}));
+                                    }} />
+                            </div>
+                            <div class="col-sm-4">
+                                <InputText
+                                    maxLength={32}
+                                    value={config[1].model_name}
+                                    onValue={(v) => {
+                                        on_config(util.get_updated_union(config, {model_name: v}));
+                                    }} />
+                            </div>
+                            <div class="col-sm-4">
+                                <InputText
+                                    maxLength={32}
+                                    value={config[1].serial_number}
+                                    onValue={(v) => {
+                                        on_config(util.get_updated_union(config, {serial_number: v}));
+                                    }} />
+                            </div>
+                        </div>
+                    </FormRow>,
                     <FormRow label={__("meters_sun_spec.content.config_model_id")}>
                         <InputSelect
                             required
@@ -410,8 +482,18 @@ export function init() {
                             onValue={(v) => {
                                 on_config(util.get_updated_union(config, {model_id: parseInt(v)}));
                             }} />
-                    </FormRow>
-                </>];
+                    </FormRow>,
+                    <FormRow label={__("meters_sun_spec.content.config_model_instance")}>
+                        <InputNumber
+                            required
+                            min={0}
+                            max={65535}
+                            value={config[1].model_instance}
+                            onValue={(v) => {
+                                on_config(util.get_updated_union(config, {model_instance: v}));
+                            }} />
+                    </FormRow>,
+                ];
             },
         },
     };

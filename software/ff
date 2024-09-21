@@ -29,26 +29,25 @@ parser.add_argument("firmware", nargs='?', default=None)
 parser.add_argument("-S", "--no-serial", action="store_true")
 parser.add_argument("-s", "--serial-only", action="store_true")
 parser.add_argument("-e", "--erase", action="store_true")
+parser.add_argument("-r", "--reboot", action="store_true")
 args = parser.parse_args()
 
 def get_latest_fw(fw_type=''):
-    files = os.listdir("build")
-    files = [x for x in files if x.endswith("_merged.bin") and (fw_type == '' or x.startswith(fw_type + "_firmware"))]
-    latest = max(files, key=lambda x: int(x.replace("-NIGHTLY", "").replace("-WITH-WIFI-PASSPHRASE-DO-NOT-DISTRIBUTE", "").split("_firmware_")[1].split("_")[3], 16), default=None)
-    if latest is None:
-        if os.path.exists(fw_type):
-            return fw_type
+    if len(fw_type) > 0:
+        latest = f'build/{fw_type}_firmware_latest_merged.bin'
+    else:
+        latest = 'build/firmware_latest_merged.bin'
+
+    if not os.path.exists(latest):
         print("Failed to find a firmware containing the string {}".format(fw_type))
         sys.exit(0)
-    return os.path.join("build", latest)
 
-if args.firmware is None:
-    firmware = get_latest_fw()
-else:
-    if ".bin" in args.firmware:
-        firmware = args.firmware
-    else:
-        firmware = get_latest_fw(args.firmware)
+    try:
+        latest = os.path.join('build', os.readlink(latest))
+    except OSError:
+        pass
+
+    return latest
 
 if args.port:
     if len(args.port) < 6:
@@ -63,9 +62,23 @@ if args.erase:
     os.system("pio pkg exec esptool.py -- --port {} --chip esp32 erase_flash".format(port))
 
 if not args.serial_only:
+    if args.firmware is None:
+        firmware = get_latest_fw()
+    else:
+        if os.path.exists(args.firmware):
+            if ".elf" in args.firmware:
+                firmware = args.firmware.replace(".elf", "_merged.bin")
+            if "_merged.bin" in args.firmware:
+                firmware = args.firmware
+        else:
+            firmware = get_latest_fw(args.firmware)
+
     print(green("Flashing firmware {} to port {}".format(firmware, port)))
 
     os.system("pio pkg exec esptool.py -- --port {} --chip esp32 --baud 921600 --before default_reset --after hard_reset write_flash 0x1000 {}".format(port, firmware))
+
+if args.reboot:
+    os.system("pio pkg exec esptool.py -- --port {} --chip esp32 --baud 921600 run".format(port))
 
 if not args.no_serial:
     while True:

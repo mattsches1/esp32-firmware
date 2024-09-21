@@ -17,24 +17,23 @@
  * Boston, MA 02111-1307, USA.
  */
 
-import $ from "../../ts/jq";
 import { METERS_SLOTS } from "../../build";
 import * as util from "../../ts/util";
 import * as API from "../../ts/api";
 import { __, translate_unchecked } from "../../ts/translation";
-import { h, render, createRef, Fragment, Component, RefObject, ComponentChild, toChildArray } from "preact";
+import { h, createRef, Fragment, Component, RefObject, ComponentChild } from "preact";
 import { Button, ButtonGroup } from "react-bootstrap";
-import { HelpCircle, Zap, ZapOff, ChevronRight } from "react-feather";
 import { FormRow } from "../../ts/components/form_row";
 import { InputSelect } from "../../ts/components/input_select";
 import { FormSeparator } from "../../ts/components/form_separator";
 import { ConfigComponent } from "../../ts/components/config_component";
 import { ConfigForm } from "../../ts/components/config_form";
 import { OutputFloat } from "../../ts/components/output_float";
-import uPlot from "uplot";
 import { SubPage } from "../../ts/components/sub_page";
+import { UplotLoader } from "../../ts/components/uplot_loader";
+import { UplotWrapper, UplotData } from "../../ts/components/uplot_wrapper";
 import { MeterValueID, METER_VALUE_IDS, METER_VALUE_INFOS, METER_VALUE_ORDER } from "./meter_value_id";
-import { MeterClassID } from "./meters_defs";
+import { MeterClassID } from "./meter_class_id.enum";
 import { MeterConfig, MeterConfigPlugin } from "./types";
 import { Table } from "../../ts/components/table";
 import { PageHeader } from "../../ts/components/page_header";
@@ -42,6 +41,13 @@ import { plugins_init } from "./plugins";
 import { InputDate } from "../../ts/components/input_date";
 import { InputTime } from "../../ts/components/input_time";
 import { InputText } from "../../ts/components/input_text";
+import { NavbarItem } from "../../ts/components/navbar_item";
+import { StatusSection } from "../../ts/components/status_section";
+import { HelpCircle, Zap, ZapOff, ChevronRight, BarChart2 } from "react-feather";
+
+export function MetersNavbar() {
+    return <NavbarItem name="meters" module="meters" title={__("meters.navbar.meters")} symbol={<BarChart2 />} />;
+}
 
 const PHASE_CONNECTED_VOLTAGE_THRESHOLD = 180.0; // V
 const PHASE_ACTIVE_CURRENT_THRESHOLD = 0.3; // A
@@ -53,454 +59,10 @@ interface CachedData {
     samples: number[/*meter_slot*/][];
 }
 
-interface UplotData {
-    keys: string[];
-    names: string[];
-    values: number[][];
-}
-
-interface UplotWrapperProps {
-    id: string;
-    class: string;
-    sidebar_id: string;
-    show: boolean;
-    legend_time_with_seconds: boolean;
-    aspect_ratio: number;
-    x_height: number;
-    x_include_date: boolean;
-    y_min?: number;
-    y_max?: number;
-    y_diff_min?: number;
-}
-
-// https://seaborn.pydata.org/tutorial/color_palettes.html#qualitative-color-palettes
-// sns.color_palette("tab10")
-const strokes = [
-    'rgb(  0, 123, 255)', // use bootstrap blue instead of tab10 blue, to avoid subtle conflict between plot and button blue
-    'rgb(255, 127,  14)',
-    'rgb( 44, 160,  44)',
-    'rgb(214,  39,  40)',
-    'rgb(148, 103, 189)',
-    'rgb(140,  86,  75)',
-    'rgb(227, 119, 194)',
-    'rgb(127, 127, 127)',
-    'rgb(188, 189,  34)',
-    'rgb( 23, 190, 207)',
-];
-
-const fills = [
-    'rgb(  0, 123, 255, 0.1)', // use bootstrap blue instead of tab10 blue, to avoid subtle conflict between plot and button blue
-    'rgb(255, 127,  14, 0.1)',
-    'rgb( 44, 160,  44, 0.1)',
-    'rgb(214,  39,  40, 0.1)',
-    'rgb(148, 103, 189, 0.1)',
-    'rgb(140,  86,  75, 0.1)',
-    'rgb(227, 119, 194, 0.1)',
-    'rgb(127, 127, 127, 0.1)',
-    'rgb(188, 189,  34, 0.1)',
-    'rgb( 23, 190, 207, 0.1)',
-];
-
-let color_cache: {[id: string]: {stroke: string, fill: string}} = {};
-let color_cache_next: {[id: string]: number} = {};
-
-function get_color(group: string, name: string)
-{
-    let key = group + '-' + name;
-
-    if (!color_cache[key]) {
-        if (!util.hasValue(color_cache_next[group])) {
-            color_cache_next[group] = 0;
-        }
-
-        color_cache[key] = {
-            stroke: strokes[color_cache_next[group] % strokes.length],
-            fill: fills[color_cache_next[group] % fills.length],
-        };
-
-        color_cache_next[group]++;
-    }
-
-    return color_cache[key];
-}
-
-class UplotWrapper extends Component<UplotWrapperProps, {}> {
-    uplot: uPlot;
-    data: UplotData;
-    pending_data: UplotData;
-    series_visibility: {[id: string]: boolean} = {};
-    visible: boolean = false;
-    div_ref = createRef();
-    observer: ResizeObserver;
-    y_min: number = 0;
-    y_max: number = 0;
-
-    shouldComponentUpdate() {
-        return false;
-    }
-
-    componentDidMount() {
-        if (this.uplot) {
-            return;
-        }
-
-        // FIXME: special hack for status page that is visible by default
-        //        and doesn't receive an initial shown event because of that
-        this.visible = this.props.sidebar_id === "status";
-
-        // We have to use jquery here or else the events don't fire?
-        // This can be removed once the sidebar is ported to preact.
-        $(`#sidebar-${this.props.sidebar_id}`).on('shown.bs.tab', () => {
-            this.visible = true;
-
-            if (this.pending_data !== undefined) {
-                this.set_data(this.pending_data);
-            }
-        });
-
-        $(`#sidebar-${this.props.sidebar_id}`).on('hidden.bs.tab', () => {
-            this.visible = false;
-        });
-
-        let options = {
-            ...this.get_size(),
-            pxAlign: 0,
-            cursor: {
-                drag: {
-                    x: false, // disable zoom
-                },
-            },
-            series: [
-                {
-                    label: __("meters.script.time"),
-                    value: (self: uPlot, rawValue: number) => {
-                        if (rawValue !== null) {
-                            if (this.props.legend_time_with_seconds) {
-                                return util.timestamp_sec_to_date(rawValue)
-                            }
-                            else {
-                                return util.timestamp_min_to_date((rawValue / 60), '???');
-                            }
-                        }
-
-                        return null;
-                    },
-                },
-            ],
-            axes: [
-                {
-                    size: this.props.x_height,
-                    incrs: [
-                        60,
-                        60 * 2,
-                        3600,
-                        3600 * 2,
-                        3600 * 4,
-                        3600 * 6,
-                        3600 * 8,
-                        3600 * 12,
-                        3600 * 24,
-                    ],
-                    values: (self: uPlot, splits: number[], axisIdx: number, foundSpace: number, foundIncr: number) => {
-                        let values: string[] = new Array(splits.length);
-                        let last_year: string = null;
-                        let last_month_and_day: string = null;
-
-                        for (let i = 0; i < splits.length; ++i) {
-                            let date = new Date(splits[i] * 1000);
-                            let value = date.toLocaleString([], {hour: '2-digit', minute: '2-digit'});
-
-                            if (this.props.x_include_date && foundIncr >= 3600) {
-                                let year = date.toLocaleString([], {year: 'numeric'});
-                                let month_and_day = date.toLocaleString([], {month: '2-digit', day: '2-digit'});
-
-                                if (year != last_year) {
-                                    value += '\n' + date.toLocaleString([], {year: 'numeric', month: '2-digit', day: '2-digit'});
-                                    last_year = year;
-                                    last_month_and_day = month_and_day;
-                                }
-
-                                if (month_and_day != last_month_and_day) {
-                                    value += '\n' + date.toLocaleString([], {month: '2-digit', day: '2-digit'});
-                                    last_month_and_day = month_and_day;
-                                }
-                            }
-
-                            values[i] = value;
-                        }
-
-                        return values;
-                    },
-                },
-                {
-                    label: __("meters.script.power") + " [Watt]",
-                    labelSize: 20,
-                    labelGap: 2,
-                    labelFont: 'bold 14px system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"',
-                    size: (self: uPlot, values: string[], axisIdx: number, cycleNum: number): number => {
-                        let size = 0;
-
-                        if (values) {
-                            self.ctx.save();
-                            self.ctx.font = self.axes[axisIdx].font;
-
-                            for (let i = 0; i < values.length; ++i) {
-                                size = Math.max(size, self.ctx.measureText(values[i]).width);
-                            }
-
-                            self.ctx.restore();
-                        }
-
-                        return Math.ceil(size / devicePixelRatio) + 20;
-                    },
-                    values: (self: uPlot, splits: number[]) => {
-                        let values: string[] = new Array(splits.length);
-
-                        for (let digits = 0; digits <= 3; ++digits) {
-                            let last_value: string = null;
-                            let unique = true;
-
-                            for (let i = 0; i < splits.length; ++i) {
-                                values[i] = util.toLocaleFixed(splits[i], digits);
-
-                                if (last_value == values[i]) {
-                                    unique = false;
-                                }
-
-                                last_value = values[i];
-                            }
-
-                            if (unique) {
-                                break;
-                            }
-                        }
-
-                        return values;
-                    },
-                },
-            ],
-            scales: {
-                y: {
-                    range: (self: uPlot, initMin: number, initMax: number, scaleKey: string): uPlot.Range.MinMax => {
-                        return uPlot.rangeNum(this.y_min, this.y_max, {min: {}, max: {}});
-                    }
-                },
-            },
-            padding: [null, 20, null, 5] as uPlot.Padding,
-            plugins: [
-                {
-                    hooks: {
-                        setSeries: (self: uPlot, seriesIdx: number, opts: uPlot.Series) => {
-                            this.series_visibility[this.data.keys[seriesIdx]] = opts.show;
-                            this.update_internal_data();
-                        },
-                        drawAxes: [
-                            (self: uPlot) => {
-                                let ctx = self.ctx;
-                                let s  = self.series[0];
-                                let xd = self.data[0];
-                                let [i0, i1] = s.idxs;
-                                let x0 = self.valToPos(xd[i0], 'x', true) - self.axes[0].ticks.size * devicePixelRatio;
-                                let x1 = self.valToPos(xd[i1], 'x', true);
-                                let y = self.valToPos(0, 'y', true);
-
-                                if (y > ctx.canvas.height - this.props.x_height) {
-                                    return;
-                                }
-
-                                const lineWidth = 2 * devicePixelRatio;
-                                const offset = (lineWidth % 2) / 2;
-
-                                ctx.save();
-                                ctx.translate(offset, offset);
-                                ctx.beginPath();
-                                ctx.lineWidth = lineWidth;
-                                ctx.strokeStyle = 'rgb(0,0,0,0.2)';
-                                ctx.moveTo(x0, y);
-                                ctx.lineTo(x1, y);
-                                ctx.stroke();
-                                ctx.translate(-offset, -offset);
-                                ctx.restore();
-                            },
-                        ],
-                    },
-                },
-            ],
-        };
-
-        let div = this.div_ref.current;
-        this.uplot = new uPlot(options, [], div);
-
-        try {
-            this.observer = new ResizeObserver(() => {
-                this.resize();
-            });
-
-            this.observer.observe(div);
-        } catch (e) {
-            setInterval(() => {
-                this.resize();
-            }, 500);
-
-            window.addEventListener("resize", e => {
-                this.resize();
-            });
-        }
-
-        if (this.pending_data !== undefined) {
-            this.set_data(this.pending_data);
-        }
-    }
-
-    render(props?: UplotWrapperProps, state?: Readonly<{}>, context?: any): ComponentChild {
-        // the plain div is neccessary to make the size calculation stable in safari. without this div the height continues to grow
-        return <div><div ref={this.div_ref} id={props.id} class={props.class} style={`display: ${props.show ? 'block' : 'none'};`} /></div>;
-    }
-
-    resize() {
-        let size = this.get_size();
-
-        if (size.width == 0 || size.height == 0) {
-            return;
-        }
-
-        if (this.uplot) {
-            this.uplot.setSize(size);
-        }
-        else {
-            window.setTimeout(() => {
-                this.resize();
-            }, 100);
-        }
-    }
-
-    get_size() {
-        let div = this.div_ref.current;
-        let aspect_ratio = parseFloat(getComputedStyle(div).aspectRatio);
-
-        if (isNaN(aspect_ratio)) {
-            aspect_ratio = this.props.aspect_ratio;
-        }
-
-        return {
-            width: div.clientWidth,
-            height: Math.floor((div.clientWidth + (window.innerWidth - document.documentElement.clientWidth)) / aspect_ratio),
-        }
-    }
-
-    set_show(show: boolean) {
-        this.div_ref.current.style.display = show ? 'block' : 'none';
-    }
-
-    get_series_opts(i: number, fill: boolean): uPlot.Series {
-        let name = this.data.names[i];
-        let color = get_color('default', name);
-
-        return {
-            show: this.series_visibility[this.data.keys[i]],
-            pxAlign: 0,
-            spanGaps: false,
-            label: name,
-            value: (self: uPlot, rawValue: number) => util.hasValue(rawValue) ? util.toLocaleFixed(rawValue) + " W" : null,
-            stroke: color.stroke,
-            fill: fill ? color.fill : undefined,
-            width: 2,
-            points: {
-                show: false,
-            },
-        };
-    }
-
-    update_internal_data() {
-        let y_min: number = this.props.y_min;
-        let y_max: number = this.props.y_max;
-
-        for (let i = 1; i < this.data.values.length; ++i) {
-            for (let k = 0; k < this.data.values[i].length; ++k) {
-                let value = this.data.values[i][k];
-
-                if (value !== null) {
-                    if (y_min === undefined || value < y_min) {
-                        y_min = value;
-                    }
-
-                    if (y_max === undefined || value > y_max) {
-                        y_max = value;
-                    }
-                }
-            }
-        }
-
-        if (y_min === undefined && y_max === undefined) {
-            y_min = 0;
-            y_max = 0;
-        }
-        else if (y_min === undefined) {
-            y_min = y_max;
-        }
-        else if (y_max === undefined) {
-            y_max = y_min;
-        }
-
-        let y_diff_min = this.props.y_diff_min;
-
-        if (y_diff_min !== undefined) {
-            let y_diff = y_max - y_min;
-
-            if (y_diff < y_diff_min) {
-                let y_center = y_min + y_diff / 2;
-
-                let new_y_min = Math.floor(y_center - y_diff_min / 2);
-                let new_y_max = Math.ceil(y_center + y_diff_min / 2);
-
-                if (new_y_min < 0 && y_min >= 0) {
-                    // avoid negative range, if actual minimum is positive
-                    y_min = 0;
-                    y_max = y_diff_min;
-                } else {
-                    y_min = new_y_min;
-                    y_max = new_y_max;
-                }
-            }
-        }
-
-        this.y_min = y_min;
-        this.y_max = y_max;
-
-        this.uplot.setData(this.data.values as any);
-    }
-
-    set_data(data: UplotData) {
-        if (!this.uplot || !this.visible) {
-            this.pending_data = data;
-            return;
-        }
-
-        this.data = data;
-        this.pending_data = undefined;
-
-        while (this.uplot.series.length > 1) {
-            this.uplot.delSeries(this.uplot.series.length - 1);
-        }
-
-        if (this.data) {
-            while (this.uplot.series.length < this.data.keys.length) {
-                if (this.series_visibility[this.data.keys[this.uplot.series.length]] === undefined) {
-                    this.series_visibility[this.data.keys[this.uplot.series.length]] = true;
-                }
-
-                this.uplot.addSeries(this.get_series_opts(this.uplot.series.length, this.data.keys.length <= 2));
-            }
-        }
-
-        this.update_internal_data();
-    }
-}
-
 type NumberToNumber = {[id: number]: number};
 
 interface MetersProps {
-    status_ref: RefObject<MetersStatus>;
+    status_ref?: RefObject<MetersStatus>;
 }
 
 interface MetersState {
@@ -508,12 +70,31 @@ interface MetersState {
     configs_plot: {[meter_slot: number]: MeterConfig};
     configs_table: {[meter_slot: number]: MeterConfig};
     values_by_id: {[meter_slot: number]: NumberToNumber};
-    chart_selected: "history"|"live";
+    chart_selected: "history_48"|"history_24"|"history_12"|"history_6"|"history_3"|"live";
+    charger_meter_slot: number;
     addMeterSlot: number;
     addMeter: MeterConfig;
     editMeterSlot: number;
     editMeter: MeterConfig;
     extraShow: boolean[/*meter_slot*/];
+}
+
+export function get_meter_power_index(value_ids: Readonly<number[]>) {
+    let idx = -1;
+
+    if (value_ids && value_ids.length > 0) {
+        idx = value_ids.indexOf(MeterValueID.PowerActiveLSumImExDiff);
+
+        if (idx < 0) {
+            idx = value_ids.indexOf(MeterValueID.PowerDCImExDiff);
+
+            if (idx < 0) {
+                idx = value_ids.indexOf(MeterValueID.PowerDCChaDisDiff);
+            }
+        }
+    }
+
+    return idx;
 }
 
 function calculate_live_data(offset: number, samples_per_second: number, samples: number[/*meter_slot*/][]): CachedData {
@@ -613,6 +194,8 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
     pending_live_data: CachedData;
     history_initialized = false;
     history_data: CachedData = {timestamps: [], samples: []};
+    uplot_loader_live_ref = createRef();
+    uplot_loader_history_ref = createRef();
     uplot_wrapper_live_ref = createRef();
     uplot_wrapper_history_ref = createRef();
     value_ids: {[meter_slot: number]: Readonly<number[]>} = {};
@@ -627,7 +210,8 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
                   configs_plot: {},
                   configs_table: {},
                   values_by_id: {},
-                  chart_selected: "history",
+                  chart_selected: "history_48",
+                  charger_meter_slot: null,
                   addMeterSlot: null,
                   addMeter: [MeterClassID.None, null],
                   editMeterSlot: null,
@@ -645,6 +229,14 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
         util.addApiEventListener('info/modules', () => {
             this.update_live_cache();
             this.update_history_cache();
+        });
+
+        util.addApiEventListener_unchecked('evse/meter_config', () => {
+            let config = API.get_unchecked('evse/meter_config');
+
+            this.setState({
+                charger_meter_slot: config.slot,
+            });
         });
 
         for (let meter_slot = 0; meter_slot < METERS_SLOTS; ++meter_slot) {
@@ -758,7 +350,7 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
                 }
 
                 if (this.state.chart_selected == "live") {
-                    this.update_uplot();
+                    this.update_live_uplot();
                 }
             }
         });
@@ -781,12 +373,18 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
 
             this.history_data = calculate_history_data(0, history_samples);
 
-            if (this.state.chart_selected == "history") {
-                this.update_uplot();
+            if (this.state.chart_selected.startsWith("history_")) {
+                this.update_history_uplot();
             }
 
             this.update_status_uplot();
         });
+    }
+
+    componentDidMount() {
+        if (this.props.status_ref) {
+            this.props.status_ref.current.set_on_mount(() => this.update_status_uplot());
+        }
     }
 
     update_live_cache() {
@@ -800,7 +398,7 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
                     return;
                 }
 
-                this.update_uplot();
+                this.update_live_uplot();
             });
     }
 
@@ -838,7 +436,8 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
                     return;
                 }
 
-                this.update_uplot();
+                this.update_history_uplot();
+                this.update_status_uplot();
             });
     }
 
@@ -860,58 +459,72 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
         return true;
     }
 
-    update_uplot() {
-        if (this.state.chart_selected == 'live') {
-            if (this.uplot_wrapper_live_ref && this.uplot_wrapper_live_ref.current) {
-                let live_data: UplotData = {
-                    keys: [null],
-                    names: [null],
-                    values: [this.live_data.timestamps],
-                };
+    update_live_uplot() {
+        if (this.live_initialized && this.uplot_loader_live_ref.current && this.uplot_wrapper_live_ref.current) {
+            let live_data: UplotData = {
+                keys: [null],
+                names: [null],
+                values: [this.live_data.timestamps],
+            };
 
-                for (let meter_slot = 0; meter_slot < METERS_SLOTS; ++meter_slot) {
-                    if (this.live_data.samples[meter_slot].length > 0) {
-                        live_data.keys.push('meter_' + meter_slot);
-                        live_data.names.push(get_meter_name(this.state.configs_plot, meter_slot));
-                        live_data.values.push(this.live_data.samples[meter_slot]);
-                    }
+            for (let meter_slot = 0; meter_slot < METERS_SLOTS; ++meter_slot) {
+                if (this.live_data.samples[meter_slot].length > 0) {
+                    live_data.keys.push('meter_' + meter_slot);
+                    live_data.names.push(get_meter_name(this.state.configs_plot, meter_slot));
+                    live_data.values.push(this.live_data.samples[meter_slot]);
                 }
-
-                this.uplot_wrapper_live_ref.current.set_data(live_data);
             }
-        }
-        else {
-            if (this.uplot_wrapper_history_ref && this.uplot_wrapper_history_ref.current) {
-                let history_data: UplotData = {
-                    keys: [null],
-                    names: [null],
-                    values: [this.history_data.timestamps],
-                };
 
-                for (let meter_slot = 0; meter_slot < METERS_SLOTS; ++meter_slot) {
-                    if (this.history_data.samples[meter_slot].length > 0) {
-                        history_data.keys.push('meter_' + meter_slot);
-                        history_data.names.push(get_meter_name(this.state.configs_plot, meter_slot));
-                        history_data.values.push(this.history_data.samples[meter_slot]);
-                    }
+            this.uplot_loader_live_ref.current.set_data(live_data.keys.length > 1);
+            this.uplot_wrapper_live_ref.current.set_data(live_data);
+        }
+    }
+
+    update_history_uplot() {
+        if (this.history_initialized && this.uplot_loader_history_ref.current && this.uplot_wrapper_history_ref.current) {
+            let history_tail = 720; // history_48
+
+            if (this.state.chart_selected == 'history_24') {
+                history_tail = 360;
+            }
+            else if (this.state.chart_selected == 'history_12') {
+                history_tail = 180;
+            }
+            else if (this.state.chart_selected == 'history_6') {
+                history_tail = 90;
+            }
+            else if (this.state.chart_selected == 'history_3') {
+                history_tail = 45;
+            }
+
+            let history_data: UplotData = {
+                keys: [null],
+                names: [null],
+                values: [this.history_data.timestamps.slice(-history_tail)],
+            };
+
+            for (let meter_slot = 0; meter_slot < METERS_SLOTS; ++meter_slot) {
+                if (this.history_data.samples[meter_slot].length > 0) {
+                    history_data.keys.push('meter_' + meter_slot);
+                    history_data.names.push(get_meter_name(this.state.configs_plot, meter_slot));
+                    history_data.values.push(this.history_data.samples[meter_slot].slice(-history_tail));
                 }
-
-                this.uplot_wrapper_history_ref.current.set_data(history_data);
             }
-        }
 
-        this.update_status_uplot();
+            this.uplot_loader_history_ref.current.set_data(history_data.keys.length > 1);
+            this.uplot_wrapper_history_ref.current.set_data(history_data);
+        }
     }
 
     update_status_uplot() {
-        if (this.props.status_ref && this.props.status_ref.current && this.props.status_ref.current.uplot_wrapper_ref.current) {
+        if (this.history_initialized && this.props.status_ref && this.props.status_ref.current && this.props.status_ref.current.uplot_loader_ref.current && this.props.status_ref.current.uplot_wrapper_ref.current) {
             let status_data: UplotData = {
                 keys: [null],
                 names: [null],
                 values: [this.history_data.timestamps],
             };
 
-            let meter_slot = this.props.status_ref.current.state.meter_slot;
+            let meter_slot = this.props.status_ref.current.state.charger_meter_slot;
 
             if (this.history_data.samples[meter_slot].length > 0) {
                 status_data.keys.push('meter_' + meter_slot);
@@ -919,6 +532,7 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
                 status_data.values.push(this.history_data.samples[meter_slot]);
             }
 
+            this.props.status_ref.current.uplot_loader_ref.current.set_data(status_data.keys.length > 1);
             this.props.status_ref.current.uplot_wrapper_ref.current.set_data(status_data);
         }
     }
@@ -935,7 +549,7 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
 
     override async sendReset(t: "meters/0/config") {
         for (let meter_slot = 0; meter_slot < METERS_SLOTS; ++meter_slot) {
-            await API.reset_unchecked(`meters/${meter_slot}/config`, super.error_string, super.reboot_string);
+            await API.reset_unchecked(`meters/${meter_slot}/config`, this.error_string, this.reboot_string);
         }
     }
 
@@ -949,37 +563,46 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
     }
 
     render(props: {}, state: Readonly<MetersState>) {
-        if (!util.render_allowed()) {
-            return <></>;
-        }
+        if (!util.render_allowed())
+            return <SubPage name="meters" />;
 
         let active_meter_slots = Object.keys(state.configs_table).filter((meter_slot_str) => state.configs_table[parseInt(meter_slot_str)][0] != MeterClassID.None);
         let show_plot = API.hasFeature("meters");
 
         return (
-            <SubPage colClasses="col-xl-10">
+            <SubPage name="meters" colClasses="col-xl-10">
                 {show_plot ? <><PageHeader title={__("meters.content.meters")}/>
 
                 <FormSeparator heading={__("meters.status.power_history")} first={true} colClasses={"justify-content-between align-items-center col"} extraClasses={"pr-0 pr-lg-3"} >
                     <div class="mb-2">
                         <InputSelect value={this.state.chart_selected} onValue={(v) => {
-                            let chart_selected: "live"|"history" = v as any;
+                            let chart_selected: "history_48"|"history_24"|"history_12"|"history_6"|"history_3"|"live" = v as any;
 
                             this.setState({chart_selected: chart_selected}, () => {
                                 if (chart_selected == 'live') {
+                                    this.uplot_loader_live_ref.current.set_show(true);
                                     this.uplot_wrapper_live_ref.current.set_show(true);
+                                    this.uplot_loader_history_ref.current.set_show(false);
                                     this.uplot_wrapper_history_ref.current.set_show(false);
+
+                                    this.update_live_uplot();
                                 }
                                 else {
+                                    this.uplot_loader_history_ref.current.set_show(true);
                                     this.uplot_wrapper_history_ref.current.set_show(true);
+                                    this.uplot_loader_live_ref.current.set_show(false);
                                     this.uplot_wrapper_live_ref.current.set_show(false);
-                                }
 
-                                this.update_uplot();
+                                    this.update_history_uplot();
+                                }
                             });
                         }}
                             items={[
-                                ["history", __("meters.content.history")],
+                                ["history_48", __("meters.content.history_48")],
+                                ["history_24", __("meters.content.history_24")],
+                                ["history_12", __("meters.content.history_12")],
+                                ["history_6", __("meters.content.history_6")],
+                                ["history_3", __("meters.content.history_3")],
                                 ["live", __("meters.content.live")],
                             ]}/>
                     </div>
@@ -987,27 +610,53 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
                 : undefined}
 
                 <div hidden={!show_plot}>
-                    <UplotWrapper ref={this.uplot_wrapper_live_ref}
-                                    id="meters_chart_live"
-                                    class="meters-chart pb-3"
-                                    sidebar_id="meters"
-                                    show={false}
-                                    legend_time_with_seconds={true}
-                                    aspect_ratio={3}
-                                    x_height={30}
-                                    x_include_date={false}
-                                    y_diff_min={100} />
-                    <UplotWrapper ref={this.uplot_wrapper_history_ref}
-                                    id="meters_chart_history"
-                                    class="meters-chart pb-3"
-                                    sidebar_id="meters"
-                                    show={true}
-                                    legend_time_with_seconds={false}
-                                    aspect_ratio={3}
-                                    x_height={50}
-                                    x_include_date={true}
-                                    y_min={0}
-                                    y_max={1500} />
+                    <div style="position: relative;"> {/* this plain div is neccessary to make the size calculation stable in safari. without this div the height continues to grow */}
+                        <UplotLoader ref={this.uplot_loader_live_ref}
+                                        show={false}
+                                        marker_class={'h3'}
+                                        no_data={__("meters.content.no_data")}
+                                        loading={__("meters.content.loading")} >
+                            <UplotWrapper ref={this.uplot_wrapper_live_ref}
+                                            class="meters-chart pb-3"
+                                            sub_page="meters"
+                                            color_cache_group="meters.default"
+                                            show={false}
+                                            on_mount={() => this.update_live_uplot()}
+                                            legend_time_label={__("meters.script.time")}
+                                            legend_time_with_seconds={true}
+                                            aspect_ratio={3}
+                                            x_height={30}
+                                            x_padding_factor={0}
+                                            x_include_date={false}
+                                            y_diff_min={100}
+                                            y_unit="W"
+                                            y_label={__("meters.script.power") + " [Watt]"}
+                                            y_digits={0} />
+                        </UplotLoader>
+                        <UplotLoader ref={this.uplot_loader_history_ref}
+                                        show={true}
+                                        marker_class={'h3'}
+                                        no_data={__("meters.content.no_data")}
+                                        loading={__("meters.content.loading")} >
+                            <UplotWrapper ref={this.uplot_wrapper_history_ref}
+                                            class="meters-chart pb-3"
+                                            sub_page="meters"
+                                            color_cache_group="meters.default"
+                                            show={true}
+                                            on_mount={() => this.update_history_uplot()}
+                                            legend_time_label={__("meters.script.time")}
+                                            legend_time_with_seconds={false}
+                                            aspect_ratio={3}
+                                            x_height={50}
+                                            x_padding_factor={0}
+                                            x_include_date={true}
+                                            y_min={0}
+                                            y_max={1500}
+                                            y_unit="W"
+                                            y_label={__("meters.script.power") + " [Watt]"}
+                                            y_digits={0} />
+                        </UplotLoader>
+                    </div>
                 </div>
 
                 <ConfigForm id="meters_config_form" title={show_plot ? __("meters.content.settings") : __("meters.content.meters")} isModified={this.isModified()} isDirty={this.isDirty()} onSave={this.save} onReset={this.reset} onDirtyChange={this.setDirty} small={show_plot}>
@@ -1018,34 +667,95 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
                             rows={active_meter_slots.map((meter_slot_str) => {
                                 let meter_slot = parseInt(meter_slot_str);
                                 let config = state.configs_table[meter_slot];
+                                let values_by_id = state.values_by_id[meter_slot];
                                 let power: number = null;
                                 let energy_import: number = null;
                                 let energy_export: number = null;
                                 let phases: ["?"|"d"|"c"|"a", "?"|"d"|"c"|"a", "?"|"d"|"c"|"a"] = ["?", "?", "?"]; // [d]isconected, [c]onnected, [a]ctive
-                                let values_by_id = state.values_by_id[meter_slot];
                                 let highlighted_value_ids: number[] = [];
 
                                 if (util.hasValue(values_by_id)) {
-                                    power = values_by_id[MeterValueID.PowerActiveLSumImExDiff];
-                                    highlighted_value_ids.push(MeterValueID.PowerActiveLSumImExDiff);
+                                    let power_idx = get_meter_power_index(this.value_ids[meter_slot]);
+
+                                    if (power_idx >= 0) {
+                                        power = this.values[meter_slot][power_idx];
+                                        highlighted_value_ids.push(this.value_ids[meter_slot][power_idx]);
+                                    }
 
                                     energy_import = values_by_id[MeterValueID.EnergyActiveLSumImportResettable];
-                                    energy_export = values_by_id[MeterValueID.EnergyActiveLSumExportResettable];
 
                                     if (util.hasValue(energy_import)) {
                                         highlighted_value_ids.push(MeterValueID.EnergyActiveLSumImportResettable);
                                     }
                                     else {
                                         energy_import = values_by_id[MeterValueID.EnergyActiveLSumImport];
-                                        highlighted_value_ids.push(MeterValueID.EnergyActiveLSumImport);
+
+                                        if (util.hasValue(energy_import)) {
+                                            highlighted_value_ids.push(MeterValueID.EnergyActiveLSumImport);
+                                        }
+                                        else {
+                                            energy_import = values_by_id[MeterValueID.EnergyDCImportResettable];
+
+                                            if (util.hasValue(energy_import)) {
+                                                highlighted_value_ids.push(MeterValueID.EnergyDCImportResettable);
+                                            }
+                                            else {
+                                                energy_import = values_by_id[MeterValueID.EnergyDCImport];
+
+                                                if (util.hasValue(energy_import)) {
+                                                    highlighted_value_ids.push(MeterValueID.EnergyDCImport);
+                                                }
+                                                else {
+                                                    energy_import = values_by_id[MeterValueID.EnergyDCChargeResettable];
+
+                                                    if (util.hasValue(energy_import)) {
+                                                        highlighted_value_ids.push(MeterValueID.EnergyDCChargeResettable);
+                                                    }
+                                                    else {
+                                                        energy_import = values_by_id[MeterValueID.EnergyDCCharge];
+                                                        highlighted_value_ids.push(MeterValueID.EnergyDCCharge);
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
+
+                                    energy_export = values_by_id[MeterValueID.EnergyActiveLSumExportResettable];
 
                                     if (util.hasValue(energy_export)) {
                                         highlighted_value_ids.push(MeterValueID.EnergyActiveLSumExportResettable);
                                     }
                                     else {
                                         energy_export = values_by_id[MeterValueID.EnergyActiveLSumExport];
-                                        highlighted_value_ids.push(MeterValueID.EnergyActiveLSumExport);
+
+                                        if (util.hasValue(energy_export)) {
+                                            highlighted_value_ids.push(MeterValueID.EnergyActiveLSumExport);
+                                        }
+                                        else {
+                                            energy_export = values_by_id[MeterValueID.EnergyDCExportResettable];
+
+                                            if (util.hasValue(energy_export)) {
+                                                highlighted_value_ids.push(MeterValueID.EnergyDCExportResettable);
+                                            }
+                                            else {
+                                                energy_export = values_by_id[MeterValueID.EnergyDCExport];
+
+                                                if (util.hasValue(energy_export)) {
+                                                    highlighted_value_ids.push(MeterValueID.EnergyDCExport);
+                                                }
+                                                else {
+                                                    energy_export = values_by_id[MeterValueID.EnergyDCDischargeResettable];
+
+                                                    if (util.hasValue(energy_export)) {
+                                                        highlighted_value_ids.push(MeterValueID.EnergyDCDischargeResettable);
+                                                    }
+                                                    else {
+                                                        energy_export = values_by_id[MeterValueID.EnergyDCDischarge];
+                                                        highlighted_value_ids.push(MeterValueID.EnergyDCDischarge);
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
 
                                     let voltage_L1 = values_by_id[MeterValueID.VoltageL1N];
@@ -1064,6 +774,10 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
                                     let current_L2_im_ex_sum = values_by_id[MeterValueID.CurrentL2ImExSum];
                                     let current_L3_im_ex_sum = values_by_id[MeterValueID.CurrentL3ImExSum];
 
+                                    let current_L1_im_ex_diff = values_by_id[MeterValueID.CurrentL1ImExDiff];
+                                    let current_L2_im_ex_diff = values_by_id[MeterValueID.CurrentL2ImExDiff];
+                                    let current_L3_im_ex_diff = values_by_id[MeterValueID.CurrentL3ImExDiff];
+
                                     if (util.hasValue(voltage_L1)) {
                                         phases[0] = voltage_L1 > PHASE_CONNECTED_VOLTAGE_THRESHOLD ? "c" : "d";
                                     }
@@ -1078,19 +792,22 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
 
                                     if ((util.hasValue(current_L1_import) && current_L1_import > PHASE_ACTIVE_CURRENT_THRESHOLD)
                                         || (util.hasValue(current_L1_export) && current_L1_export > PHASE_ACTIVE_CURRENT_THRESHOLD)
-                                        || (util.hasValue(current_L1_im_ex_sum) && current_L1_im_ex_sum > PHASE_ACTIVE_CURRENT_THRESHOLD)) {
+                                        || (util.hasValue(current_L1_im_ex_sum) && current_L1_im_ex_sum > PHASE_ACTIVE_CURRENT_THRESHOLD)
+                                        || (util.hasValue(current_L1_im_ex_diff) && Math.abs(current_L1_im_ex_diff) > PHASE_ACTIVE_CURRENT_THRESHOLD)) {
                                         phases[0] = "a";
                                     }
 
                                     if ((util.hasValue(current_L2_import) && current_L2_import > PHASE_ACTIVE_CURRENT_THRESHOLD)
                                         || (util.hasValue(current_L2_export) && current_L2_export > PHASE_ACTIVE_CURRENT_THRESHOLD)
-                                        || (util.hasValue(current_L2_im_ex_sum) && current_L2_im_ex_sum > PHASE_ACTIVE_CURRENT_THRESHOLD)) {
+                                        || (util.hasValue(current_L2_im_ex_sum) && current_L2_im_ex_sum > PHASE_ACTIVE_CURRENT_THRESHOLD)
+                                        || (util.hasValue(current_L2_im_ex_diff) && Math.abs(current_L2_im_ex_diff) > PHASE_ACTIVE_CURRENT_THRESHOLD)) {
                                         phases[1] = "a";
                                     }
 
                                     if ((util.hasValue(current_L3_import) && current_L3_import > PHASE_ACTIVE_CURRENT_THRESHOLD)
                                         || (util.hasValue(current_L3_export) && current_L3_export > PHASE_ACTIVE_CURRENT_THRESHOLD)
-                                        || (util.hasValue(current_L3_im_ex_sum) && current_L3_im_ex_sum > PHASE_ACTIVE_CURRENT_THRESHOLD)) {
+                                        || (util.hasValue(current_L3_im_ex_sum) && current_L3_im_ex_sum > PHASE_ACTIVE_CURRENT_THRESHOLD)
+                                        || (util.hasValue(current_L3_im_ex_diff) && Math.abs(current_L3_im_ex_diff) > PHASE_ACTIVE_CURRENT_THRESHOLD)) {
                                         phases[2] = "a";
                                     }
                                 }
@@ -1196,18 +913,18 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
 
                                 let extraValue = meter_reset_row;
                                 if (config_plugins[config[0]]?.get_extra_rows)
-                                    extraValue = extraValue.concat(toChildArray(config_plugins[config[0]].get_extra_rows(meter_slot)))
+                                    extraValue = extraValue.concat(<Fragment key={`extra_rows_${config[0]}`}>{config_plugins[config[0]].get_extra_rows(meter_slot)}</Fragment>);
 
                                 extraValue = extraValue.concat(allValues);
 
                                 return {
                                     columnValues: [
-                                        <><Button className="mr-2" size="sm"
+                                        <span class="row mx-n1 align-items-center"><span class="col-auto px-1"><Button className="mr-2" size="sm"
                                             onClick={() => {
                                                 this.setState({extraShow: state.extraShow.map((show, i) => meter_slot == i ? !show : show)});
                                             }}>
                                             <ChevronRight {...{id:`meter-${meter_slot}-chevron`, class: state.extraShow[meter_slot] ? "rotated-chevron" : "unrotated-chevron"} as any}/>
-                                            </Button>{get_meter_name(state.configs_table, meter_slot)}</>,
+                                            </Button></span><span class="col px-1">{get_meter_name(state.configs_table, meter_slot)}</span></span>,
                                         util.hasValue(power) ? util.toLocaleFixed(power, 0) + " W" : undefined,
                                         util.hasValue(energy_import) ? util.toLocaleFixed(energy_import, 3) + " kWh" : undefined,
                                         util.hasValue(energy_export) ? util.toLocaleFixed(energy_export, 3) + " kWh" : undefined,
@@ -1275,7 +992,7 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
                                         </>]
 
                                         if (state.editMeter[0] != MeterClassID.None) {
-                                            rows = rows.concat(toChildArray(config_plugins[state.editMeter[0]].get_edit_children(state.editMeter, (meter_config) => this.setState({editMeter: meter_config}))));
+                                            rows = rows.concat(<Fragment key={`edit_children_${state.editMeter[0]}`}>{config_plugins[state.editMeter[0]].get_edit_children(state.editMeter, (meter_config) => this.setState({editMeter: meter_config}))}</Fragment>);
                                         }
 
                                         return rows;
@@ -1301,9 +1018,10 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
                             onAddShow={async () => {
                                 let addMeterSlot = null;
 
-                                for (let free_meter_slot = 0; free_meter_slot < METERS_SLOTS; ++free_meter_slot) {
-                                    if (state.configs_table[free_meter_slot][0] == MeterClassID.None) {
-                                        addMeterSlot = free_meter_slot;
+                                // Don't auto-select charger meter slot
+                                for (let meter_slot = 0; meter_slot < METERS_SLOTS; ++meter_slot) {
+                                    if (meter_slot != state.charger_meter_slot && state.configs_table[meter_slot][0] == MeterClassID.None) {
+                                        addMeterSlot = meter_slot;
                                         break;
                                     }
                                 }
@@ -1327,9 +1045,11 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
                                 let rows: ComponentChild[] = [
                                     <FormRow label={__("meters.content.add_meter_slot")}>
                                         <InputSelect
+                                            placeholder={__("meters.content.add_meter_slot_select")}
                                             items={slots}
                                             onValue={(v) => this.setState({addMeterSlot: parseInt(v)})}
-                                            value={state.addMeterSlot.toString()} />
+                                            value={state.addMeterSlot !== null ? state.addMeterSlot.toString() : null}
+                                            required />
                                     </FormRow>,
                                     <FormRow label={__("meters.content.add_meter_class")}>
                                         <InputSelect
@@ -1347,12 +1067,13 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
                                                     }
                                                 }
                                             }}
-                                            value={this.state.addMeter[0].toString()} />
+                                            value={this.state.addMeter[0].toString()}
+                                            required />
                                     </FormRow>
                                 ];
 
                                 if (state.addMeter[0] != MeterClassID.None) {
-                                    rows = rows.concat(toChildArray(config_plugins[state.addMeter[0]].get_edit_children(state.addMeter, (meter_config) => this.setState({addMeter: meter_config}))));
+                                    rows = rows.concat(<Fragment key={`edit_children_${state.editMeter[0]}`}>{config_plugins[state.addMeter[0]].get_edit_children(state.addMeter, (meter_config) => this.setState({addMeter: meter_config}))}</Fragment>);
                                 }
 
                                 return rows;
@@ -1375,7 +1096,7 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
 }
 
 interface MetersStatusState {
-    meter_slot: number,
+    charger_meter_slot: number,
     meter_configs: {[meter_slot: number]: MeterConfig},
 }
 
@@ -1390,14 +1111,26 @@ function get_meter_name(meter_configs: {[meter_slot: number]: MeterConfig}, mete
 }
 
 export class MetersStatus extends Component<{}, MetersStatusState> {
+    on_mount: () => void;
+    on_mount_pending = false;
+    uplot_loader_ref = createRef();
     uplot_wrapper_ref = createRef();
 
     constructor() {
         super();
 
         this.state = {
-            meter_slot: 0,
+            charger_meter_slot: null,
+            meter_configs: {},
         } as any;
+
+        util.addApiEventListener_unchecked('evse/meter_config', () => {
+            let config = API.get_unchecked('evse/meter_config');
+
+            this.setState({
+                charger_meter_slot: config.slot,
+            });
+        });
 
         for (let meter_slot = 0; meter_slot < METERS_SLOTS; ++meter_slot) {
             util.addApiEventListener_unchecked(`meters/${meter_slot}/config`, () => {
@@ -1413,58 +1146,82 @@ export class MetersStatus extends Component<{}, MetersStatusState> {
         }
     }
 
-    render(props: {}, state: MetersStatusState) {
-        // Don't check util.render_allowed() here.
-        // We can receive graph data points with the first web socket packet and
-        // want to push them into the uplot graph immediately.
-        // This only works if the wrapper component is already created.
-        // Hide the form rows to fix any visual bugs instead.
-        let show = util.render_allowed() && API.hasFeature("meters") && !API.hasFeature("energy_manager");
+    set_on_mount(on_mount: () => void) {
+        this.on_mount = on_mount;
 
-        // As we don't check util.render_allowed(),
-        // we have to handle rendering before the web socket connection is established.
-        let value_ids = API.get_unchecked(`meters/${state.meter_slot}/value_ids`);
-        let values = API.get_unchecked(`meters/${state.meter_slot}/values`);
-        let power = 0;
+        if (this.on_mount_pending && this.on_mount) {
+            this.on_mount_pending = false;
 
-        if (value_ids && value_ids.length > 0 && values && values.length > 0) {
-            let idx = value_ids.indexOf(MeterValueID.PowerActiveLSumImExDiff);
+            this.on_mount();
+        }
+    }
 
-            if (idx >= 0) {
-                power = values[idx];
-            }
+    render() {
+        if (!util.render_allowed() || !API.hasFeature("meters") || API.hasFeature("energy_manager") || this.state.charger_meter_slot === null)
+            return <StatusSection name="meters" />;
+
+        let value_ids = API.get_unchecked(`meters/${this.state.charger_meter_slot}/value_ids`);
+
+        // The meters feature is set if any meter is connected. This includes a WARP Charger Smart
+        // with external meter for PV excess charging. But in this case the status plot should not
+        // be shown, because it will never have values. Only show the plot if the shown meter has
+        // declared its value IDs to indicate that it actually is alive.
+        if (value_ids.length == 0)
+            return <StatusSection name="meters" />;
+
+        let values = API.get_unchecked(`meters/${this.state.charger_meter_slot}/values`);
+        let power: number = undefined;
+        let power_idx = get_meter_power_index(value_ids);
+
+        if (power_idx >= 0 && values && values.length > 0) {
+            power = values[power_idx];
         }
 
         return (
-            <>
-                <FormRow label={__("meters.status.power_history")} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4" hidden={!show}>
+            <StatusSection name="meters">
+                <FormRow label={__("meters.status.power_history")}>
                     <div class="card pl-1 pb-1">
-                        <UplotWrapper ref={this.uplot_wrapper_ref}
-                                      id="status_meters_chart"
-                                      class="status-meters-chart"
-                                      sidebar_id="status"
-                                      show={true}
-                                      legend_time_with_seconds={false}
-                                      aspect_ratio={2.5}
-                                      x_height={50}
-                                      x_include_date={true}
-                                      y_min={0}
-                                      y_max={1500} />
+                        <div style="position: relative;"> {/* this plain div is neccessary to make the size calculation stable in safari. without this div the height continues to grow */}
+                            <UplotLoader ref={this.uplot_loader_ref}
+                                        show={true}
+                                        marker_class={'h4'}
+                                        no_data={__("meters.content.no_data")}
+                                        loading={__("meters.content.loading")} >
+                                <UplotWrapper ref={this.uplot_wrapper_ref}
+                                            class="status-meters-chart"
+                                            sub_page="status"
+                                            color_cache_group="meters.default"
+                                            show={true}
+                                            on_mount={() => {
+                                                if (this.on_mount) {
+                                                    this.on_mount();
+                                                }
+                                                else {
+                                                    this.on_mount_pending = true;
+                                                }
+                                            }}
+                                            legend_time_label={__("meters.script.time")}
+                                            legend_time_with_seconds={false}
+                                            aspect_ratio={3}
+                                            x_height={50}
+                                            x_padding_factor={0}
+                                            x_include_date={true}
+                                            y_min={0}
+                                            y_max={1500}
+                                            y_unit="W"
+                                            y_label={__("meters.script.power") + " [Watt]"}
+                                            y_digits={0} />
+                            </UplotLoader>
+                        </div>
                     </div>
                 </FormRow>
-                <FormRow label={__("meters.status.current_power")} label_muted={get_meter_name(state.meter_configs, state.meter_slot)} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4" hidden={!show}>
+                <FormRow label={__("meters.status.current_power")} label_muted={get_meter_name(this.state.meter_configs, this.state.charger_meter_slot)}>
                     <OutputFloat value={power} digits={0} scale={0} unit="W" maxFractionalDigitsOnPage={0} maxUnitLengthOnPage={1}/>
                 </FormRow>
-            </>
+            </StatusSection>
         );
     }
 }
-
-let status_ref = createRef();
-
-render(<MetersStatus ref={status_ref} />, $("#status-meters")[0]);
-
-render(<Meters status_ref={status_ref} />, $("#meters")[0]);
 
 export function init() {
     let result = plugins_init();
@@ -1478,11 +1235,4 @@ export function init() {
             config_plugins[i] = plugins[i];
         }
     }
-}
-
-export function add_event_listeners(source: API.APIEventTarget) {
-}
-
-export function update_sidebar_state(module_init: any) {
-    $("#sidebar-meters").prop("hidden", !module_init.meters);
 }

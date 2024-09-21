@@ -17,10 +17,9 @@
  * Boston, MA 02111-1307, USA.
  */
 
-import $ from "../../ts/jq";
 import * as API from "../../ts/api";
 import * as util from "../../ts/util";
-import { h, render, Fragment, Component } from "preact";
+import { h, Fragment, Component } from "preact";
 import { __ } from "../../ts/translation";
 import { ConfigComponent } from "../../ts/components/config_component";
 import { ConfigForm } from "../../ts/components/config_form";
@@ -29,6 +28,13 @@ import { InputFloat } from "../../ts/components/input_float";
 import { IndicatorGroup } from "../../ts/components/indicator_group";
 import { OutputFloat } from "../../ts/components/output_float";
 import { SubPage } from "../../ts/components/sub_page";
+import { NavbarItem } from "../../ts/components/navbar_item";
+import { StatusSection } from "../../ts/components/status_section";
+import { Wind } from "react-feather";
+
+export function Co2AmpelNavbar() {
+    return <NavbarItem name="co2ampel" module="co2ampel" title={__("co2ampel.navbar.co2ampel")} symbol={<Wind />} />;
+}
 
 type Co2AmpelConfig = API.getType["co2ampel/config"];
 
@@ -41,10 +47,10 @@ export class Co2Ampel extends ConfigComponent<"co2ampel/config"> {
 
     render(props: {}, state: Readonly<Co2AmpelConfig>) {
         if (!util.render_allowed())
-            return <></>
+            return <SubPage name="co2ampel" />;
 
         return (
-            <SubPage>
+            <SubPage name="co2ampel">
                 <ConfigForm id="co2ampel_config_form" title={__("co2ampel.content.co2ampel")} isModified={this.isModified()} isDirty={this.isDirty()} onSave={this.save} onReset={this.reset} onDirtyChange={this.setDirty}>
                     <FormRow label={__("co2ampel.content.temperature_offset")} label_muted={__("co2ampel.content.temperature_offset_muted")}>
                         <InputFloat
@@ -62,8 +68,6 @@ export class Co2Ampel extends ConfigComponent<"co2ampel/config"> {
     }
 }
 
-render(<Co2Ampel />, $("#co2ampel")[0]);
-
 interface Co2AmpelStatusState {
     state: API.getType["co2ampel/state"];
 }
@@ -80,10 +84,10 @@ export class Co2AmpelStatus extends Component<{}, Co2AmpelStatusState>
 
     render(props: {}, state: Co2AmpelStatusState) {
         if (!util.render_allowed())
-            return <></>;
+            return <StatusSection name="co2ampel" />;
 
-        return <>
-                <FormRow label={__("co2ampel.status.led_state")} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4">
+        return <StatusSection name="co2ampel">
+                <FormRow label={__("co2ampel.status.led_state")}>
                     <IndicatorGroup
                         style="width: 100%"
                         class="flex-wrap"
@@ -97,29 +101,20 @@ export class Co2AmpelStatus extends Component<{}, Co2AmpelStatusState>
                     />
                 </FormRow>
 
-                <FormRow label={__("co2ampel.status.co2")} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4">
+                <FormRow label={__("co2ampel.status.co2")}>
                     <OutputFloat value={state.state.co2} digits={0} scale={0} unit="ppm"/>
                 </FormRow>
 
-                <FormRow label={__("co2ampel.status.temperature")} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4">
+                <FormRow label={__("co2ampel.status.temperature")}>
                     <OutputFloat value={state.state.temperature} digits={2} scale={2} unit="°C"/>
                 </FormRow>
 
-                <FormRow label={__("co2ampel.status.humidity")} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4">
+                <FormRow label={__("co2ampel.status.humidity")}>
                     <OutputFloat value={state.state.humidity} digits={2} scale={2} unit="% RH"/>
                 </FormRow>
-            </>;
+            </StatusSection>;
     }
 }
 
-render(<Co2AmpelStatus />, $("#status-co2ampel")[0]);
-
 export function init() {
-}
-
-export function add_event_listeners(source: API.APIEventTarget) {
-}
-
-export function update_sidebar_state(module_init: any) {
-    $("#sidebar-co2ampel").prop("hidden", !module_init.co2ampel);
 }

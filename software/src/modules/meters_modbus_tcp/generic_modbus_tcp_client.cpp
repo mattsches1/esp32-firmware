@@ -17,14 +17,16 @@
  * Boston, MA 02111-1307, USA.
  */
 
+#define EVENT_LOG_PREFIX "gen_mbtcp_client"
+
 #include "generic_modbus_tcp_client.h"
-#include "modbus_tcp_tools.h"
 
 #include <errno.h>
 #include <string.h>
 
-#include "event_log.h"
-#include "task_scheduler.h"
+#include "event_log_prefix.h"
+#include "module_dependencies.h"
+#include "modbus_tcp_tools.h"
 
 #include "gcc_warnings.h"
 
@@ -32,13 +34,7 @@ void GenericModbusTCPClient::start_connection()
 {
     host_data.user = this;
 
-    if (mb->isConnected(host_ip) && mb->disconnect(host_ip)) {
-        logger.printfln("generic_modbus_tcp_client: Disconnecting from '%s'", host_name.c_str());
-        disconnect_callback();
-    }
-
-    host_ip = IPAddress(0u);
-    last_successful_read = 0_usec;
+    stop_connection();
 
     dns_gethostbyname_addrtype_lwip_ctx_async(host_name.c_str(), [](dns_gethostbyname_addrtype_lwip_ctx_async_data *data) {
         GenericModbusTCPClient *gmbtc = static_cast<GenericModbusTCPClient *>(data->user);
@@ -47,14 +43,25 @@ void GenericModbusTCPClient::start_connection()
     }, &host_data, LWIP_DNS_ADDRTYPE_IPV4);
 }
 
+void GenericModbusTCPClient::stop_connection()
+{
+    if (modbus->isConnected(host_ip) && modbus->disconnect(host_ip)) {
+        logger.printfln("Disconnecting from '%s'", host_name.c_str());
+        disconnect_callback();
+    }
+
+    host_ip = IPAddress(0u);
+    last_successful_read = 0_us;
+}
+
 void GenericModbusTCPClient::check_ip(const ip_addr_t *ip, int err)
 {
     if (err != ERR_OK || !ip || ip->type != IPADDR_TYPE_V4) {
         if (!resolve_error_printed) {
             if (err == ERR_VAL) {
-                logger.printfln("generic_modbus_tcp_client: Meter configured with hostname '%s', but no DNS server is configured!", host_name.c_str());
+                logger.printfln("Meter configured with hostname '%s', but no DNS server is configured!", host_name.c_str());
             } else {
-                logger.printfln("generic_modbus_tcp_client: Couldn't resolve hostname '%s', error %i", host_name.c_str(), err);
+                logger.printfln("Couldn't resolve hostname '%s', error %i", host_name.c_str(), err);
             }
             resolve_error_printed = true;
         }
@@ -70,12 +77,12 @@ void GenericModbusTCPClient::check_ip(const ip_addr_t *ip, int err)
     host_ip = ip->u_addr.ip4.addr;
 
     errno = ENOTRECOVERABLE; // Set to something known because connect() might leave errno unchanged on some errors.
-    if (!mb->connect(host_ip, port)) {
+    if (!modbus->connect(host_ip, port)) {
         if (errno != last_connect_errno) {
             if (errno == EINPROGRESS) { // WiFiClient::connect() doesn't set errno when its select() call times out and incorrectly leaves it at EINPROGRESS despite being blocking.
-                logger.printfln("generic_modbus_tcp_client: Connection attempt to '%s' timed out", host_name.c_str());
+                logger.printfln("Connection attempt to '%s' timed out", host_name.c_str());
             } else {
-                logger.printfln("generic_modbus_tcp_client: Connection to '%s' failed: %s (%i)", host_name.c_str(), strerror(errno), errno);
+                logger.printfln("Connection to '%s' failed: %s (%i)", host_name.c_str(), strerror(errno), errno);
             }
             last_connect_errno = errno;
         }
@@ -91,21 +98,21 @@ void GenericModbusTCPClient::check_ip(const ip_addr_t *ip, int err)
     } else {
         connect_backoff_ms = 1000;
         last_connect_errno = 0;
-        logger.printfln("generic_modbus_tcp_client: Connected to '%s'", host_name.c_str());
+        logger.printfln("Connected to '%s'", host_name.c_str());
         connect_callback();
     }
 }
 
 void GenericModbusTCPClient::start_generic_read()
 {
-    if (!mb->isConnected(host_ip)) {
-        logger.printfln("generic_modbus_tcp_client: Connection lost, reconnecting to '%s'", host_name.c_str());
+    if (!modbus->isConnected(host_ip)) {
+        logger.printfln("Connection lost, reconnecting to '%s'", host_name.c_str());
         start_connection();
         return;
     }
 
-    if (last_successful_read != 0_usec && deadline_elapsed(last_successful_read + successful_read_timeout)) {
-        logger.printfln("generic_modbus_tcp_client: Last successful read occurred too long ago, reconnecting to '%s'", host_name.c_str());
+    if (last_successful_read != 0_us && deadline_elapsed(last_successful_read + successful_read_timeout)) {
+        logger.printfln("Last successful read occurred too long ago, reconnecting to '%s'", host_name.c_str());
         start_connection();
         return;
     }
@@ -131,8 +138,15 @@ void GenericModbusTCPClient::read_next()
     // Return value doesn't matter. The caller discards it.
     cbTransaction read_done_cb = [this](Modbus::ResultCode result_code, uint16_t /*transaction_id*/, void * /*data*/)->bool {
         if (result_code != Modbus::ResultCode::EX_SUCCESS) {
-            logger.printfln("meter_modbus_tcp: readHreg failed: %s (0x%02x) host=%s port=%u device_address=%u rtype=%i start_address=%u register_count=%u", get_modbus_result_code_name(result_code), static_cast<uint32_t>(result_code),
-                host_ip.toString().c_str(), port, device_address, generic_read_request.register_type, generic_read_request.start_address, generic_read_request.register_count);
+            logger.printfln("read%creg failed: %s (0x%02x) host=%s port=%u device_address=%u start_address=%u register_count=%u",
+                            generic_read_request.register_type == ModbusRegisterType::HoldingRegister ? 'H' : 'I',
+                            get_modbus_result_code_name(result_code),
+                            static_cast<uint32_t>(result_code),
+                            host_ip.toString().c_str(),
+                            port,
+                            device_address,
+                            generic_read_request.start_address,
+                            generic_read_request.register_count);
 
             generic_read_request.result_code = result_code;
             generic_read_request.done_callback();
@@ -168,18 +182,15 @@ void GenericModbusTCPClient::read_next()
 
     uint16_t ret;
     switch (generic_read_request.register_type) {
-    case TAddress::RegType::HREG: ret = mb->readHreg(host_ip, read_start_address, target_buffer, read_count, read_done_cb, device_address); break;
-    case TAddress::RegType::IREG: ret = mb->readIreg(host_ip, read_start_address, target_buffer, read_count, read_done_cb, device_address); break;
-    case TAddress::RegType::COIL:
-    case TAddress::RegType::ISTS:
-    case TAddress::RegType::NONE:
+    case ModbusRegisterType::HoldingRegister: ret = modbus->readHreg(host_ip, read_start_address, target_buffer, read_count, read_done_cb, device_address); break;
+    case ModbusRegisterType::InputRegister:   ret = modbus->readIreg(host_ip, read_start_address, target_buffer, read_count, read_done_cb, device_address); break;
     default:
         esp_system_abort("generic_modbus_tcp_client: Unsupported register type to read.");
     }
 
     if (ret == 0) {
-        logger.printfln("meter_modbus_tcp: Modbus read failed. host=%s port=%u device_address=%u rtype=%i read_start_address=%u read_count=%u",
-            host_ip.toString().c_str(), port, device_address, generic_read_request.register_type, read_start_address, read_count);
+        logger.printfln("Modbus read failed. host=%s port=%u device_address=%u rtype=%u read_start_address=%u read_count=%u",
+            host_ip.toString().c_str(), port, device_address, static_cast<uint8_t>(generic_read_request.register_type), read_start_address, read_count);
 
         generic_read_request.result_code = Modbus::ResultCode::EX_GENERAL_FAILURE;
         generic_read_request.done_callback();

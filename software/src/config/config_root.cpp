@@ -1,5 +1,23 @@
-#include "config/private.h"
+/* esp32-firmware
+ * Copyright (C) 2020-2024 Erik Fleckstein <erik@tinkerforge.com>
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the
+ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+ * Boston, MA 02111-1307, USA.
+ */
 
+#include "config/private.h"
 #include "config/visitors.h"
 
 ConfigRoot::ConfigRoot(Config cfg) : Config(cfg), validator(nullptr) {}
@@ -8,7 +26,7 @@ ConfigRoot::ConfigRoot(Config cfg, Validator &&validator) : Config(cfg), validat
 
 String ConfigRoot::update_from_file(File &&file)
 {
-    DynamicJsonDocument doc(this->json_size(false));
+    DynamicJsonDocument doc(std::max(4096u, this->json_size(false)));
     DeserializationError error = deserializeJson(doc, file);
     if (error)
         return String("Failed to read file: ") + error.c_str();
@@ -153,3 +171,9 @@ bool ConfigRoot::get_permit_null_updates() {
     // Inverted; see set_permit_null_updates.
     return (((std::uintptr_t)this->validator) & 0x01) == 0;
 }
+
+#ifdef DEBUG_FS_ENABLE
+void ConfigRoot::print_api_info(char *buf, size_t buf_size, size_t &written) {
+    Config::apply_visitor(api_info{buf, buf_size, written}, this->value);
+}
+#endif

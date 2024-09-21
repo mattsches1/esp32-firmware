@@ -18,14 +18,16 @@
  */
 
 #include "meters_mqtt_mirror.h"
+
 #include "module_dependencies.h"
+#include "meter_mqtt_mirror.h"
 
 #include "gcc_warnings.h"
 
 void MetersMqttMirror::pre_setup()
 {
     config_prototype = ConfigRoot{Config::Object({
-        {"display_name", Config::Str("Lokal", 0, 32)},
+        {"display_name", Config::Str("", 0, 32)},
         {"auto",         Config::Bool(true)},
         {"meter_path",   Config::Str("", 3, 64)},
         {"value_ids",    Config::Str("", 0, 64)},

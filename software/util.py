@@ -172,7 +172,10 @@ def embed_data_internal(data, cpp_path, h_path, var_name, var_type):
 
     with open(h_path + '.tmp', 'w', encoding='utf-8') as f:
         f.write('// WARNING: This file is generated\n\n')
-        f.write('#include <stdint.h>\n\n')
+
+        if 'int' in var_type and var_type.endswith('_t'):
+            f.write('#include <stdint.h>\n\n')
+
         f.write('extern const {0} {1}_data[];\n\n'.format(var_type, var_name))
         f.write('#define {0}_length {1}\n'.format(var_name, written))
 
@@ -220,7 +223,7 @@ def embed_bricklet_firmware_bin(env=None):
         sys.exit(-1)
 
     firmware = firmwares[0]
-    m = re.fullmatch('bricklet_(.*)_firmware_\d+_\d+_\d+(?:_beta(\d+))?.zbin', firmware)
+    m = re.fullmatch(r'bricklet_(.*)_firmware_\d+_\d+_\d+(?:_beta(\d+))?.zbin', firmware)
 
     if m == None:
         print('Firmware {} did not match naming schema'.format(firmware))
@@ -246,6 +249,8 @@ def gzip_compress(data):
         result = run([sevenz_path, 'a', '-tgzip', '-mx=9', '-mfb=258', '-mpass=5', '-an', '-si', '-so'], input=data, capture_output=True)
         if result.returncode == 0:
             return result.stdout
+
+    print("Using gzip! Install 7z or 7za to reduce the web interface size by ~ 5 %")
     from gzip import compress
     return compress(data)
 
@@ -264,8 +269,8 @@ def parse_ts_file(path, name, used_placeholders, template_literals):
     with open(path, 'r', encoding='utf-8') as f:
         content = f.read()
 
-    placeholders = [x.strip() for x in re.findall('__\(([^\)]*)', content)]
-    placeholders_unchecked = [x.strip() for x in re.findall('translate_unchecked\(([^\)]*)', content)]
+    placeholders = [x.strip() for x in re.findall(r'__\(([^\)]*)', content)]
+    placeholders_unchecked = [x.strip() for x in re.findall(r'translate_unchecked\(([^\)]*)', content)]
 
     template_literal_keys = [x for x in placeholders_unchecked if x[0] == '`' and x[-1] == '`' and '${' in x and '}' in x]
     placeholders = [x for x in placeholders if x not in template_literal_keys]
@@ -311,50 +316,6 @@ def green(s):
 
 def gray(s):
     return colors['gray']+s+colors["off"]
-
-def write_file_if_different(path, new_content):
-    if type(new_content) == str:
-        new_content = bytes(new_content, encoding='utf-8')
-
-    content_identical = False
-    try:
-        with open(path, 'rb') as f:
-            old_content = f.read()
-            content_identical = old_content == new_content
-    except:
-        pass
-
-    if not content_identical:
-        with open(path, 'wb') as f:
-            f.write(new_content)
-
-def specialize_template(template_filename, destination_filename, replacements, check_completeness=True, remove_template=False):
-    lines = []
-    replaced = set()
-
-    with open(template_filename, 'r', encoding='utf-8') as f:
-        for line in f.readlines():
-            for key in replacements:
-                replaced_line = line.replace(key, replacements[key])
-
-                if replaced_line != line:
-                    replaced.add(key)
-
-                line = replaced_line
-
-            lines.append(line)
-
-    if check_completeness and replaced != set(replacements.keys()):
-        raise Exception('Not all replacements for {0} have been applied. Missing are {1}'.format(template_filename, ', '.join(set(replacements.keys() - replaced))))
-
-    if destination_filename != None:
-        write_file_if_different(destination_filename, "".join(lines))
-
-    if remove_template:
-        os.remove(template_filename)
-
-    if destination_filename == None:
-        return ''.join(lines)
 
 def file_to_data_url(path):
     with open(path, 'rb') as f:

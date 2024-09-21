@@ -1,6 +1,8 @@
 export interface scan {
     host: string;
     port: number;
+    device_address_first: number;
+    device_address_last: number;
     cookie: number;
 }
 
@@ -21,11 +23,10 @@ export interface scan_result {
     cookie: number;
     manufacturer_name: string;
     model_name: string;
-    options: string;
-    version: string;
     serial_number: string;
     device_address: number;
     model_id: number;
+    model_instance: number;
 }
 
 export interface scan_done {

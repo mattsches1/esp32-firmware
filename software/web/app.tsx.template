@@ -1,0 +1,271 @@
+/* esp32-firmware
+ * Copyright (C) 2023 Frederic Henrichs <frederic@tinkerforge.com>
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the
+ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+ * Boston, MA 02111-1307, USA.
+ */
+
+import * as util from "./ts/util";
+import { h, Fragment, Component, createRef, RefObject } from "preact";
+import { __ } from "./ts/translation";
+import { NavbarItem } from "./ts/components/navbar_item";
+import { NavbarGroup } from "./ts/components/navbar_group";
+import { PageHeader } from "./ts/components/page_header";
+import { SubPage } from "./ts/components/sub_page";
+import { FormRow } from "./ts/components/form_row";
+import { InputText } from "./ts/components/input_text";
+import { InputPassword } from "./ts/components/input_password";
+import { RemoteCloseButton } from "./ts/components/remote_close_button";
+import { Key, Home, Menu } from "react-feather";
+import Container from "react-bootstrap/Container";
+import Tab from "react-bootstrap/Tab";
+import Row from "react-bootstrap/Row";
+import Nav from "react-bootstrap/Nav";
+import Collapse from "react-bootstrap/Collapse";
+import Alert from "react-bootstrap/Alert";
+{{{navbar_imports}}}
+{{{content_imports}}}
+{{{status_imports}}}
+
+interface AppProps {
+    init: () => void;
+}
+
+interface AppState {
+    visible: boolean;
+    mode: "" | "normal" | "login";
+    sub_page: string;
+    sidebar_open: boolean;
+    username: string;
+    password: string;
+}
+
+function get_sub_page() {
+    let sub_page = window.location.hash.substring(1);
+    let element: HTMLElement = null;
+
+    if (sub_page.length > 0) {
+        element = document.querySelector(`a[href="#${sub_page}"]`) as HTMLElement;
+    }
+
+    if (element == null || element.hidden) {
+        sub_page = "status";
+        if (!util.remoteAccessMode) {
+            history.replaceState({}, "", "#" + sub_page);
+        }
+    }
+
+    return sub_page;
+}
+
+function login(username: string, password: string): Promise<boolean> {
+    return new Promise(function (resolve, reject) {
+        if (username.length == 0 && password.length == 0) {
+            resolve(false);
+        }
+
+        let xhr = new XMLHttpRequest();
+
+        xhr.onreadystatechange = function () {
+            if (xhr.readyState === XMLHttpRequest.DONE) {
+                let status = xhr.status;
+
+                if (status == 200) {
+                    window.location.reload();
+                    resolve(true);
+                    return;
+                }
+
+                if (status == 401) {
+                    console.log("credentials incorrect?");
+                }
+                else {
+                    console.log("error: got status ");
+                    console.log(status);
+                }
+                resolve(false);
+            }
+        }
+
+        xhr.open("GET", location.protocol + "//" + location.host + "/credential_check", true, username, password);
+        xhr.setRequestHeader("X-Connection-Id", util.connection_id);
+        xhr.send();
+    });
+}
+
+export class App extends Component<AppProps, AppState> {
+    {{{status_refs}}}
+    {{{navbar_refs}}}
+    navbar_group_refs: {[id: string]: RefObject<NavbarGroup>} = {};
+    password_ref = createRef();
+
+    constructor() {
+        super();
+
+        this.state = {
+            visible: false,
+            mode: "",
+            sub_page: "",
+            sidebar_open: false,
+            username: "",
+            password: "",
+        } as any;
+
+        this.navbar_group_refs = {
+            {{{navbar_refs_mapping}}}
+        };
+    }
+
+    componentDidMount() {
+        util.ifLoggedInElse(() => this.setup_normal(), () => this.setup_login());
+    }
+
+    setup_normal() {
+        this.setState({mode: "normal"});
+
+        window.addEventListener("hashchange", (event) => {
+            if (event.oldURL != event.newURL) {
+                let sub_page = get_sub_page();
+
+                if (this.state.sub_page != sub_page) {
+                    this.setState({sub_page: sub_page}, this.on_sub_page_change);
+                }
+            }
+        });
+
+        util.addApiEventListener("info/modules", () => {
+            // reacting synchronous to this event is too early. we need to wait
+            // until the navbar has reacted to this event and has updated all
+            // the hidden flags on the navitems
+            window.setTimeout(() => {
+                let sub_page = get_sub_page();
+                let sub_page_changed = this.state.sub_page != sub_page;
+
+                if (!this.state.visible || sub_page_changed) {
+                    this.setState({visible: true, sub_page: sub_page}, () => {if (sub_page_changed) this.on_sub_page_change();});
+                }
+            }, 0);
+        });
+
+        util.ifLoggedInElseReload(this.props.init);
+    }
+
+    setup_login() {
+        this.setState({visible: true, mode: "login", sub_page: "login"});
+
+        let form = document.getElementById('main_login_form') as HTMLFormElement;
+
+        form.addEventListener("submit", async (event: Event) => {
+            event.preventDefault();
+            event.stopPropagation();
+
+            let success = await login(this.state.username, this.state.password);
+            if (!success) {
+                (this.password_ref.current as InputPassword).shake();
+            }
+        }, false);
+    }
+
+    on_sub_page_change() {
+        let group_ref = this.navbar_group_refs[this.state.sub_page];
+
+        if (group_ref && group_ref.current) {
+            group_ref.current.open();
+        }
+
+        util.set_active_sub_page(this.state.sub_page);
+    }
+
+    render() {
+        return <>
+            <nav class="navbar navbar-expand-md navbar-dark sticky-top flex-md-nowrap p-0 pb-2 pt-2">
+                <a href="#status"><img class="pt-2 pb-2 pl-3" src="data:image/png;base64,{{{logo_base64}}}" style="max-width: calc(100vw - 72px);" alt="logo"/></a>
+                <button class="navbar-toggler d-md-none collapsed pt-2 mr-3" type="button" onClick={() => {this.setState({sidebar_open: !this.state.sidebar_open})}}>
+                    <Menu {...{class: "navbar-toggler-icon", style: "vertical-align: baseline;"} as any} />
+                </button>
+                {/* show inline status here? */}
+            </nav>
+
+            <Container fluid>
+            <Tab.Container activeKey={this.state.sub_page} onSelect={(sub_page) => {
+                    let sub_page_changed = this.state.sub_page != sub_page;
+
+                    if (sub_page_changed || this.state.sidebar_open) {
+                        setTimeout(() => window.scrollTo(0, 0), 1);
+                        this.setState({sub_page: sub_page, sidebar_open: false}, () => {if (sub_page_changed) this.on_sub_page_change();});
+                    }
+                }}>
+                <Row>
+                    <Collapse in={this.state.sidebar_open}>
+                    <nav id="sidebar-menu" class="col-md-3 col-lg-2 d-md-block bg-light sidebar navbar-collapse">
+                        <div class="sidebar-sticky pt-3 pb-3">
+                            <Nav as="ul" className="flex-column" id="nav-list" style={this.state.visible ? undefined : "visibility: hidden;"}>
+                                {this.state.mode == "login" ?
+                                    <NavbarItem name="login" title={__("main.navbar_login")} symbol={<Key />} hidden={false} no_href={true} />
+                                    : undefined}
+                                {this.state.mode == "normal" ? <>
+                                    <NavbarItem name="status" title={__("main.navbar_status")} symbol={<Home />} hidden={false} />
+                                    {{{navbar}}}
+                                    </> : undefined}
+                                    <RemoteCloseButton />
+                            </Nav>
+                        </div>
+                    </nav>
+                    </Collapse>
+                    <main id="main" class="col-md-9 ml-sm-auto col-lg-10 px-md-4" style={this.state.visible ? undefined : "visibility: hidden;"}>
+                        <Tab.Content>
+                            <div class="alert_placeholder">
+                                {util.get_alerts().map((alert) => <Alert className="custom-alert" key={alert.id} variant={alert.variant} onClose={() => util.remove_alert(alert.id)} dismissible><strong>{alert.title}</strong> {alert.text}</Alert>)}
+                            </div>
+
+                            <SubPage name="login">
+                                <PageHeader title={__("main.content_login")} />
+                                <form id="main_login_form">
+                                    <FormRow label={__("main.login_username")}>
+                                        <InputText
+                                            value={this.state.username}
+                                            onValue={(value) => this.setState({username: value})}
+                                        />
+                                    </FormRow>
+                                    <FormRow label={__("main.login_password")}>
+                                        <InputPassword
+                                            ref={this.password_ref}
+                                            value={this.state.password}
+                                            onValue={(value) => this.setState({password: value})}
+                                            placeholder=""
+                                            hideClear
+                                        />
+                                    </FormRow>
+                                    <div class="form-group text-right">
+                                        <button id="main_login_button" type="submit" form="main_login_form" class="btn btn-primary">{__("main.login_button")}</button>
+                                    </div>
+                                </form>
+                            </SubPage>
+
+                            <SubPage name="status">
+                                {{{status}}}
+                            </SubPage>
+
+                            {{{content}}}
+                        </Tab.Content>
+                    </main>
+                </Row>
+            </Tab.Container>
+            </Container>
+
+            <div id="async_modal"></div>
+        </>;
+    }
+}

@@ -17,28 +17,33 @@
  * Boston, MA 02111-1307, USA.
  */
 
-import $ from "../../ts/jq";
 import * as API from "../../ts/api";
 import * as util from "../../ts/util";
 import { __ } from "../../ts/translation";
-import { h, render, Fragment, Component } from "preact";
+import { h, Fragment, Component } from "preact";
 import { Button         } from "react-bootstrap";
 import { FormRow        } from "../../ts/components/form_row";
 import { IndicatorGroup } from "../../ts/components/indicator_group";
 import { InputText      } from "../../ts/components/input_text";
 import { PageHeader     } from "../../ts/components/page_header";
 import { SubPage } from "../../ts/components/sub_page";
+import { NavbarItem } from "../../ts/components/navbar_item";
+import { Save } from "react-feather";
+
+export function EMSDcardNavbar() {
+    return <NavbarItem name="em_sdcard" module="em_common" title={__("em_sdcard.navbar.em_sdcard")} symbol={<Save />} />;
+}
 
 export class EMSDcard extends Component {
     render() {
         if (!util.render_allowed() || !API.hasFeature("energy_manager"))
-            return <></>;
+            return <SubPage name="em_sdcard" />;
 
         let state = API.get('energy_manager/sdcard_state');
 
         if (state.sd_status == 51) { // No card
             return (
-                <SubPage>
+                <SubPage name="em_sdcard">
                     <PageHeader title={__("em_sdcard.content.header")} />
 
                     <IndicatorGroup
@@ -109,7 +114,7 @@ export class EMSDcard extends Component {
         }
 
         return (
-            <SubPage>
+            <SubPage name="em_sdcard">
                 <PageHeader title={__("em_sdcard.content.header")} />
 
                 <FormRow label={__("em_sdcard.content.manufacturer_id")}>
@@ -156,7 +161,7 @@ export class EMSDcard extends Component {
                         try {
                             await util.put("/energy_manager/sdcard_format", {"do_i_know_what_i_am_doing": true});
                         } catch (error) {
-                            util.add_alert("sdcard_format_failed", "alert-danger", __("em_sdcard.script.sdcard_format_error"), error);
+                            util.add_alert("sdcard_format_failed", "danger", __("em_sdcard.script.sdcard_format_error"), error);
                         }
                     }}>{__("em_sdcard.content.format_sdcard")}</Button>
                 </FormRow>
@@ -166,12 +171,4 @@ export class EMSDcard extends Component {
 }
 
 export function init() {
-}
-render(<EMSDcard />, $("#em_sdcard")[0]);
-
-export function add_event_listeners(source: API.APIEventTarget) {
-}
-
-export function update_sidebar_state(module_init: any) {
-    $("#sidebar-em_sdcard").prop("hidden", !module_init.energy_manager);
 }

@@ -19,8 +19,8 @@
 
 import { h } from "preact";
 import { __ } from "../../ts/translation";
-import { AutomationTriggerID } from "../automation/automation_defs";
-import { AutomationTrigger } from "../automation/types";
+import { AutomationTriggerID } from "../automation/automation_trigger_id.enum";
+import { AutomationTrigger, InitResult } from "../automation/types";
 import { FormRow } from "../../ts/components/form_row";
 import { InputSelect } from "../../ts/components/input_select";
 import * as util from "../../ts/util";
@@ -50,20 +50,6 @@ export type EMContactorMonitoringAutomationTrigger = [
     AutomationTriggerID.EMContactorMonitoring,
     {
         contactor_okay: boolean;
-    },
-];
-
-export type EMPowerAvailableAutomationTrigger = [
-    AutomationTriggerID.EMPowerAvailable,
-    {
-        power_available: boolean;
-    },
-];
-
-export type EMGridPowerDrawAutomationTrigger = [
-    AutomationTriggerID.EMGridPowerDraw,
-    {
-        drawing_power: boolean;
     },
 ];
 
@@ -113,7 +99,7 @@ function get_em_input_four_edit_children(trigger: EMInputFourAutomationTrigger, 
                 onValue={(v) => {
                     on_trigger(util.get_updated_union(trigger, {closed: v === '1'}));
                 }} />
-        </FormRow>
+        </FormRow>,
     ];
 }
 
@@ -142,7 +128,7 @@ function get_em_phase_switch_edit_children(trigger: EMPhaseSwitchAutomationTrigg
                 onValue={(v) => {
                     on_trigger(util.get_updated_union(trigger, {phases: parseInt(v)}));
                 }} />
-        </FormRow>
+        </FormRow>,
     ];
 }
 
@@ -171,7 +157,7 @@ function get_em_contactor_monitoring_edit_children(trigger: EMContactorMonitorin
                 onValue={(v) => {
                     on_trigger(util.get_updated_union(trigger, {contactor_okay: v === '1'}));
                 }} />
-        </FormRow>
+        </FormRow>,
     ];
 }
 
@@ -184,65 +170,7 @@ function new_em_contactor_monitoring_config(): AutomationTrigger {
     ];
 }
 
-function get_em_power_available_table_children(trigger: EMPowerAvailableAutomationTrigger) {
-    return __("energy_manager.automation.automation_power_available_text")(trigger[1].power_available);
-}
-
-function get_em_power_available_edit_children(trigger: EMPowerAvailableAutomationTrigger, on_trigger: (trigger: AutomationTrigger) => void) {
-    return [
-        <FormRow label={__("energy_manager.automation.power")}>
-            <InputSelect
-                value={trigger[1].power_available ? '1' : '0'}
-                items = {[
-                    ['0', __("energy_manager.automation.not_available")],
-                    ['1', __("energy_manager.automation.available")],
-                ]}
-                onValue={(v) => {
-                    on_trigger(util.get_updated_union(trigger, {power_available: v === '1'}));
-                }} />
-        </FormRow>
-    ]
-}
-
-function new_em_power_available_config(): AutomationTrigger {
-    return [
-        AutomationTriggerID.EMPowerAvailable,
-        {
-            power_available: false,
-        },
-    ];
-}
-
-function get_em_grid_power_draw_table_children(trigger: EMGridPowerDrawAutomationTrigger) {
-    return __("energy_manager.automation.automation_grid_power_draw_text")(trigger[1].drawing_power);
-}
-
-function get_em_grid_power_draw_edit_children(trigger: EMGridPowerDrawAutomationTrigger, on_trigger: (trigger: AutomationTrigger) => void) {
-    return [
-        <FormRow label={__("energy_manager.automation.power")}>
-            <InputSelect
-                value={trigger[1].drawing_power ? '1' : '0'}
-                items = {[
-                    ['0', __("energy_manager.automation.feeding")],
-                    ['1', __("energy_manager.automation.drawing")],
-                ]}
-                onValue={(v) => {
-                    on_trigger(util.get_updated_union(trigger, {drawing_power: v === '1'}));
-                }} />
-        </FormRow>
-    ]
-}
-
-function new_em_grid_power_draw_config(): AutomationTrigger {
-    return [
-        AutomationTriggerID.EMGridPowerDraw,
-        {
-            drawing_power: false,
-        },
-    ];
-}
-
-export function init() {
+export function init(): InitResult {
     return {
         trigger_components: {
             [AutomationTriggerID.EMInputThree]: {
@@ -272,20 +200,6 @@ export function init() {
                 clone_config: (trigger: AutomationTrigger) => [trigger[0], {...trigger[1]}] as AutomationTrigger,
                 get_table_children: get_em_contactor_monitoring_table_children,
                 get_edit_children: get_em_contactor_monitoring_edit_children,
-            },
-            [AutomationTriggerID.EMPowerAvailable]: {
-                name: __("energy_manager.automation.power_available"),
-                new_config: new_em_power_available_config,
-                clone_config: (trigger: AutomationTrigger) => [trigger[0], {...trigger[1]}] as AutomationTrigger,
-                get_table_children: get_em_power_available_table_children,
-                get_edit_children: get_em_power_available_edit_children,
-            },
-            [AutomationTriggerID.EMGridPowerDraw]: {
-                name: __("energy_manager.automation.grid_power_draw"),
-                new_config: new_em_grid_power_draw_config,
-                clone_config: (trigger: AutomationTrigger) => [trigger[0], {...trigger[1]}] as AutomationTrigger,
-                get_table_children: get_em_grid_power_draw_table_children,
-                get_edit_children: get_em_grid_power_draw_edit_children,
             },
         },
     };

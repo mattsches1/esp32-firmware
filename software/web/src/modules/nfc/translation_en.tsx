@@ -10,6 +10,16 @@ let x = {
         "content": {
             "nfc": "NFC Tags",
 
+            "deadtime": "Stop charge with tag",
+            "deadtime_muted": "Allow stopping a charge with an NFC tag only after the configured time",
+            "deadtime_min": "Immediately",
+            "deadtime_3": "Only at least 3 seconds after release",
+            "deadtime_10": "Only at least 10 seconds after release",
+            "deadtime_30": "Only at least 30 seconds after release",
+            "deadtime_60": "Only at least 60 seconds after release",
+            "deadtime_max": "Never",
+
+            "tags": "Configured tags",
             "table_tag_id": "Tag ID",
             "table_user_id": "Assigned user",
             "table_tag_type": "Tag type",

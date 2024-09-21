@@ -19,14 +19,13 @@
 
 #include "coredump.h"
 
+#include <LittleFS.h>
+#include <esp_core_dump.h>
+
+#include "event_log_prefix.h"
+#include "module_dependencies.h"
 #include "build.h"
-#include "api.h"
 #include "tools.h"
-#include "task_scheduler.h"
-
-#include "LittleFS.h"
-
-#include "esp_core_dump.h"
 
 // Pre- and postfix take up 54 characters.
 COREDUMP_DRAM_ATTR char tf_coredump_info[512];
@@ -80,9 +79,9 @@ void Coredump::pre_setup()
     });
 
     if (setup_error == CoredumpSetupError::BufferToSmall) {
-        logger.printfln("Coredump: Buffer too small for any info data.");
+        logger.printfln("Buffer too small for any info data.");
     } else if (setup_error == CoredumpSetupError::Truncated) {
-        logger.printfln("Coredump: Buffer too small for all data; info data truncated.");
+        logger.printfln("Buffer too small for all data; info data truncated.");
     }
 }
 
@@ -98,6 +97,7 @@ void Coredump::register_urls()
 {
     api.addState("coredump/state", &state);
 
+    // TODO: Make this an API command?
     server.on("/coredump/erase", HTTP_GET, [this](WebServerRequest request) {
         esp_core_dump_image_erase();
         if (esp_core_dump_image_check() == ESP_OK)
@@ -129,8 +129,7 @@ void Coredump::register_urls()
 
         request.beginChunkedResponse(200, "application/octet-stream");
 
-        for (size_t i = 0; i < size; i += 4096)
-        {
+        for (size_t i = 0; i < size; i += 4096) {
             size_t to_send = min((size_t)4096, size - i);
             if (esp_flash_read(NULL, buffer, addr + i, to_send) != ESP_OK) {
                 String s = "ESP_FLASH_READ failed. Core dump truncated";

@@ -21,11 +21,10 @@
 
 #include <stdint.h>
 
-#include "bindings/bricklet_rs485.h"
-
-#include "config.h"
 #include "module.h"
+#include "config.h"
 #include "modules/event/event.h"
+#include "bindings/bricklet_rs485.h"
 
 #define MODBUS_METER_SIMULATOR_REGISTER_COUNT 196
 

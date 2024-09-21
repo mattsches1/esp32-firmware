@@ -18,20 +18,17 @@
  */
 
 #include "modbus_meter_simulator.h"
+
+#include "event_log_prefix.h"
 #include "module_dependencies.h"
-
 #include "bindings/hal_common.h"
-extern TF_HAL hal;
-
-#include "api.h"
-#include "event_log.h"
 #include "modules/meters/sdm_helpers.h"
-#include "task_scheduler.h"
 #include "tools.h"
-
 #include "modules/meters_rs485_bricklet/meter_defs.h"
 
 #include "gcc_warnings.h"
+
+extern TF_HAL hal;
 
 static const uint8_t addr2values[MODBUS_METER_SIMULATOR_REGISTER_COUNT] = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,255,22,23,255,24,255,25,255,26,27,255,28,255,29,30,31,32,33,34,35,36,37,255,255,255,255,255,255,38,39,40,41,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,42,43,44,45,255,255,255,255,255,255,255,255,46,255,255,255,255,47,48,49,50,51,52,255,53,54,255,255,255,55,56,57,58,59,60,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,255,85,255,86,87};
 
@@ -75,7 +72,7 @@ void ModbusMeterSimulator::setup()
     }
 
     if (meter_id == 0) {
-        logger.printfln("modbus_meter_simulator: Unsupported meter type %u. Disabling simulator.", meter_type);
+        logger.printfln("Unsupported meter type %u. Disabling simulator.", meter_type);
         initialized = true; // Mark as initialized so that the front-end shows up.
         return;
     }
@@ -120,25 +117,25 @@ void ModbusMeterSimulator::register_events()
 void ModbusMeterSimulator::setupRS485()
 {
     if (tf_rs485_create(&bricklet, nullptr, &hal) != TF_E_OK) {
-        logger.printfln("modbus_meter_simulator: No RS485 bricklet found. Disabling simulator.");
+        logger.printfln("No RS485 bricklet found. Disabling simulator.");
         return;
     }
 
     int result = tf_rs485_set_mode(&bricklet, TF_RS485_MODE_MODBUS_SLAVE_RTU);
     if (result != TF_E_OK) {
-        logger.printfln("modbus_meter_simulator: RS485 set mode failed (rc %d). Disabling simulator.", result);
+        logger.printfln("RS485 set mode failed (rc %d). Disabling simulator.", result);
         return;
     }
 
     result = tf_rs485_set_rs485_configuration(&bricklet, 9600, TF_RS485_PARITY_NONE, TF_RS485_STOPBITS_1, TF_RS485_WORDLENGTH_8, TF_RS485_DUPLEX_HALF);
     if (result != TF_E_OK) {
-        logger.printfln("modbus_meter_simulator: RS485 set config failed (rc %d). Disabling simulator.", result);
+        logger.printfln("RS485 set config failed (rc %d). Disabling simulator.", result);
         return;
     }
 
     result = tf_rs485_set_modbus_configuration(&bricklet, 1, 0);
     if (result != TF_E_OK) {
-        logger.printfln("modbus_meter_simulator: RS485 set modbus config failed (rc %d). Disabling simulator.", result);
+        logger.printfln("RS485 set modbus config failed (rc %d). Disabling simulator.", result);
         return;
     }
 
@@ -163,23 +160,23 @@ void ModbusMeterSimulator::setupRS485()
 
     // Unused callbacks
     tf_rs485_register_modbus_slave_write_single_coil_request_callback(&bricklet, [](TF_RS485 *rs485, uint8_t request_id, uint32_t coil_address, bool coil_value, void *user_data) {
-        logger.printfln("modbus_meter_simulator: No handler implementation for request 'write single coil' with coil address %u", coil_address);
+        logger.printfln("No handler implementation for request 'write single coil' with coil address %u", coil_address);
     }, this);
 
     tf_rs485_register_modbus_slave_write_multiple_coils_request_low_level_callback(&bricklet, [](struct TF_RS485 *rs485, uint8_t request_id, uint32_t starting_address, uint16_t coils_length, uint16_t coils_chunk_offset, bool coils_chunk_data[440], void *user_data) {
-        logger.printfln("modbus_meter_simulator: No handler implementation for request 'write multiple coils' with starting address %u", starting_address);
+        logger.printfln("No handler implementation for request 'write multiple coils' with starting address %u", starting_address);
     }, this);
 
     tf_rs485_register_modbus_slave_write_single_register_request_callback(&bricklet, [](TF_RS485 *device, uint8_t request_id, uint32_t register_address, uint16_t register_value, void *user_data) {
-        logger.printfln("modbus_meter_simulator: No handler implementation for request 'write single register' with register address %u", register_address);
+        logger.printfln("No handler implementation for request 'write single register' with register address %u", register_address);
     }, this);
 
     tf_rs485_register_modbus_slave_read_coils_request_callback(&bricklet, [](TF_RS485 *rs485, uint8_t request_id, uint32_t starting_address, uint16_t count, void *user_data) {
-        logger.printfln("modbus_meter_simulator: No handler implementation for request 'read coils' with starting address %u", starting_address);
+        logger.printfln("No handler implementation for request 'read coils' with starting address %u", starting_address);
     }, this);
 
     tf_rs485_register_modbus_slave_read_discrete_inputs_request_callback(&bricklet, [](TF_RS485 *rs485, uint8_t request_id, uint32_t starting_address, uint16_t count, void *user_data) {
-        logger.printfln("modbus_meter_simulator: No handler implementation for request 'read discrete inputs' with starting address %u", starting_address);
+        logger.printfln("No handler implementation for request 'read discrete inputs' with starting address %u", starting_address);
     }, this);
 
     initialized = true;
@@ -190,11 +187,11 @@ void ModbusMeterSimulator::checkRS485State()
     uint8_t mode = 0;
     int result = tf_rs485_get_mode(&bricklet, &mode);
     if (result != TF_E_OK) {
-        logger.printfln("modbus_meter_simulator: Failed to get RS485 mode, rc: %d", result);
+        logger.printfln("Failed to get RS485 mode, rc: %d", result);
         return;
     }
     if (mode != TF_RS485_MODE_MODBUS_SLAVE_RTU) {
-        logger.printfln("modbus_meter_simulator: RS485 mode invalid (%u). Did the bricklet reset?", mode);
+        logger.printfln("RS485 mode invalid (%u). Did the bricklet reset?", mode);
         setupRS485();
     }
 }
@@ -235,15 +232,15 @@ uint32_t ModbusMeterSimulator::register_address2cached_index(uint32_t register_a
 void ModbusMeterSimulator::modbus_slave_write_multiple_registers_request_handler(uint8_t request_id, uint32_t starting_address, uint16_t *registers, uint16_t registers_length)
 {
     if ((starting_address == 15 || starting_address == 25) || registers_length == 2) {
-        logger.printfln("modbus_meter_simulator: Tried to set password (ignored)");
+        logger.printfln("Tried to set password (ignored)");
     } else if (starting_address == 11 && registers_length == 2) {
         uint16_t indices[1] = {1};
         float float_val = NAN;
         convert_to_float(registers, &float_val, indices, 1);
-        logger.printfln("modbus_meter_simulator: Setting system type to %f", static_cast<double>(float_val));
+        logger.printfln("Setting system type to %f", static_cast<double>(float_val));
         system_type = float_val;
     } else {
-        logger.printfln("modbus_meter_simulator: Received unexpected write_multiple_registers request to address %u with length %u", starting_address, registers_length);
+        logger.printfln("Received unexpected write_multiple_registers request to address %u with length %u", starting_address, registers_length);
     }
     tf_rs485_modbus_slave_answer_write_multiple_registers_request(&bricklet, request_id);
 }
@@ -256,16 +253,16 @@ void ModbusMeterSimulator::modbus_slave_read_holding_registers_request_handler(u
         //logger.printfln("Read system type");
         convert_float_to_regs(regs, system_type);
     } else if (starting_address == 64515 && count == 1) {
-        logger.printfln("modbus_meter_simulator: Master reading meter ID");
+        logger.printfln("Master reading meter ID");
         regs[0] = meter_id;
     } else {
-        logger.printfln("modbus_meter_simulator: Received unexpected read_holding_registers request to address %u with length %u", starting_address, count);
+        logger.printfln("Received unexpected read_holding_registers request to address %u with length %u", starting_address, count);
         return;
     }
 
     int rc = tf_rs485_modbus_slave_answer_read_holding_registers_request(&bricklet, request_id, regs, count);
     if (rc != TF_E_OK)
-        logger.printfln("modbus_meter_simulator: Answering read holding registers request failed with code %i", rc);
+        logger.printfln("Answering read holding registers request failed with code %i", rc);
 }
 
 void ModbusMeterSimulator::modbus_slave_read_input_registers_request_handler(uint8_t request_id, uint32_t starting_address, uint16_t count)
@@ -273,7 +270,7 @@ void ModbusMeterSimulator::modbus_slave_read_input_registers_request_handler(uin
     uint16_t regs[125];
 
     if (count > ARRAY_SIZE(regs)) {
-        logger.printfln("modbus_meter_simulator: Received unexpected read_input_registers request to address %u with length %u", starting_address, count);
+        logger.printfln("Received unexpected read_input_registers request to address %u with length %u", starting_address, count);
         return;
     }
 
@@ -286,5 +283,5 @@ void ModbusMeterSimulator::modbus_slave_read_input_registers_request_handler(uin
 
     int rc = tf_rs485_modbus_slave_answer_read_input_registers_request(&bricklet, request_id, regs, count);
     if (rc != TF_E_OK)
-        logger.printfln("modbus_meter_simulator: Answering read input registers request failed with code %i", rc);
+        logger.printfln("Answering read input registers request failed with code %i", rc);
 }

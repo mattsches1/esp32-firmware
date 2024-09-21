@@ -18,38 +18,45 @@
  * Boston, MA 02111-1307, USA.
  */
 
-import $ from "jquery";
 import { createRef, RefObject } from "preact";
-
 import * as API from "./api";
-import { __ } from "./translation";
-
+import { __, removeUnicodeHacks } from "./translation";
 import { AsyncModal } from "./components/async_modal";
 import { api_cache } from "./api_defs";
 import { batch, signal, Signal } from "@preact/signals-core";
-import { useState } from "preact/hooks";
+import { deepSignal, DeepSignal } from "deepsignal";
 
 export function reboot() {
     API.call("reboot", null, "").then(() => postReboot(__("util.reboot_title"), __("util.reboot_text")));
 }
 
-export function add_alert(id: string, cls: string, title: string, text: string) {
-    let to_add = `<div id="alert_${id}" class="alert ${cls} alert-dismissible fade show custom-alert" role="alert" style="line-height: 1.5rem;">
-    <strong>${title}</strong> ${text}
-    <button type="button" class="close" data-dismiss="alert" aria-label="Close">
-    <span aria-hidden="true">&times;</span>
-    </button>
-</div>`;
+// react-bootstrap's Variant adds | string as the last union variant m(
+type StrictVariant = 'primary' | 'secondary' | 'success' | 'danger' | 'warning' | 'info' | 'dark' | 'light';
 
-    if(!document.getElementById(`alert_${id}`)) {
-        $('#alert_placeholder').append(to_add);
-    } else {
-        $(`#alert_${id}`).replaceWith(to_add);
+let alerts: DeepSignal<Array<{id: string, variant: StrictVariant, title: string, text: string}>> = deepSignal([]);
+
+export function get_alerts() {
+    return alerts;
+}
+
+export function add_alert(id: string, variant: StrictVariant, title: string, text: string) {
+    let idx = alerts.findIndex((alert) => alert.id == id);
+    let alert = {id: id, variant: variant, title: title, text: text};
+
+    if (idx >= 0) {
+        alerts[idx] = alert;
+    }
+    else {
+        alerts.push(alert);
     }
 }
 
 export function remove_alert(id: string) {
-    $(`#alert_${id}`).remove();
+    let idx = alerts.findIndex((alert) => alert.id == id);
+
+    if (idx >= 0) {
+        alerts.splice(idx, 1);
+    }
 }
 
 export function format_timespan_ms(ms: number, opts?: {replace_zero_with?: string, replace_u32max_with?: string}) {
@@ -117,15 +124,18 @@ export function format_timespan(secs: number) {
     return dayString + hourString + minString + secString;
 }
 
+let number_formats: {[id: number]: Intl.NumberFormat} = {};
+
 export function toLocaleFixed(i: number, fractionDigits?: number) {
     if (fractionDigits === undefined) {
         fractionDigits = 0;
     }
 
-    return i.toLocaleString(undefined, {
-        minimumFractionDigits: fractionDigits,
-        maximumFractionDigits: fractionDigits,
-    });
+    if (!number_formats[fractionDigits]) {
+        number_formats[fractionDigits] = new Intl.NumberFormat(undefined, {minimumFractionDigits: fractionDigits, maximumFractionDigits: fractionDigits});
+    }
+
+    return number_formats[fractionDigits].format(i);
 }
 
 let wsReconnectTimeout: number = null;
@@ -152,6 +162,16 @@ export function addApiEventListener_unchecked(type: string, callback: EventListe
 
 export let eventTarget: API.APIEventTarget = new API.APIEventTarget();
 
+let active_sub_page: Signal<string> = signal("");
+
+export function get_active_sub_page() {
+    return active_sub_page.value;
+}
+
+export function set_active_sub_page(sub_page: string) {
+    active_sub_page.value = sub_page;
+}
+
 let allow_render: Signal<boolean> = signal(false);
 
 export function render_allowed() {
@@ -176,9 +196,112 @@ export function initCapsLockCheck() {
     document.addEventListener("click", checkCapsLock);
 }
 
-export function setupEventSource(first: boolean, keep_as_first: boolean, continuation: (ws: WebSocket, eventTarget: API.APIEventTarget) => void) {
+export let remoteAccessMode = window.top !== window.self;
+const path = location.origin;
+export let connection_id = "";
+let iframe_timeout: number = null;
+let iframe_timeout_ms = 100;
+
+window.addEventListener("message", (e) => {
+    if (iframe_timeout != null) {
+        window.clearTimeout(iframe_timeout);
+        iframe_timeout = null;
+    }
+    if (typeof e.data === "string") {
+        if (iFrameSocketCb) {
+            iFrameSocketCb(e);
+        }
+    } else {
+        connection_id = e.data.connection_id;
+    }
+});
+
+if (remoteAccessMode) {
+    window.parent.postMessage("webinterface_loaded");
+    iframe_timeout = window.setTimeout(() => {
+        remoteAccessMode = false;
+    }, iframe_timeout_ms);
+}
+
+export function closeRemoteConnection() {
+    window.parent.postMessage("close");
+}
+
+let iFrameSocketCb: (data: any) => void = null;
+
+function iFrameSocketInit(first: boolean, keep_as_first: boolean, continuation: (ws: WebSocket | undefined, eventTarget: API.APIEventTarget) => void) {
     if (!first) {
-        add_alert("event_connection_lost", "alert-warning",  __("util.event_connection_lost_title"), __("util.event_connection_lost"))
+        add_alert("event_connection_lost", "warning",  __("util.event_connection_lost_title"), __("util.event_connection_lost"))
+    }
+    if (wsReconnectTimeout != null) {
+        clearTimeout(wsReconnectTimeout);
+    }
+    wsReconnectCallback = () => setupEventSource(keep_as_first ? first : false, keep_as_first, continuation, true)
+    wsReconnectTimeout = window.setTimeout(wsReconnectCallback, RECONNECT_TIME);
+
+    iFrameSocketCb = wsOnMessageCallback;
+    continuation(undefined, eventTarget);
+}
+
+// Copy of keep_as_first parameter of setupEventSource
+let k_a_f: boolean;
+const wsOnMessageCallback = (e: MessageEvent) => {
+    if(!k_a_f)
+        remove_alert("event_connection_lost");
+
+    if (wsReconnectTimeout != null) {
+        window.clearTimeout(wsReconnectTimeout);
+        wsReconnectTimeout = null;
+    }
+    wsReconnectTimeout = window.setTimeout(wsReconnectCallback, RECONNECT_TIME);
+
+    let topics: any[] = [];
+
+    let end_marker_found = (e.data as string).includes("\n\n");
+    let messages = (e.data as string).trim();
+
+    batch(() => {
+        for (let item of messages.split("\n")) {
+            let obj = JSON.parse(item);
+            if (!("topic" in obj) || !("payload" in obj)) {
+                console.log("Received malformed event", obj);
+                return;
+            }
+
+            topics.push(obj["topic"]);
+            API.update(obj["topic"], obj["payload"]);
+        }
+
+        if (allow_render.peek()) {
+            for (let topic of topics) {
+                API.trigger(topic, eventTarget);
+            }
+        }
+
+        if (end_marker_found) {
+            API.trigger_all(eventTarget);
+            allow_render.value = true;
+        }
+    });
+};
+
+export function setupEventSource(first: boolean, keep_as_first: boolean, continuation: (ws: WebSocket, eventTarget: API.APIEventTarget) => void, isIframe?: boolean) {
+    k_a_f = keep_as_first;
+    if (remoteAccessMode) {
+        if (iframe_timeout != null) {
+            // We are currently checking whether the iframe parent is the remote access page.
+            // Retry after the check is done.
+            window.setTimeout(() => setupEventSource(first, keep_as_first, continuation, isIframe), iframe_timeout_ms);
+        } else {
+            pauseWebSockets();
+            iFrameSocketInit(first, keep_as_first, continuation);
+            window.parent.postMessage("initIFrame", "*");
+            return;
+        }
+    }
+
+    if (!first) {
+        add_alert("event_connection_lost", "warning",  __("util.event_connection_lost_title"), __("util.event_connection_lost"))
     }
     console.log("Connecting to web socket");
     if (ws != null) {
@@ -192,48 +315,15 @@ export function setupEventSource(first: boolean, keep_as_first: boolean, continu
     wsReconnectCallback = () => setupEventSource(keep_as_first ? first : false, keep_as_first, continuation)
     wsReconnectTimeout = window.setTimeout(wsReconnectCallback, RECONNECT_TIME);
 
-    ws.onmessage = (e: MessageEvent) => {
-        if(!keep_as_first)
-            remove_alert("event_connection_lost");
-
-        if (wsReconnectTimeout != null) {
-            window.clearTimeout(wsReconnectTimeout);
-            wsReconnectTimeout = null;
-        }
-        wsReconnectTimeout = window.setTimeout(wsReconnectCallback, RECONNECT_TIME);
-
-        let topics: any[] = [];
-
-        let end_marker_found = (e.data as string).includes("\n\n");
-        let messages = (e.data as string).trim();
-
-        batch(() => {
-            for (let item of messages.split("\n")) {
-                let obj = JSON.parse(item);
-                if (!("topic" in obj) || !("payload" in obj)) {
-                    console.log("Received malformed event", obj);
-                    return;
-                }
-
-                topics.push(obj["topic"]);
-                API.update(obj["topic"], obj["payload"]);
-            }
-
-            for (let topic of topics) {
-                API.trigger(topic, eventTarget);
-            }
-
-            if (end_marker_found) {
-                allow_render.value = true;
-            }
-        });
-    };
+    ws.onmessage = wsOnMessageCallback;
 
     continuation(ws, eventTarget);
 }
 
 export function pauseWebSockets() {
-    ws.close();
+    if (ws !== null) {
+        ws.close();
+    }
     if (wsReconnectTimeout != null) {
         clearTimeout(wsReconnectTimeout);
     }
@@ -245,9 +335,11 @@ export function resumeWebSockets() {
 }
 
 export function postReboot(alert_title: string, alert_text: string) {
-    ws.close();
+    if (ws !== null) {
+        ws.close();
+    }
     clearTimeout(wsReconnectTimeout);
-    add_alert("reboot", "alert-success", alert_title, alert_text);
+    add_alert("reboot", "success", alert_title, alert_text);
     // Wait 5 seconds before starting the reload/reconnect logic, to make sure the reboot has actually started yet.
     // Else it sometimes happens, that we reconnect _before_ the reboot starts.
     window.setTimeout(() => whenLoggedInElseReload(() =>
@@ -265,10 +357,14 @@ export function postReboot(alert_title: string, alert_text: string) {
 let loginReconnectTimeout: number = null;
 
 export function ifLoggedInElse(if_continuation: () => void, else_continuation: () => void) {
-    download("/login_state", 10000)
-        .catch(e => new Blob(["Logged in"]))
-        .then(blob => blob.text())
-        .then(text => text == "Logged in" ? if_continuation() : else_continuation());
+    if (!remoteAccessMode || connection_id.length > 0) {
+        download("/login_state", 10000)
+            .catch(e => new Blob(["Logged in"]))
+            .then(blob => blob.text())
+            .then(text => text == "Logged in" ? if_continuation() : else_continuation());
+    } else {
+        setTimeout(() => ifLoggedInElse(if_continuation, else_continuation));
+    }
 }
 
 export function ifLoggedInElseReload(continuation: () => void) {
@@ -294,7 +390,7 @@ export function whenLoggedInElseReload(continuation: () => void) {
     ifLoggedInElseReload(() => {clearTimeout(loginReconnectTimeout); continuation();});
 }
 
-function iso8601ButLocal(date: Date) {
+export function iso8601ButLocal(date: Date) {
     const offset = date.getTimezoneOffset() * 60 * 1000;
     const local =  date.getTime() - offset;
     const dateLocal = new Date(local);
@@ -373,24 +469,24 @@ export function unparseIP(ip: number) {
 }
 
 
-export function downloadToFile(content: BlobPart, filename_prefix: string, extension: string, contentType: string) {
+export function downloadToFile(content: BlobPart, fileType: string, extension: string, contentType: string, timestamp?: Date) {
+    if (timestamp === undefined) {
+        timestamp = new Date();
+    }
+
     const a = document.createElement('a');
     const file = new Blob([content], {type: contentType});
-    let t = iso8601ButLocal(new Date()).replace(/:/gi, "-").replace(/\./gi, "-");
+    let timestamp_str = iso8601ButLocal(timestamp).replace(/:/gi, "-").replace(/\./gi, "-");
     let name = API.get_unchecked('info/name')?.name ?? "unknown_uid";
 
+    let filename = name + "-" + fileType + "-" + timestamp_str + "." + extension;
+    filename = removeUnicodeHacks(filename);
+
     a.href= URL.createObjectURL(file);
-    a.download = filename_prefix + "-" + name + "-" + t + "." + extension;
+    a.download = filename;
     a.click();
 
     URL.revokeObjectURL(a.href);
-}
-
-export function getShowRebootModalFn(changed_value_name: string) {
-    return () => {
-        $('#reboot_content_changed').html(changed_value_name);
-        $('#reboot').modal('show');
-    };
 }
 
 function timestamp_to_date(timestamp: number, time_fmt: any) {
@@ -439,6 +535,10 @@ export function upload(data: Blob, url: string, progress: (i: number) => void = 
 
     let error_message: string = null;
 
+    if (remoteAccessMode) {
+        url = path + (url.startsWith("/") ? "" : "/") + url;
+    }
+
     return new Promise<void>((resolve, reject) => {
         xhr.upload.addEventListener("abort", e => error_message = error_message ?? __("util.upload_abort"));
         // https://bugs.chromium.org/p/chromium/issues/detail?id=118096#c5
@@ -459,6 +559,7 @@ export function upload(data: Blob, url: string, progress: (i: number) => void = 
 
         xhr.addEventListener("loadend", () => {
             if (xhr.readyState === XMLHttpRequest.DONE) {
+                xhr.response
                 progress(1);
                 if (xhr.status === 200)
                     resolve();
@@ -467,6 +568,7 @@ export function upload(data: Blob, url: string, progress: (i: number) => void = 
         });
 
         xhr.open("POST", url, true);
+        xhr.setRequestHeader("X-Connection-Id", connection_id);
         xhr.timeout = timeout_ms;
         if (contentType)
             xhr.setRequestHeader("Content-Type", contentType);
@@ -480,12 +582,14 @@ export async function download(url: string, timeout_ms: number = 5000) {
 
     let response = null;
     try {
-        response = await fetch(url, {signal: abort.signal})
+        if (remoteAccessMode) {
+            url = path + (url.startsWith("/") ? "" : "/") + url;
+        }
+        response = await fetch(url, {signal: abort.signal, headers: {"X-Connection-Id": connection_id}});
     } catch (e) {
         clearTimeout(timeout);
         throw new Error(e.name == "AbortError" ? __("util.download_timeout") : (__("util.download_error") + ": " + e.message));
     }
-
     if (!response.ok) {
         throw new Error(`${response.status}(${response.statusText}) ${await response.text()}`)
     }
@@ -499,11 +603,17 @@ export async function put(url: string, payload: any, timeout_ms: number = 5000) 
 
     let response = null;
     try {
+        if (remoteAccessMode) {
+            url = path + (url.startsWith("/") ? "" : "/") + url;
+        }
         response = await fetch(url, {
             signal: abort.signal,
             method: "PUT",
             credentials: 'same-origin',
-            headers: {"Content-Type": "application/json; charset=utf-8"},
+            headers: {
+                "Content-Type": "application/json; charset=utf-8",
+                "X-Connection-Id": connection_id,
+            },
             body: JSON.stringify(payload)})
     } catch (e) {
         clearTimeout(timeout);
@@ -586,20 +696,6 @@ export function compareArrays(a: Array<any>, b: Array<any>): boolean
     return a.length === b.length && a.every((element, index) => element === b[index]);
 }
 
-// https://stackoverflow.com/a/1535650
-export let nextId = (function() {
-    let id = 0;
-    return function() {return "ID-" + (++id).toString();};
-})();
-
-// Preact's useId does not work with multiple roots:
-// https://github.com/preactjs/preact/issues/3781
-// Once the port to preact is complete,
-// we can switch back to Preact's useId.
-export function useId() {
-    return useState(nextId())[0];
-}
-
 export function joinNonEmpty(sep: string, lst: string[]) {
     return lst.filter(x => x) // remove empty slots
               .filter(x => x.length > 0)
@@ -611,14 +707,130 @@ export function get_updated_union<T extends object>(union: [number, T], update: 
 }
 
 export function toIsoString(date: Date) {
-    const pad = function(num: number) {
-        return (num < 10 ? '0' : '') + num;
-    };
-
     return date.getFullYear() +
-        '-' + pad(date.getMonth() + 1) +
-        '-' + pad(date.getDate()) +
-        'T' + pad(date.getHours()) +
-        ':' + pad(date.getMinutes()) +
-        ':' + pad(date.getSeconds());
+        '-' + leftPad(date.getMonth() + 1, 0, 2) +
+        '-' + leftPad(date.getDate(), 0, 2) +
+        'T' + leftPad(date.getHours(), 0, 2) +
+        ':' + leftPad(date.getMinutes(), 0, 2) +
+        ':' + leftPad(date.getSeconds(), 0, 2);
+}
+
+export function rgbToHex(r: number, g: number, b: number, a?: number) {
+    return '#' + leftPad(r.toString(16), '0', 2)
+               + leftPad(g.toString(16), '0', 2)
+               + leftPad(b.toString(16), '0', 2)
+               + (a !== undefined ? leftPad(a.toString(16), '0', 2) : "");
+}
+
+export function hexToRgb(hex: string): {r: number, g: number, b: number, a?: number} {
+    if (hex.startsWith("#"))
+        hex = hex.slice(1);
+
+    if (hex.length == 3) {
+        return {
+            r: parseInt(hex[0], 16),
+            g: parseInt(hex[1], 16),
+            b: parseInt(hex[2], 16)
+        };
+    }
+
+    if (hex.length == 4) {
+        return {
+            r: parseInt(hex[0], 16),
+            g: parseInt(hex[1], 16),
+            b: parseInt(hex[2], 16),
+            a: parseInt(hex[3], 16)
+        };
+    }
+
+    if (hex.length == 6) {
+        return {
+            r: parseInt(hex.slice(0, 2), 16),
+            g: parseInt(hex.slice(2, 4), 16),
+            b: parseInt(hex.slice(4, 6), 16)
+        };
+    }
+
+    if (hex.length == 8) {
+        return {
+            r: parseInt(hex.slice(0, 2), 16),
+            g: parseInt(hex.slice(2, 4), 16),
+            b: parseInt(hex.slice(4, 6), 16),
+            a: parseInt(hex.slice(6, 8), 16)
+        };
+    }
+}
+
+// From https://axonflux.com/handy-rgb-to-hsl-and-rgb-to-hsv-color-model-c
+/**
+ * Converts an RGB color value to HSV. Conversion formula
+ * adapted from http://en.wikipedia.org/wiki/HSV_color_space.
+ * Assumes r, g, and b are contained in the set [0, 255] and
+ * returns h, s, and v in the set [0, 1].
+ *
+ * @param   Number  r       The red color value
+ * @param   Number  g       The green color value
+ * @param   Number  b       The blue color value
+ * @return  Array           The HSV representation
+ */
+export function rgbToHsv(r: number, g: number, b: number): [number, number, number]{
+    r = r/255, g = g/255, b = b/255;
+    var max = Math.max(r, g, b), min = Math.min(r, g, b);
+    var h, s, v = max;
+
+    var d = max - min;
+    s = max == 0 ? 0 : d / max;
+
+    if(max == min){
+        h = 0; // achromatic
+    }else{
+        switch(max){
+            case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+            case g: h = (b - r) / d + 2; break;
+            case b: h = (r - g) / d + 4; break;
+        }
+        h /= 6;
+    }
+
+    return [h, s, v];
+}
+
+/**
+ * Converts an HSV color value to RGB. Conversion formula
+ * adapted from http://en.wikipedia.org/wiki/HSV_color_space.
+ * Assumes h, s, and v are contained in the set [0, 1] and
+ * returns r, g, and b in the set [0, 255].
+ *
+ * @param   Number  h       The hue
+ * @param   Number  s       The saturation
+ * @param   Number  v       The value
+ * @return  Array           The RGB representation
+ */
+export function hsvToRgb(h: number, s: number, v: number): [number, number, number]{
+    var r, g, b;
+
+    var i = Math.floor(h * 6);
+    var f = h * 6 - i;
+    var p = v * (1 - s);
+    var q = v * (1 - f * s);
+    var t = v * (1 - (1 - f) * s);
+
+    switch(i % 6){
+        case 0: r = v, g = t, b = p; break;
+        case 1: r = q, g = v, b = p; break;
+        case 2: r = p, g = v, b = t; break;
+        case 3: r = p, g = q, b = v; break;
+        case 4: r = t, g = p, b = v; break;
+        case 5: r = v, g = p, b = q; break;
+    }
+
+    return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+}
+
+export function blobToBase64(blob: Blob): Promise<string> {
+    return new Promise((resolve, _) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(blob);
+    });
 }

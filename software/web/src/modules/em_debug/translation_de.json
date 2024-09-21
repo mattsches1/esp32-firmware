@@ -6,7 +6,7 @@
             "em_debug": "Debug"
         },
         "content": {
-            "em_debug": "Energy Manager-Debug",
+            "em_debug": "Debug",
             "protocol": "Energy Manager-Protokoll",
             "debug_description": "Protokoll erstellen",
             "debug_description_muted": "zur Diagnose bei Problemen",
@@ -16,6 +16,8 @@
             "internal_state": "Interner Zustand",
 
             "hardware_state": "Hardwarezustände",
+            "bricklet_errors": "Aufeinanderfolgende Bricklet-Fehler",
+            "state_input_voltage": "Eingangsspannung",
             "contactor_control": "Schützsteuerung",
             "contactor_off": "Schütz offen (eine Phase aktiv)",
             "contactor_on": "Schütz geschlossen (drei Phasen aktiv)",
@@ -25,11 +27,19 @@
             "state_led": "LED",
             "state_led_names": "rot, grün, blau",
             "gpios": "Ein-/Ausgänge",
-            "gpio_names_0": "Eingang 3, Eingang 4, Ausgang",
-            "state_input_voltage": "Eingangsspannung",
+            "gpio_names_v1": "Eingang 3, Eingang 4, Ausgang",
+            "gpio_inputs": "Eingänge",
+            "gpio_outputs": "Ausgänge",
+            "gpio_input_names_v2": "1-4",
+            "gpio_output_names_v2": "Relais 1+2, SG Ready 1+2",
 
             "low": "Low",
-            "high": "High"
+            "high": "High",
+
+            "reset_description": "Aktionen",
+            "reset_description_muted": "",
+            "reset_em": "Neu starten",
+            "reflash_em": "Neu flashen"
         },
         "script": {
             "loading_debug_report": "Lade Debug-Report",
@@ -42,7 +52,8 @@
             "debug_running": "Aufzeichnung läuft. Tab nicht schließen!",
             "debug_stop_failed": "Stoppen der Aufzeichnung des Energy Manager-Logs fehlgeschlagen.",
             "debug_stopped": "Aufzeichnung des Energy Manager-Logs gestoppt.",
-            "debug_done": "Abgeschlossen."
+            "debug_done": "Abgeschlossen.",
+            "debug_file": "Energy-Manager-Protokoll"
         }
     }
 }

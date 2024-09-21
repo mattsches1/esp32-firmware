@@ -18,8 +18,9 @@
  */
 
 import {ConfigMap, api_cache, Modules, ConfigModified, ConfigModifiedKey} from './api_defs';
-
 import * as util from "./util";
+import { __ } from "./translation";
+import { RevertDeepSignal } from 'deepsignal';
 
 export { type ConfigMap as getType, type Modules };
 
@@ -130,6 +131,16 @@ export class APIEventTarget implements EventTarget {
     }
 }
 
+export function trigger_all(event_source: APIEventTarget) {
+    for (let x of Object.keys(api_cache as RevertDeepSignal<typeof api_cache>)) {
+        let key = x as keyof ConfigMap;
+        if (get(key) == undefined)
+            continue;
+
+        trigger(key, event_source);
+    }
+}
+
 export function trigger<T extends keyof ConfigMap>(topic: T, event_source: APIEventTarget) {
     event_source.dispatchEvent(new MessageEvent<Readonly<ConfigMap[T]>>(topic, {'data': get(topic)}));
 }
@@ -138,45 +149,81 @@ export function trigger_unchecked<T extends keyof ConfigMap>(topic: string, even
     event_source.dispatchEvent(new MessageEvent<Readonly<ConfigMap[T]>>(topic, {'data': get(topic as any)}));
 }
 
-export function save<T extends keyof ConfigMap>(topic: T, payload: ConfigMap[T], error_string: string, reboot_string?: string) {
+export function save<T extends keyof ConfigMap>(topic: T, payload: ConfigMap[T], error_string?: string, reboot_string?: string) {
     let extracted = extract(topic, payload);
     return call((topic + "_update") as any, extracted, error_string, reboot_string);
 }
 
-export function save_unchecked<T extends string>(topic: T, payload: (T extends keyof ConfigMap ? ConfigMap[T] : any), error_string: string, reboot_string?: string) {
+export function save_unchecked<T extends string>(topic: T, payload: (T extends keyof ConfigMap ? ConfigMap[T] : any), error_string?: string, reboot_string?: string) {
     if (topic in api_cache)
         return call((topic + "_update") as any, payload, error_string, reboot_string);
     return Promise.resolve();
 }
 
-export function reset<T extends keyof ConfigMap>(topic: T, error_string: string, reboot_string?: string) {
+export function reset<T extends keyof ConfigMap>(topic: T, error_string?: string, reboot_string?: string) {
     return call((topic + "_reset") as any, null, error_string, reboot_string);
 }
 
 
-export function reset_unchecked<T extends string>(topic: T, error_string: string, reboot_string?: string) {
+export function reset_unchecked<T extends string>(topic: T, error_string?: string, reboot_string?: string) {
     if (topic in api_cache)
         return call((topic + "_reset") as any, null, error_string, reboot_string);
     return Promise.resolve();
 }
 
-export async function call<T extends keyof ConfigMap>(topic: T, payload: ConfigMap[T], error_string: string, reboot_string?: string, timeout_ms: number = 5000) {
+export async function call<T extends keyof ConfigMap>(topic: T, payload: ConfigMap[T], error_string?: string, reboot_string?: string, timeout_ms: number = 5000) {
     return call_unchecked(topic, payload, error_string, reboot_string, timeout_ms);
 }
 
-export async function call_unchecked(topic: string, payload: any, error_string: string, reboot_string?: string, timeout_ms: number = 5000) {
+export async function call_unchecked(topic: string, payload: any, error_string?: string, reboot_string?: string, timeout_ms: number = 5000) {
     try {
         let blob = await util.put('/' + topic, payload, timeout_ms);
-        if (reboot_string)
-            util.getShowRebootModalFn(reboot_string)();
+        if (reboot_string) {
+            const modal = util.async_modal_ref.current;
+
+            if(!await modal.show({
+                    title: __("main.reboot_title"),
+                    body: __("main.reboot_content")(reboot_string),
+                    no_text: __("main.abort"),
+                    yes_text: __("main.reboot"),
+                    no_variant: "secondary",
+                    yes_variant: "danger"
+                }))
+                return;
+
+            util.reboot();
+        }
         return blob;
     } catch (e) {
-        util.add_alert(topic.replace("/", "_") + '_failed', 'alert-danger', error_string, e);
+        if (error_string) {
+            let text = e instanceof Error ? e.message : e;
+            util.add_alert(topic.replace("/", "_") + '_failed', 'danger', error_string, text);
+        }
         throw e;
     }
 }
 
-export function hasFeature(feature: string) {
+export type feature =
+    "evse" |
+    "energy_manager" |
+    "cp_disconnect" |
+    "button_configuration" |
+    "ethernet" |
+    "meters" |
+    "nfc" |
+    "phase_switch" |
+    "rtc"|
+    "meter" |
+    "meter_phases" |
+    "meter_all_values" |
+    "rgb_led" |
+    "firmware_update";
+
+export function hasFeature(feature: feature) {
+    return hasFeature_unchecked(feature);
+}
+
+export function hasFeature_unchecked(feature: string) {
     let features = get('info/features');
     if (features === null)
         return false;

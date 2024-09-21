@@ -17,17 +17,14 @@
  * Boston, MA 02111-1307, USA.
  */
 #include "ntp.h"
-#include "module_dependencies.h"
-
-#include "api.h"
-#include "task_scheduler.h"
-#include "event_log.h"
 
 #include <time.h>
 #include <esp_sntp.h>
 #include <lwip/inet.h>
 #include <esp_netif.h>
 
+#include "event_log_prefix.h"
+#include "module_dependencies.h"
 #include "timezone_translation.h"
 #include "build.h"
 
@@ -44,7 +41,7 @@ static void ntp_sync_cb(struct timeval *t)
         auto now = millis();
         auto secs = now / 1000;
         auto ms = now % 1000;
-        logger.printfln("NTP synchronized at %lu,%03lu!", secs, ms);
+        logger.printfln("NTP synchronized at %lu,%03lu", secs, ms);
 
         task_scheduler.scheduleWithFixedDelay([](){
             ntp.state.get("time")->updateUint(timestamp_minutes());
@@ -69,16 +66,14 @@ static void ntp_sync_cb(struct timeval *t)
 // we have to replace the sntp_sync_time function with a thread-safe implementation.
 extern "C" void sntp_sync_time(struct timeval *tv)
 {
-    if (sntp_get_sync_mode() == SNTP_SYNC_MODE_IMMED)
-    {
+    if (sntp_get_sync_mode() == SNTP_SYNC_MODE_IMMED) {
         {
             std::lock_guard<std::mutex> lock{ntp.mtx};
             settimeofday(tv, NULL);
             ntp.sync_counter++;
         }
         sntp_set_sync_status(SNTP_SYNC_STATUS_COMPLETED);
-    }
-    else
+    } else
         logger.printfln("This sync mode is not supported.");
     ntp_sync_cb(tv);
 }
@@ -89,8 +84,8 @@ void NTP::pre_setup()
         {"enable", Config::Bool(true)},
         {"use_dhcp", Config::Bool(true)},
         {"timezone", Config::Str("Europe/Berlin", 0, 32)}, // Longest is America/Argentina/ComodRivadavia = 32 chars
-        {"server", Config::Str("ptbtime1.ptb.de", 0, 64)}, // We've applied for a vendor zone @ pool.ntp.org, however this seems to take quite a while. Use the ptb servers for now.
-        {"server2", Config::Str("ptbtime4.ptb.de", 0, 64)},
+        {"server", Config::Str("time.cloudflare.com", 0, 64)}, // We've applied for a vendor zone @ pool.ntp.org, however this seems to take quite a while. Use Cloudflare's public anycast servers for now.
+        {"server2", Config::Str("time.google.com", 0, 64)}, // Google's public anycast servers as backup.
     }), [](Config &conf, ConfigSource source) -> String {
         if (lookup_timezone(conf.get("timezone")->asEphemeralCStr()) == nullptr)
             return "Can't update config: Failed to look up timezone.";
@@ -134,6 +129,13 @@ void NTP::setup()
 
         sntp_opts sntp_opts = {ntp_server1, ntp_server2, set_servers_from_dhcp};
 
+        // Enable network stack before setting any SNTP options.
+        // Cannot be called via esp_netif_tcpip_exec() because that function
+        // will fail if the network stack is started during its execution.
+        // It should be safe to set SNTP options without the network stack
+        // running, but it needs to be running to send any SNTP queries anyway.
+        esp_netif_init();
+
         esp_netif_tcpip_exec([](void *ctx) -> esp_err_t {
             const struct sntp_opts *opts = static_cast<struct sntp_opts *>(ctx);
 
@@ -149,12 +151,13 @@ void NTP::setup()
             sntp_setoperatingmode(SNTP_OPMODE_POLL);
             sntp_set_sync_mode(SNTP_SYNC_MODE_IMMED);
 
-            if (!opts->server1.isEmpty()) {
-                sntp_setservername(opts->set_servers_from_dhcp ? 1 : 0, opts->server1.c_str());
-            }
-            if (!opts->server2.isEmpty()) {
-                sntp_setservername(opts->set_servers_from_dhcp ? 2 : 1, opts->server2.c_str());
-            }
+            // Always set first two NTP server slots and don't leave any room for
+            // servers received via DHCP. If NTP via DHCP is enabled and NTP
+            // servers are recieved via DHCP, all previously set servers are removed.
+            // Always set both servers, even when only one is configured, as the SNTP
+            // client will query all servers round-robin, including unset ones.
+            sntp_setservername(0, opts->server1.isEmpty() ? opts->server2.c_str() : opts->server1.c_str());
+            sntp_setservername(1, opts->server2.isEmpty() ? opts->server1.c_str() : opts->server2.c_str());
 
             sntp_init();
 

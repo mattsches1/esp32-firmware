@@ -18,6 +18,8 @@
  */
 
 #include "meters_em.h"
+
+#include "event_log_prefix.h"
 #include "module_dependencies.h"
 
 #include "gcc_warnings.h"
@@ -50,10 +52,10 @@ MeterClassID MetersEM::get_class() const
     return MeterClassID::EnergyManager;
 }
 
-IMeter * MetersEM::new_meter(uint32_t slot, Config *state, Config * errors)
+IMeter *MetersEM::new_meter(uint32_t slot, Config *state, Config * errors)
 {
     if (meter_instance) {
-        logger.printfln("meters_em: Cannot create more than one meter of class EnergyManager.");
+        logger.printfln("Cannot create more than one meter of class EnergyManager.");
         return nullptr;
     }
     meter_instance = new MeterEM(slot, state, errors);
@@ -61,23 +63,23 @@ IMeter * MetersEM::new_meter(uint32_t slot, Config *state, Config * errors)
 }
 
 [[gnu::const]]
-const Config * MetersEM::get_config_prototype()
+const Config *MetersEM::get_config_prototype()
 {
     return &config_prototype;
 }
 
 [[gnu::const]]
-const Config * MetersEM::get_state_prototype()
+const Config *MetersEM::get_state_prototype()
 {
     return &state_prototype;
 }
 
-const Config * MetersEM::get_errors_prototype()
+const Config *MetersEM::get_errors_prototype()
 {
     return &errors_prototype;
 }
 
-void MetersEM::update_from_em_all_data(const EnergyManagerAllData &all_data)
+void MetersEM::update_from_em_all_data(const EMAllDataCommon &all_data)
 {
     if (!meter_instance)
         return;

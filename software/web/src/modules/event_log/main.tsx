@@ -17,31 +17,34 @@
  * Boston, MA 02111-1307, USA.
  */
 
-import $ from "../../ts/jq";
 import * as util from "../../ts/util";
-import * as API from "../../ts/api";
-import { h, render, Fragment, Component } from "preact";
+import { h, Component } from "preact";
 import { __ } from "../../ts/translation";
 import { PageHeader } from "../../ts/components/page_header";
 import { FormRow } from "../../ts/components/form_row";
 import { Button, Spinner } from "react-bootstrap";
-import { Download } from 'react-feather';
 import { SubPage } from "../../ts/components/sub_page";
 import { OutputTextarea } from "../../ts/components/output_textarea";
+import { NavbarItem } from "../../ts/components/navbar_item";
+import { Download, FileText } from "react-feather";
+import { blobToBase64 } from "../../ts/util";
+
+export function EventLogNavbar() {
+    return <NavbarItem name="event_log" module="event_log" title={__("event_log.navbar.event_log")} symbol={<FileText />} />;
+}
 
 interface EventLogState {
     log: string;
     show_spinner: boolean;
 }
 
-const TIMESTAMP_LEN = 25;
-const TIMESTAMP_REGEX = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2}),(\d{3})  $/;
-const RELATIVE_TIME_REGEX = /^\s+(\d+),(\d{3})  $/;
+const TIMESTAMP_LEN = 24;
+const TIMESTAMP_REGEX = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2}),(\d{3}) $/;
+const RELATIVE_TIME_REGEX = /^\s+(\d+),(\d{3}) $/;
 const LOG_MAX_LEN = 10 * 1024 * 1024;
 const LOG_CHUNK_LEN_DROPPED_WHEN_FULL = 1024 * 1024;
 
 export class EventLog extends Component<{}, EventLogState> {
-    page_visible: boolean = false;
     last_boot_id = -1;
 
     constructor() {
@@ -58,16 +61,6 @@ export class EventLog extends Component<{}, EventLogState> {
                 return;
 
             this.set_log(this.state.log + ev.data + "\n");
-        });
-
-        // We have to use jquery here or else the events don't fire?
-        // This can be removed once the sidebar is ported to preact.
-        $('#sidebar-event_log').on('shown.bs.tab', () => {
-            this.page_visible = true;
-        });
-
-        $('#sidebar-event_log').on('hidden.bs.tab', () => {
-            this.page_visible = false;
         });
     }
 
@@ -170,30 +163,22 @@ export class EventLog extends Component<{}, EventLogState> {
 
                 this.set_log(new_log);
             })
-            .catch(e => util.add_alert("event_log_load_failed", "alert-danger", __("event_log.script.load_event_log_error"), e.message))
-    }
-
-    blobToBase64(blob: Blob): Promise<string> {
-        return new Promise((resolve, _) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result as string);
-            reader.readAsDataURL(blob);
-        });
+            .catch(e => util.add_alert("event_log_load_failed", "danger", __("event_log.script.load_event_log_error"), e.message))
     }
 
     async download_debug_report() {
         let timeout = window.setTimeout(() => this.setState({show_spinner: true}), 1000);
 
         try {
-            let t = (new Date()).toISOString().replace(/:/gi, "-").replace(/\./gi, "-");
-            let debug_log = t + "\nScroll down for event log!\n\n";
+            let timestamp = new Date();
+            let debug_log = util.iso8601ButLocal(timestamp) + "\nScroll down for event log!\n\n";
 
             debug_log += await util.download("/debug_report").then(blob => blob.text());
             debug_log += "\n\n";
             debug_log += this.state.log;
             try {
                 let blob = await util.download("/coredump/coredump.elf");
-                let base64 = await this.blobToBase64(blob);
+                let base64 = await blobToBase64(blob);
                 base64 = base64.replace(/(.{80})/g, "$1\n");
                 debug_log += "\n\n___CORE_DUMP_START___\n\n";
                 debug_log += base64;
@@ -203,9 +188,9 @@ export class EventLog extends Component<{}, EventLogState> {
                     debug_log += "\n\nNo core dump recorded.";
             }
 
-            util.downloadToFile(debug_log, "debug-report", "txt", "text/plain");
+            util.downloadToFile(debug_log, __("event_log.content.debug_report_file"), "txt", "text/plain", timestamp);
         } catch (e) {
-            util.add_alert("debug_report_load_failed", "alert-danger", __("event_log.script.load_debug_report_error"), e.message)
+            util.add_alert("debug_report_load_failed", "danger", __("event_log.script.load_debug_report_error"), e.message)
         } finally {
             window.clearTimeout(timeout);
             this.setState({show_spinner: false})
@@ -215,39 +200,32 @@ export class EventLog extends Component<{}, EventLogState> {
 
     render(props: {}, state: Readonly<EventLogState>) {
         if (!util.render_allowed())
-            return (<></>);
+            return <SubPage name="event_log" />;
 
         return (
-            <SubPage>
+            <SubPage name="event_log" colClasses="col-xl-10">
                 <PageHeader title={__("event_log.content.event_log")} />
 
-                <FormRow label={__("event_log.content.event_log_desc")} label_muted={__("event_log.content.event_log_desc_muted")}>
-                    <OutputTextarea
+                <OutputTextarea moreClass="form-group"
                         value={state.log}
                         placeholder={__("event_log.content.event_log_placeholder")}
+                        style="resize: both; width: 100%; white-space: pre; line-height: 1.4; text-shadow: none; font-size: 0.75rem;"
                         />
-                </FormRow>
 
-                <FormRow label={__("event_log.content.debug_report_desc")} label_muted={__("event_log.content.debug_report_desc_muted")}>
-                    <Button variant="primary" className="form-control" onClick={() => this.download_debug_report()}>
-                        <span class="mr-2">{__("event_log.content.debug_report")}</span>
-                        <Download/>
-                        <Spinner animation="border" size="sm" as="span" className="ml-2" hidden={!state.show_spinner}/>
+                <div class="form-group">
+                    <Button variant="primary" className="form-control" onClick={() => this.download_debug_report()} style="height: unset;">
+                        <span class="text-nowrap">{__("event_log.content.debug_report")}</span>{" "}
+                        <span class="text-nowrap">
+                            <span class="ml-1 mr-2">{__("event_log.content.debug_report_no_passwords")}</span>
+                            <Download/>
+                            <Spinner animation="border" size="sm" as="span" className="ml-2" hidden={!state.show_spinner}/>
+                        </span>
                     </Button>
-                </FormRow>
+                </div>
             </SubPage>
         );
     }
 }
 
-render(<EventLog />, $("#event_log")[0]);
-
 export function init() {
-}
-
-export function add_event_listeners(source: API.APIEventTarget) {
-}
-
-export function update_sidebar_state(module_init: any) {
-    $("#sidebar-event_log").prop("hidden", !module_init.event_log);
 }

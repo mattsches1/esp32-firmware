@@ -27,7 +27,7 @@ let x = {
             "use_cert_bundle": "Embedded certificate bundle",
             "no_cert": "Not used",
             "path": "Broker path",
-            "path_muted": "optional; Part of the MQTT over WS url behind the hostname. Must start with /.",
+            "path_muted": "optional; Part of the MQTT-over-WS-URL behind the hostname. Must start with /.",
             "path_invalid": "Must start with /.",
             "broker_host": "Broker hostname or IP address",
             "port": "Broker port",
@@ -52,7 +52,7 @@ let x = {
         },
         "automation": {
             "mqtt": "Send MQTT message",
-            "match_all": "Accept all messages",
+            "match_any": "Accept any message",
             "send_topic": "To topic",
             "send_payload": "Message",
             "topic": "Topic",
@@ -77,7 +77,7 @@ let x = {
                 if (payload.length == 0) {
                     ret = <>If any MQTT message</>;
                 } else {
-                    ret = <>If  MQTT message "<b>{payload}</b>"</>;
+                    ret = <>If MQTT message "<b>{payload}</b>"</>;
                 }
                 return <>
                     {ret} is received on topic "<b>{topic}</b>"{retained ? " (Retained messages are accepted)" : ""}{", "}

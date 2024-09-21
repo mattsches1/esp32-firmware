@@ -17,19 +17,24 @@
  * Boston, MA 02111-1307, USA.
  */
 
-import { ComponentChildren, h, toChildArray } from "preact";
+import { h, ComponentChildren } from "preact";
+import Row from "react-bootstrap/Row";
+import Tab from "react-bootstrap/Tab";
 
 interface SubPageProps {
-    children: ComponentChildren;
+    children?: ComponentChildren;
+    name: string;
     colClasses?: string;
 }
 
 export function SubPage(props: SubPageProps) {
     return (
-        <div class="row">
-            <div class={props.colClasses === undefined ? "col-xl-8" : props.colClasses}>
-                {toChildArray(props.children)}
-            </div>
-        </div>
+        <Tab.Pane eventKey={props.name}>
+            <Row>
+                <div class={props.colClasses === undefined ? "col-xl-8" : props.colClasses}>
+                    {props.children}
+                </div>
+            </Row>
+        </Tab.Pane>
     )
 }

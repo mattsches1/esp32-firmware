@@ -20,7 +20,7 @@
 import * as util from "../util";
 
 import { h, Context } from "preact";
-import { useContext } from "preact/hooks";
+import { useId, useContext } from "preact/hooks";
 
 interface OutputFloatProps {
     idContext?: Context<string>;
@@ -35,7 +35,7 @@ interface OutputFloatProps {
 }
 
 export function OutputFloat(props: OutputFloatProps) {
-    const id = !props.idContext ? util.useId() : useContext(props.idContext);
+    const id = !props.idContext ? useId() : useContext(props.idContext);
     let pow10 = Math.pow(10, props.scale);
 
     let val = "";
@@ -64,11 +64,13 @@ export function OutputFloat(props: OutputFloatProps) {
                    type="text"
                    disabled
                    value={val}/>
-            <div class="input-group-append">
-                <div class={"form-control" + (props.small ? " form-control-sm" : "") + " input-group-text"} style={`width: ${maxUnitLength + 1.5}rem;`}>
-                    {this.props.unit}
+            {props.maxUnitLengthOnPage == 0 && props.unit == "" ? undefined :
+                <div class="input-group-append">
+                    <div class={"form-control" + (props.small ? " form-control-sm" : "") + " input-group-text"} style={`width: ${maxUnitLength + 1.5}rem;`}>
+                        {props.unit}
+                    </div>
                 </div>
-            </div>
+            }
         </div>
     );
 }

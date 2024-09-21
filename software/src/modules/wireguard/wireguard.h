@@ -19,11 +19,10 @@
 
 #pragma once
 
-#include "config.h"
-
 #include <WireGuard-ESP32.h>
 
 #include "module.h"
+#include "config.h"
 
 class Wireguard final : public IModule
 {
@@ -33,6 +32,8 @@ public:
     void setup() override;
     void register_urls() override;
     void start_wireguard();
+
+    bool port_used(uint32_t port);
 
 private:
     ConfigRoot config;
@@ -44,3 +45,5 @@ private:
 
     uint32_t last_connected_ms = 0;
 };
+
+String check_key(const String &key, bool enable);

@@ -21,8 +21,8 @@ import { h } from "preact";
 import { __ } from "../../ts/translation";
 import * as util from "../../ts/util";
 import * as API from "../../ts/api";
-import { AutomationActionID } from "../automation/automation_defs";
-import { AutomationAction } from "../automation/types";
+import { AutomationActionID } from "../automation/automation_action_id.enum";
+import { AutomationAction, InitResult } from "../automation/types";
 import { InputSelect } from "../../ts/components/input_select";
 import { FormRow } from "../../ts/components/form_row";
 import { Switch } from "../../ts/components/switch";
@@ -98,7 +98,7 @@ function get_charge_limits_edit_children(action: ChargeLimitsAutomationAction, o
                     const restart = v === "0" && action[1].duration === 0 ? false : action[1].restart;
                     on_action(util.get_updated_union(action, {energy_wh: parseInt(v), restart: restart}));
                 }} />
-        </FormRow>
+        </FormRow>,
     ] : [];
 
     const reset = [
@@ -112,7 +112,7 @@ function get_charge_limits_edit_children(action: ChargeLimitsAutomationAction, o
                         }} />
                 </FormRow>
             </div>
-        </Collapse>
+        </Collapse>,
     ]
 
     return [
@@ -124,7 +124,7 @@ function get_charge_limits_edit_children(action: ChargeLimitsAutomationAction, o
                     const restart = v === "0" && action[1].energy_wh === 0 ? false : action[1].restart;
                     on_action(util.get_updated_union(action, {duration: parseInt(v), restart: restart}));
                 }} />
-        </FormRow>
+        </FormRow>,
     ].concat(meter_entry).concat(reset);
 }
 
@@ -139,7 +139,7 @@ function new_charge_limits_config(): AutomationAction {
     ];
 }
 
-export function init() {
+export function init(): InitResult {
     return {
         action_components: {
             [AutomationActionID.ChargeLimits]: {

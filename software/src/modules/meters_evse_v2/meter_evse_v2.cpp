@@ -19,9 +19,10 @@
 
 #include "meter_evse_v2.h"
 
+#include "event_log_prefix.h"
+#include "module_dependencies.h"
 #include "modules/meters/meter_value_id.h"
 #include "modules/meters/sdm_helpers.h"
-#include "task_scheduler.h"
 #include "tools.h"
 
 #include "gcc_warnings.h"
@@ -38,7 +39,7 @@ void MeterEVSEV2::setup(const Config &/*ephemeral_config*/)
     evse_v2.update_all_data();
 }
 
-void MeterEVSEV2::update_from_evse_v2_all_data(EVSEV2::meter_data *meter_data)
+void MeterEVSEV2::update_from_evse_v2_all_data(EVSEV2MeterData *meter_data)
 {
     // Always update error counters, even if no meter could be detected.
     errors->get("local_timeout"       )->updateUint(meter_data->error_count[0]);
@@ -48,14 +49,13 @@ void MeterEVSEV2::update_from_evse_v2_all_data(EVSEV2::meter_data *meter_data)
     errors->get("illegal_data_value"  )->updateUint(meter_data->error_count[4]);
     errors->get("slave_device_failure")->updateUint(meter_data->error_count[5]);
 
-    // No data to handle if no meter was detected.
-    if (meter_data->meter_type == METER_TYPE_NONE)
-        return;
-
     if (meter_type != meter_data->meter_type) {
         if (meter_type != METER_TYPE_NONE) {
-            if (!meter_change_warning_printed) {
-                logger.printfln("meter_em: Meter change detected. This is not supported.");
+            // Don't print warning if this is a not-none -> none transition.
+            // This happens if the EVSE restarts without the ESP also restarting.
+            // The meter will be detected again in a few seconds.
+            if (!meter_change_warning_printed && meter_data->meter_type != METER_TYPE_NONE) {
+                logger.printfln("Meter change detected. This is not supported.");
                 meter_change_warning_printed = true;
             }
             return;
@@ -88,11 +88,21 @@ void MeterEVSEV2::update_from_evse_v2_all_data(EVSEV2::meter_data *meter_data)
 
         return;
     }
+}
 
-    meters.update_value(slot, value_index_power, meter_data->power);
-    for (size_t i = 0; i < ARRAY_SIZE(value_index_currents); i++) {
-        meters.update_value(slot, value_index_currents[i], meter_data->currents[i]);
+void MeterEVSEV2::energy_meter_values_callback(float power, float current[3])
+{
+    if (value_index_power == UINT32_MAX) {
+        logger.printfln("Received values callback before detecting a meter.");
+        return;
     }
+
+    meters.update_value(slot, value_index_power, power);
+    for (size_t i = 0; i < ARRAY_SIZE(value_index_currents); i++) {
+        meters.update_value(slot, value_index_currents[i], current[i]);
+    }
+
+    meters.finish_update(slot);
 }
 
 void MeterEVSEV2::update_all_values(float *values)

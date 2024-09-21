@@ -19,14 +19,16 @@
 
 #pragma once
 
-#include "config.h"
-
 #include "module.h"
 
 class ESP32Brick final : public IModule
 {
 public:
     ESP32Brick(){}
+
+    bool initHAL();
+    bool destroyHAL();
+
     void setup() override;
     void loop() override;
 };

@@ -19,22 +19,17 @@
 
 #pragma once
 
-#include "config.h"
-
 #include "module.h"
-
-enum class WifiState {
-    NOT_CONFIGURED,
-    NOT_CONNECTED,
-    CONNECTING,
-    CONNECTED
-};
+#include "config.h"
+#include "wifi_state.enum.h"
 
 enum class EapConfigID: uint8_t {
     None,
     TLS,
     PEAP_TTLS
 };
+
+class StringBuilder;
 
 class Wifi final : public IModule
 {
@@ -48,6 +43,11 @@ public:
 
     WifiState get_connection_state() const;
     bool is_sta_enabled() const;
+    int get_sta_rssi() const;
+
+    const char* get_ap_ssid() const;
+    const char* get_ap_ip() const;
+    const char* get_ap_passphrase() const;
 
 private:
     void apply_soft_ap_config_and_start();
@@ -58,7 +58,7 @@ private:
 
     void start_scan();
     void check_for_scan_completion();
-    String get_scan_results();
+    void get_scan_results(StringBuilder *sb, int network_count);
 
     ConfigRoot ap_config;
     ConfigRoot sta_config;

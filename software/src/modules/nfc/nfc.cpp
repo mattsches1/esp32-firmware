@@ -19,13 +19,11 @@
 
 #include "nfc.h"
 
-#include "bindings/errors.h"
-
-#include "api.h"
-#include "event_log.h"
-#include "tools.h"
-#include "task_scheduler.h"
+#include "event_log_prefix.h"
 #include "module_dependencies.h"
+#include "bindings/errors.h"
+#include "tools.h"
+#include "nfc_bricklet_firmware_bin.embedded.h"
 
 extern NFC nfc;
 
@@ -36,6 +34,13 @@ extern NFC nfc;
 #endif
 
 #define DETECTION_THRESHOLD_MS 2000
+
+NFC::NFC() : DeviceModule(nfc_bricklet_firmware_bin_data,
+                          nfc_bricklet_firmware_bin_length,
+                          "nfc",
+                          "NFC",
+                          "NFC",
+                          [this](){this->setup_nfc();}) {}
 
 void NFC::pre_setup()
 {
@@ -62,7 +67,8 @@ void NFC::pre_setup()
             })},
             0, MAX_AUTHORIZED_TAGS,
             Config::type_id<Config::ConfObject>())
-        }
+        },
+        {"deadtime_post_start", Config::Uint32(30)}
     }), [this](Config &cfg, ConfigSource source) -> String {
         Config *tags = (Config *)cfg.get("authorized_tags");
 
@@ -138,7 +144,9 @@ void NFC::pre_setup()
         Config::Object({
             {"tag_type", Config::Uint(0, 0, 4)},
             {"tag_id", Config::Str("", 0, NFC_TAG_ID_STRING_LENGTH)}
-        })
+        }),
+        nullptr,
+        false
     );
 
     automation.register_action(
@@ -149,15 +157,18 @@ void NFC::pre_setup()
             {"action", Config::Uint(0, 0, 2)}
         }),
         [this](const Config *config) {
-        inject_tag.get("tag_type")->updateUint(config->get("tag_type")->asUint());
-        inject_tag.get("tag_id")->updateString(config->get("tag_id")->asString());
-        last_tag_injection = millis();
-        tag_injection_action = config->get("action")->asUint();
-        // 0 is the marker that no injection happened or the last one was handled.
-        // Fake that we were one ms faster.
-        if (last_tag_injection == 0)
-            last_tag_injection -= 1;
-    });
+            inject_tag.get("tag_type")->updateUint(config->get("tag_type")->asUint());
+            inject_tag.get("tag_id")->updateString(config->get("tag_id")->asString());
+            last_tag_injection = millis();
+            tag_injection_action = config->get("action")->asUint();
+            // 0 is the marker that no injection happened or the last one was handled.
+            // Fake that we were one ms faster.
+            if (last_tag_injection == 0)
+                last_tag_injection -= 1;
+        },
+        nullptr,
+        false
+    );
 #endif
 
     auth_info = Config::Object({
@@ -191,6 +202,14 @@ void NFC::setup_nfc()
 
     initialized = true;
     api.addFeature("nfc");
+
+    old_tags = static_cast<decltype(old_tags)>(heap_caps_calloc(TAG_LIST_LENGTH, sizeof(*old_tags), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
+    new_tags = static_cast<decltype(old_tags)>(heap_caps_calloc(TAG_LIST_LENGTH, sizeof(*new_tags), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
+
+#if MODULE_AUTOMATION_AVAILABLE()
+    automation.set_enabled(AutomationTriggerID::NFC, true);
+    automation.set_enabled(AutomationActionID::NFCInjectTag, true);
+#endif
 }
 
 void NFC::check_nfc_state()
@@ -234,13 +253,6 @@ void NFC::remove_user(uint8_t user_id)
     API::writeConfig("nfc/config", &config);
 }
 
-#if MODULE_AUTOMATION_AVAILABLE()
-static bool trigger_action(Config *cfg, void *data)
-{
-    return nfc.action_triggered(cfg, data);
-}
-#endif
-
 void NFC::tag_seen(tag_info_t *tag, bool injected)
 {
     uint8_t idx = 0;
@@ -261,7 +273,7 @@ void NFC::tag_seen(tag_info_t *tag, bool injected)
         auth_info.get("tag_id")->updateString(tag->tag_id);
 
         users.trigger_charge_action(user_id, injected ? USERS_AUTH_TYPE_NFC_INJECTION : USERS_AUTH_TYPE_NFC, auth_info.value,
-                injected ? tag_injection_action : TRIGGER_CHARGE_ANY);
+                injected ? tag_injection_action : TRIGGER_CHARGE_ANY, 3_s, deadtime_post_start);
 
     } else {
         bool blink_handled = false;
@@ -275,7 +287,7 @@ void NFC::tag_seen(tag_info_t *tag, bool injected)
     }
 
 #if MODULE_AUTOMATION_AVAILABLE()
-    automation.trigger_action(AutomationTriggerID::NFC, tag, &trigger_action);
+    automation.trigger(AutomationTriggerID::NFC, tag, this);
 #endif
 }
 
@@ -300,9 +312,9 @@ void tag_id_bytes_to_string(const uint8_t *tag_id, uint8_t tag_id_len, char buf[
 void NFC::update_seen_tags()
 {
     for (int i = 0; i < TAG_LIST_LENGTH - 1; ++i) {
-        uint8_t buf[10] = {0};
+        uint8_t tag_id_bytes[10];
         uint8_t tag_id_len = 0;
-        int result = tf_nfc_simple_get_tag_id(&device, i, &new_tags[i].tag_type, buf, &tag_id_len, &new_tags[i].last_seen);
+        int result = tf_nfc_simple_get_tag_id(&device, i, &new_tags[i].tag_type, tag_id_bytes, &tag_id_len, &new_tags[i].last_seen);
         if (result != TF_E_OK) {
             if (!is_in_bootloader(result)) {
                 logger.printfln("Failed to get tag id %d, rc: %d", i, result);
@@ -310,11 +322,7 @@ void NFC::update_seen_tags()
             continue;
         }
 
-        tag_id_bytes_to_string(buf, tag_id_len, new_tags[i].tag_id);
-
-        seen_tags.get(i)->get("tag_type")->updateUint(new_tags[i].tag_type);
-        seen_tags.get(i)->get("tag_id")->updateString(new_tags[i].tag_id);
-        seen_tags.get(i)->get("last_seen")->updateUint(new_tags[i].last_seen);
+        tag_id_bytes_to_string(tag_id_bytes, tag_id_len, new_tags[i].tag_id);
     }
 
     if (last_tag_injection == 0 || deadline_elapsed(last_tag_injection + 1000 * 60 * 60 * 24)) {
@@ -328,9 +336,15 @@ void NFC::update_seen_tags()
         new_tags[TAG_LIST_LENGTH - 1].last_seen = millis() - last_tag_injection;
     }
 
-    seen_tags.get(TAG_LIST_LENGTH - 1)->get("last_seen")->updateUint(new_tags[TAG_LIST_LENGTH - 1].last_seen);
-    seen_tags.get(TAG_LIST_LENGTH - 1)->get("tag_type")->updateUint(new_tags[TAG_LIST_LENGTH - 1].tag_type);
-    seen_tags.get(TAG_LIST_LENGTH - 1)->get("tag_id")->updateString(new_tags[TAG_LIST_LENGTH - 1].tag_id);
+    // update state
+    for (int i = 0; i < TAG_LIST_LENGTH; ++i) {
+        Config *seen_tag_state = static_cast<Config *>(seen_tags.get(i));
+        tag_info_t *new_tag = new_tags + i;
+
+        seen_tag_state->get("last_seen")->updateUint(new_tag->last_seen);
+        seen_tag_state->get("tag_type")->updateUint(new_tag->tag_type);
+        seen_tag_state->get("tag_id")->updateString(new_tag->tag_id);
+    }
 
     // compare new list with old
     for (int new_idx = 0; new_idx < TAG_LIST_LENGTH; ++new_idx) {
@@ -400,6 +414,8 @@ void NFC::setup_auth_tags()
         auth_tags[i].user_id = tag->get("user_id")->asUint();
         tag->get("tag_id")->asString().toCharArray(auth_tags[i].tag_id, sizeof(auth_tags[i].tag_id));
     }
+
+    this->deadtime_post_start = micros_t{config.get("deadtime_post_start")->asUint()} * 1_s;
 }
 
 void NFC::setup()
@@ -415,17 +431,13 @@ void NFC::setup()
         seen_tags.add();
     }
 
-    task_scheduler.scheduleWithFixedDelay([this](){
+    task_scheduler.scheduleWithFixedDelay([this]() {
         this->check_nfc_state();
     }, 5 * 60 * 1000, 5 * 60 * 1000);
 
-    task_scheduler.scheduleWithFixedDelay([this](){
-        static uint32_t last_run = 0;
-        if (deadline_elapsed(last_run + 300)) {
-            last_run = millis();
-            this->update_seen_tags();
-        }
-    }, 10, 10);
+    task_scheduler.scheduleWithFixedDelay([this]() {
+        this->update_seen_tags();
+    }, 0, 300);
 }
 
 void NFC::register_urls()
@@ -468,11 +480,11 @@ void NFC::loop()
 }
 
 #if MODULE_AUTOMATION_AVAILABLE()
-bool NFC::action_triggered(Config *config, void *data)
+bool NFC::has_triggered(const Config *conf, void *data)
 {
-    auto cfg = config->get();
+    const Config *cfg = static_cast<const Config *>(conf->get());
     tag_info_t *tag = (tag_info_t *)data;
-    switch (config->getTag<AutomationTriggerID>()) {
+    switch (conf->getTag<AutomationTriggerID>()) {
         case AutomationTriggerID::NFC:
         if (cfg->get("tag_type")->asUint() == tag->tag_type && cfg->get("tag_id")->asString() == tag->tag_id) {
             return true;

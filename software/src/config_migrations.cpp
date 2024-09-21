@@ -17,25 +17,25 @@
  * Boston, MA 02111-1307, USA.
  */
 
+#define EVENT_LOG_PREFIX "migrations"
+
 #include "config_migrations.h"
 
 #include <vector>
 #include <unistd.h>
-
 #include <LittleFS.h>
-
 #include <ArduinoJson.h>
 
-#include "api.h"
+#include "event_log_prefix.h"
+#include "main_dependencies.h"
 #include "build.h"
 #include "config.h"
 #include "digest_auth.h"
-#include "task_scheduler.h"
 #include "tools.h"
 
 struct ConfigMigration {
     const int major, minor, patch;
-    void (*const fn)(void);
+    void (*const fn)();
 };
 
 [[gnu::unused]]
@@ -142,10 +142,26 @@ static void migrate_charge_manager_minimum_current()
     }
 }
 
+#define KEY_DIRECTORY "/remote-access-keys"
+#define WG_KEY_LENGTH 44
+[[gnu::unused]]
+static inline String get_key_path(uint8_t user_id, uint8_t key_id) {
+    return String(KEY_DIRECTORY "/") + user_id + "_" + key_id;
+}
+
+[[gnu::unused]]
+static void store_key(uint8_t user_id, uint8_t key_id, const char *pri, const char *psk, const char *pub) {
+    File f = LittleFS.open(get_key_path(user_id, key_id), "w+");
+    // TODO: more robust writing
+    f.write((const uint8_t *)pri, WG_KEY_LENGTH);
+    f.write((const uint8_t *)psk, WG_KEY_LENGTH);
+    f.write((const uint8_t *)pub, WG_KEY_LENGTH);
+}
+
 // Don't use LittleFS.[...] directly in migrations if not necessary!
 // Prefer to use the functions above.
 static const ConfigMigration migrations[] = {
-#if defined(BUILD_NAME_WARP)
+#if BUILD_IS_WARP()
     {
         // WARP1 1.3.0 changes
         // - Renamed xyz.json.tmp to .xyz
@@ -155,7 +171,7 @@ static const ConfigMigration migrations[] = {
             for_file_in("/migration", [](File *file){
                 String path = file->path();
                 file->close();
-                // Save to use LittleFS here: We already know the correct path of the file.
+                // Safe to use LittleFS here: We already know the correct path of the file.
                 if (path.endsWith(".tmp"))
                     LittleFS.remove(path);
 
@@ -167,7 +183,7 @@ static const ConfigMigration migrations[] = {
     },
 #endif
 
-#if defined(BUILD_NAME_WARP) || defined(BUILD_NAME_WARP2)
+#if BUILD_IS_WARP() || BUILD_IS_WARP2()
     {
         2, 0, 0,
         // 2.0.0 changes
@@ -389,10 +405,56 @@ static const ConfigMigration migrations[] = {
 
             rename_config_file("meter/last_reset", "meters/0/last_reset");
         }
-    }
+    },
 #endif
 
-#if defined(BUILD_NAME_ENERGY_MANAGER)
+#if BUILD_IS_WARP() || BUILD_IS_WARP2() || BUILD_IS_WARP3() || BUILD_IS_ENERGY_MANAGER()
+    {
+        #if BUILD_IS_ENERGY_MANAGER()
+        2, 2, 0,
+        #elif BUILD_IS_WARP()
+        2, 4, 2,
+        #else // WARP2, 3
+        2, 5, 0,
+        #endif
+        // Changes
+        // - Move remote access keys into separate directory
+        // - Rename relay_host_port to relay_port
+        [](){
+            {
+                DynamicJsonDocument cfg{4096};
+                if (read_config_file("remote_access/config", cfg)) {
+                    cfg["relay_port"] = cfg["relay_host_port"];
+                    cfg.remove("relay_host_port");
+                    write_config_file("remote_access/config", cfg);
+                }
+            }
+
+            if (LittleFS.exists(KEY_DIRECTORY)) {
+                return;
+            }
+
+            DynamicJsonDocument mgmt{4096};
+            DynamicJsonDocument conn{4096};
+            if (!read_config_file("remote_access/management_connection", mgmt) || !read_config_file("remote_access/remote_connection_config", conn)) {
+                return;
+            }
+
+            LittleFS.mkdir(KEY_DIRECTORY);
+
+            store_key(0, 0, mgmt["private_key"].as<const char *>(), mgmt["psk"].as<const char *>(), mgmt["remote_public_key"].as<const char *>());
+            for(int i = 0; i < 5; ++i) {
+                auto key = conn["connections"][i];
+                store_key(1, i, key["private_key"].as<const char *>(), key["psk"].as<const char *>(), key["remote_public_key"].as<const char *>());
+            }
+
+            delete_config_file("remote_access/management_connection");
+            delete_config_file("remote_access/remote_connection_config");
+        }
+    },
+#endif
+
+#if BUILD_IS_ENERGY_MANAGER()
     {
         1, 0, 2,
         // 1.0.2 changes
@@ -691,7 +753,30 @@ static const ConfigMigration migrations[] = {
                 }
             }
         }
-    }
+    },
+    {
+        2, 0, 3,
+        // 2.0.3 changes
+        // - Reset charge manager's requested current margin back to 3A.
+        [](){
+            DynamicJsonDocument json{16384};
+
+            if (read_config_file("charge_manager/config", json)) {
+                if (json.containsKey("requested_current_margin")) {
+                    uint32_t requested_current_margin_old = json["requested_current_margin"].as<uint32_t>();
+                    if (requested_current_margin_old == 6000) {
+                        logger.printfln("CM migration: Resetting requested_current_margin to 3000.");
+                        json["requested_current_margin"] = 3000;
+                        write_config_file("charge_manager/config", json);
+                    } else {
+                        logger.printfln("CM migration: Not resetting custom requested_current_margin of %u.", requested_current_margin_old);
+                    }
+                } else {
+                    logger.printfln("CM migration skipped, requested_current_margin not present");
+                }
+            }
+        }
+    },
 #endif
 };
 
@@ -722,7 +807,7 @@ bool prepare_migrations()
 
         File target = LittleFS.open(String("/migration/") + name, "w");
         while (source->available()) {
-            size_t read = source->read(buf, sizeof(buf) / sizeof(buf[0]));
+            size_t read = source->read(buf, ARRAY_SIZE(buf));
             size_t written = target.write(buf, read);
 
             if (written != read) {
@@ -736,7 +821,7 @@ bool prepare_migrations()
 
 void migrate_config()
 {
-    size_t migration_count = sizeof(migrations) / sizeof(migrations[0]);
+    size_t migration_count = ARRAY_SIZE(migrations);
 
     if (!LittleFS.exists("/config") && LittleFS.exists("/migration/version")) {
         // The migration is done, we were interrupted while moving over the migrated files to /config.

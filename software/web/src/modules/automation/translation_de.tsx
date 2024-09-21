@@ -6,22 +6,22 @@ let x = {
             "automation": "Automatisierung"
         },
         "automation": {
-            "clock": "Zeitpunkt",
-            "time": "Uhrzeit",
-            "mday": "Tag",
-            "monday": "Montag",
-            "tuesday": "Dienstag",
-            "wednesday": "Mittwoch",
-            "thursday": "Donnerstag",
-            "friday": "Freitag",
-            "saturday": "Samstag",
-            "sunday": "Sonntag",
-            "every_day": "Täglich",
-            "every_hour": "Stündlich",
-            "every_minute": "Minütlich",
-            "weekdays": "Wochentags",
-            "weekends": "Am Wochenende",
-            "month_end": "Monatsende",
+            "cron": "Zeitpunkt",
+            "cron_time": "Uhrzeit",
+            "cron_mday": "Tag",
+            "cron_monday": "Montag",
+            "cron_tuesday": "Dienstag",
+            "cron_wednesday": "Mittwoch",
+            "cron_thursday": "Donnerstag",
+            "cron_friday": "Freitag",
+            "cron_saturday": "Samstag",
+            "cron_sunday": "Sonntag",
+            "cron_every_day": "Täglich",
+            "cron_every_hour": "Stündlich",
+            "cron_every_minute": "Minütlich",
+            "cron_weekdays": "Wochentags",
+            "cron_weekends": "Am Wochenende",
+            "cron_month_end": "Monatsende",
             "cron_translation_function": /*FFN*/(mday: number, wday: number, hour: number, minute: number) => {
                 const wdays = [
                     "Sonntags",
@@ -84,9 +84,42 @@ let x = {
                 return <>{day}{time}, </>;
             }/*NF*/,
 
-            "print_action": "Gebe im Ereignislog aus",
+            "http": "HTTP-Nachricht empfangen",
+            "http_method": "Erlaube Methode",
+            "http_get": "GET",
+            "http_post": "POST",
+            "http_put": "PUT",
+            "http_post_put": "POST oder PUT",
+            "http_get_post_put": "GET, POST oder PUT",
+            "http_url_suffix": "URL-Suffix",
+            "http_payload": "Erwartete Nachricht",
+            "http_match_any": "Jede Nachricht wird akzeptiert",
+            "http_translation_function": /*FFN*/(method: number, url: string, payload: string) => {
+                let methods = [
+                    "GET",
+                    "POST",
+                    "PUT",
+                    "POST- oder PUT",
+                    "GET-, POST- oder PUT",
+                ];
+
+                let payload_str = <></>;
+                if (payload.length == 0) {
+                    payload_str = <>mit beliebigem Inhalt</>;
+                } else {
+                    payload_str = <>mit dem Inhalt "<b>{payload}</b>"</>;
+                }
+
+                let ret = <>Wenn eine HTTP-{methods[method]}-Anfrage {payload_str}</>;
+
+                return <>
+                    {ret} an URL <b><a href={url}>{url}</a></b> empfangen wird{", "}
+                </>
+            }/*NF*/,
+
+            "print_action": "Gebe im Ereignis-Log aus",
             "print_action_message": "Nachricht",
-            "print_action_text": /*FFN*/(message: string) => <>zeige "{message}" im <b>Ereignislog</b> an.</> /*NF*/
+            "print_action_text": /*FFN*/(message: string) => <>zeige "{message}" im <b>Ereignis-Log</b> an.</> /*NF*/
 
         },
         "content": {
@@ -97,7 +130,14 @@ let x = {
             "add_rule_title": "Regel hinzufügen",
             "add_rule_count": /*SFN*/(count: number, max: number) => count + " von " + max + " Regeln konfiguriert"/*NF*/,
             "edit_rule_title": "Regel bearbeiten",
-            "select": "Auswählen..."
+            "select": "Auswählen...",
+            "trigger_disabled": "Deaktiviert",
+            "action_disabled": "Deaktiviert",
+            "preview": "Vorschau"
+        },
+        "script": {
+            "save_failed": "Speichern der Automatisierungs-Einstellungen fehlgeschlagen.",
+            "reboot_content_changed": "Automatisierungs-Einstellungen"
         }
     }
 }

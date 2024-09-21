@@ -18,8 +18,10 @@
  */
 
 #include "require_meter.h"
-#include "tools.h"
+
+#include "event_log_prefix.h"
 #include "module_dependencies.h"
+#include "tools.h"
 #include "modules/meters/meter_value_availability.h"
 
 extern RequireMeter require_meter;
@@ -42,7 +44,10 @@ void RequireMeter::pre_setup()
 #if MODULE_AUTOMATION_AVAILABLE()
     automation.register_trigger(
         AutomationTriggerID::RequireMeter,
-        *Config::Null());
+        *Config::Null(),
+        nullptr,
+        false
+    );
 #endif
 }
 
@@ -61,7 +66,10 @@ void RequireMeter::setup()
 void RequireMeter::register_urls()
 {
     api.addPersistentConfig("require_meter/config", &config);
+}
 
+void RequireMeter::register_events()
+{
     if (config.get("config")->asUint() == WARP_SMART) {
         // We've never seen an energy meter.
         // Listen to info/features in case a meter shows up.
@@ -80,20 +88,15 @@ void RequireMeter::register_urls()
 }
 
 #if MODULE_AUTOMATION_AVAILABLE()
-bool RequireMeter::action_triggered(Config *config, void *data)
+bool RequireMeter::has_triggered(const Config *conf, void *data)
 {
-    switch (config->getTag<AutomationTriggerID>()) {
+    switch (conf->getTag<AutomationTriggerID>()) {
         case AutomationTriggerID::RequireMeter:
             return true;
 
         default:
             return false;
     }
-}
-
-static bool trigger_action(Config *config, void *data)
-{
-    return require_meter.action_triggered(config, data);
 }
 #endif
 
@@ -102,6 +105,10 @@ void RequireMeter::start_task()
     static bool is_running = false;
     if (is_running)
         return;
+
+#if MODULE_AUTOMATION_AVAILABLE()
+    automation.set_enabled(AutomationTriggerID::RequireMeter, true);
+#endif
 
     task_scheduler.scheduleWithFixedDelay([this]() {
         bool meter_timeout = false;
@@ -164,7 +171,7 @@ void RequireMeter::start_task()
         static bool was_triggered = false;
         if (meter_timeout) {
             if (!was_triggered) {
-                automation.trigger_action(AutomationTriggerID::RequireMeter, nullptr, trigger_action);
+                automation.trigger(AutomationTriggerID::RequireMeter, nullptr, this);
                 was_triggered = true;
             }
         } else {
@@ -186,7 +193,12 @@ void RequireMeter::start_task()
             }
         }
         last_meter_timeout = meter_timeout;
-    }, 0, 1000);
+
+        // Delay first check to give the meter time to send initial values.
+        // This might allow an immediate charge, just to abort it right away, but the EVSE
+        // might start a charge by itself anyway before the ESP finished starting,
+        // unless NFC or OCPP are enabled.
+    }, 3000, 1000);
     is_running = true;
 }
 

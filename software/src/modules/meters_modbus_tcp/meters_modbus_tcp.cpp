@@ -17,45 +17,98 @@
  * Boston, MA 02111-1307, USA.
  */
 
-#include "meter_modbus_tcp.h"
-#include "meters_modbus_tcp.h"
-#include "module_dependencies.h"
+#define EVENT_LOG_PREFIX "meters_mbtcp"
 
-#include "event_log.h"
+#include "meters_modbus_tcp.h"
+
+#include "event_log_prefix.h"
+#include "module_dependencies.h"
+#include "meter_modbus_tcp.h"
+#include "modules/meters/meter_value_id.h"
 #include "tools.h"
+#include "modbus_register_address_mode.enum.h"
 
 #include "gcc_warnings.h"
 
 void MetersModbusTCP::pre_setup()
 {
-    register_element = Config::Object({
-        {"ra", Config::Uint16(0)},  // register address
-        {"rt", Config::Uint8(0)},   // register type: input, holding, coil, discrete
-        {"vt", Config::Uint8(0)},   // value type: uint16, int16, uint32, int32, etc...
-        {"s",  Config::Float(1.0)}, // scale
-        {"o",  Config::Float(0.0)}, // offset
-        {"mv", Config::Uint32(0)},  // MeterValueID
-    });
+    table_prototypes.push_back({MeterModbusTCPTableID::None, *Config::Null()});
+
+    table_prototypes.push_back({MeterModbusTCPTableID::Custom, Config::Object({
+        {"device_address", Config::Uint(1, 1, 247)},
+        {"register_address_mode", Config::Uint8(static_cast<uint8_t>(ModbusRegisterAddressMode::Address))},
+        {"registers", Config::Array({},
+            new Config{Config::Object({
+                {"rtype", Config::Uint8(static_cast<uint8_t>(ModbusRegisterType::HoldingRegister))},
+                {"addr", Config::Uint16(0)},
+                {"vtype", Config::Uint8(static_cast<uint8_t>(ModbusValueType::U16))},
+                {"off", Config::Float(0.0f)},
+                {"scale", Config::Float(1.0f)},
+                {"id", Config::Uint16(static_cast<uint8_t>(MeterValueID::NotSupported))},
+            })},
+            0, METERS_MODBUS_TCP_MAX_CUSTOM_REGISTERS, Config::type_id<Config::ConfObject>()
+        )}
+    })});
+
+    table_prototypes.push_back({MeterModbusTCPTableID::SungrowHybridInverter, Config::Object({
+        {"virtual_meter", Config::Uint8(static_cast<uint8_t>(SungrowHybridInverterVirtualMeter::None))},
+        {"device_address", Config::Uint(1, 1, 247)},
+    })});
+
+    table_prototypes.push_back({MeterModbusTCPTableID::SungrowStringInverter, Config::Object({
+        {"virtual_meter", Config::Uint8(static_cast<uint8_t>(SungrowStringInverterVirtualMeter::None))},
+        {"device_address", Config::Uint(1, 1, 247)},
+    })});
+
+    table_prototypes.push_back({MeterModbusTCPTableID::SolarmaxMaxStorage, Config::Object({
+        {"virtual_meter", Config::Uint8(static_cast<uint8_t>(SolarmaxMaxStorageVirtualMeter::None))},
+        {"device_address", Config::Uint(1, 1, 247)},
+    })});
+
+    table_prototypes.push_back({MeterModbusTCPTableID::VictronEnergyGX, Config::Object({
+        {"virtual_meter", Config::Uint8(static_cast<uint8_t>(VictronEnergyGXVirtualMeter::None))},
+        {"device_address", Config::Uint(100, 1, 247)},
+    })});
+
+    table_prototypes.push_back({MeterModbusTCPTableID::DeyeHybridInverter, Config::Object({
+        {"virtual_meter", Config::Uint8(static_cast<uint8_t>(DeyeHybridInverterVirtualMeter::None))},
+        {"device_address", Config::Uint(1, 1, 247)},
+    })});
+
+    table_prototypes.push_back({MeterModbusTCPTableID::AlphaESSHybridInverter, Config::Object({
+        {"virtual_meter", Config::Uint8(static_cast<uint8_t>(AlphaESSHybridInverterVirtualMeter::None))},
+        {"device_address", Config::Uint(1, 1, 247)},
+    })});
+
+    table_prototypes.push_back({MeterModbusTCPTableID::ShellyProEM, Config::Object({
+        {"device_address", Config::Uint(1, 1, 247)},
+        {"monophase_channel", Config::Uint8(static_cast<uint8_t>(ShellyEMMonophaseChannel::None))},
+        {"monophase_mapping", Config::Uint8(static_cast<uint8_t>(ShellyEMMonophaseMapping::None))},
+    })});
+
+    table_prototypes.push_back({MeterModbusTCPTableID::ShellyPro3EM, Config::Object({
+        {"device_address", Config::Uint(1, 1, 247)},
+        {"device_profile", Config::Uint8(static_cast<uint8_t>(ShellyPro3EMDeviceProfile::Triphase))},
+        {"monophase_channel", Config::Uint8(static_cast<uint8_t>(ShellyEMMonophaseChannel::None))},
+        {"monophase_mapping", Config::Uint8(static_cast<uint8_t>(ShellyEMMonophaseMapping::None))},
+    })});
+
+    table_prototypes.push_back({MeterModbusTCPTableID::GoodweHybridInverter, Config::Object({
+        {"virtual_meter", Config::Uint8(static_cast<uint8_t>(GoodweHybridInverterVirtualMeter::None))},
+        {"device_address", Config::Uint(247, 1, 247)},
+    })});
+
+    Config table_union = Config::Union<MeterModbusTCPTableID>(
+        *Config::Null(),
+        MeterModbusTCPTableID::None,
+        table_prototypes.data(),
+        static_cast<uint8_t>(table_prototypes.size()));
 
     config_prototype = Config::Object({
-        {"host",      Config::Str("", 0, 64)},
-        {"port",      Config::Uint16(502)},
-        {"address",   Config::Uint8(255)}, // device address
-        {"registers", Config::Array(
-            {},
-            &register_element,
-            0,
-            METERS_MODBUS_TCP_REGISTER_COUNT_MAX,
-            Config::type_id<Config::ConfObject>()
-        )},
-    });
-
-    state_prototype = Config::Object({
-        {"connected", Config::Bool(false)},
-    });
-
-    errors_prototype = Config::Object({
-        {"connection_failure", Config::Uint32(0)},
+        {"display_name",   Config::Str("", 0, 32)},
+        {"host",           Config::Str("", 0, 64)},
+        {"port",           Config::Uint16(502)},
+        {"table",          table_union},
     });
 
     meters.register_meter_generator(get_class(), this);
@@ -63,12 +116,14 @@ void MetersModbusTCP::pre_setup()
 
 void MetersModbusTCP::setup()
 {
-    mb.client();
+    modbus.client();
+
+    initialized = true;
 }
 
 void MetersModbusTCP::loop()
 {
-    mb.task();
+    modbus.task();
 }
 
 [[gnu::const]]
@@ -77,14 +132,9 @@ MeterClassID MetersModbusTCP::get_class() const
     return MeterClassID::ModbusTCP;
 }
 
-IMeter * MetersModbusTCP::new_meter(uint32_t slot, Config *state, Config *errors)
+IMeter *MetersModbusTCP::new_meter(uint32_t slot, Config *state, Config *errors)
 {
-    if (instance_count >= MODBUSIP_MAX_CLIENTS) {
-        logger.printfln("meters_modbus_tcp: Cannot create more than " MACRO_VALUE_TO_STRING(MODBUSIP_MAX_CLIENTS) " meters of class ModbusTCP.");
-        return nullptr;
-    }
-    instance_count++;
-    return new MeterModbusTCP(slot, state, errors, &mb);
+    return new MeterModbusTCP(slot, state, errors, &modbus);
 }
 
 const Config *MetersModbusTCP::get_config_prototype()
@@ -94,15 +144,15 @@ const Config *MetersModbusTCP::get_config_prototype()
 
 const Config *MetersModbusTCP::get_state_prototype()
 {
-    return &state_prototype;
+    return Config::Null();
 }
 
 const Config *MetersModbusTCP::get_errors_prototype()
 {
-    return &errors_prototype;
+    return Config::Null();
 }
 
 ModbusTCP *MetersModbusTCP::get_modbus_tcp_handle()
 {
-    return &mb;
+    return &modbus;
 }

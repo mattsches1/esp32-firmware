@@ -17,20 +17,26 @@
  * Boston, MA 02111-1307, USA.
  */
 
-import $ from "../../ts/jq";
 import * as util from "../../ts/util";
 import * as API from "../../ts/api";
-import { Fragment, render, h, ComponentChild, toChildArray } from "preact";
+import { h, Fragment, ComponentChild } from "preact";
 import { ConfigComponent } from "../../ts/components/config_component";
 import { Table, TableRow } from "../../ts/components/table";
 import { ConfigForm } from "../../ts/components/config_form";
 import { InputSelect } from "../../ts/components/input_select";
 import { FormRow } from "../../ts/components/form_row";
 import { __ } from "../../ts/translation";
-import { AutomationTriggerID, AutomationActionID } from "./automation_defs";
+import { AutomationTriggerID } from "./automation_trigger_id.enum";
+import { AutomationActionID } from "./automation_action_id.enum";
 import { Task, AutomationTriggerComponents, AutomationActionComponents } from "./types";
 import { plugins_init } from "./plugins";
-import { SubPage } from "src/ts/components/sub_page";
+import { SubPage } from "../../ts/components/sub_page";
+import { NavbarItem } from "../../ts/components/navbar_item";
+import { Tool } from "react-feather";
+
+export function AutomationNavbar() {
+    return <NavbarItem name="automation" module="automation" title={__("automation.navbar.automation")} symbol={<Tool />} />;
+}
 
 const MAX_RULES = 14;
 
@@ -38,6 +44,10 @@ type AutomationState = {
     displayed_trigger: number;
     displayed_action: number;
     edit_task: Task;
+    registered_triggers: number[];
+    registered_actions: number[];
+    enabled_triggers: number[];
+    enabled_actions: number[];
 };
 
 let automation_trigger_components: AutomationTriggerComponents = {};
@@ -46,8 +56,8 @@ let automation_action_components: AutomationActionComponents = {};
 export class Automation extends ConfigComponent<"automation/config", {}, AutomationState> {
     constructor() {
         super('automation/config',
-              __("charge_manager.script.save_failed"),
-              __("charge_manager.script.reboot_content_changed"), {
+              __("automation.script.save_failed"),
+              __("automation.script.reboot_content_changed"), {
                   tasks: [],
                   displayed_trigger: AutomationTriggerID.None,
                   displayed_action: AutomationActionID.None,
@@ -56,27 +66,58 @@ export class Automation extends ConfigComponent<"automation/config", {}, Automat
                       action: [AutomationActionID.None, null]
                   }
              });
+
+        util.addApiEventListener("automation/state", () => {
+            let state = API.get("automation/state");
+
+            this.setState({
+                registered_triggers: state.registered_triggers,
+                registered_actions: state.registered_actions,
+                enabled_triggers: state.enabled_triggers,
+                enabled_actions: state.enabled_actions,
+            })
+        });
     }
 
     createSelectors() {
         let trigger: [string, string][] = [];
         for (let i in automation_trigger_components) {
-            const entry: [string, string] = [i, automation_trigger_components[i].name]
-            if (automation_trigger_components[i].require_feature && !API.hasFeature(automation_trigger_components[i].require_feature))
+            if (this.state.registered_triggers.indexOf(parseInt(i)) < 0) {
                 continue;
-            trigger.push(entry);
+            }
+
+            let trigger_component = automation_trigger_components[i];
+            let name = trigger_component.name;
+
+            if (this.state.enabled_triggers.indexOf(parseInt(i)) < 0) {
+                name += " [";
+                name += trigger_component.get_disabled_reason ? trigger_component.get_disabled_reason(this.state.edit_task.trigger) : __("automation.content.trigger_disabled");
+                name += "]";
+            }
+
+            trigger.push([i, name]);
         }
 
         let action: [string, string][] = [];
         for (let i in automation_action_components) {
-            const entry: [string, string] = [i, automation_action_components[i].name];
-            if (automation_action_components[i].require_feature && !API.hasFeature(automation_action_components[i].require_feature))
+            if (this.state.registered_actions.indexOf(parseInt(i)) < 0) {
                 continue;
-            action.push(entry);
+            }
+
+            let action_component = automation_action_components[i];
+            let name = action_component.name;
+
+            if (this.state.enabled_actions.indexOf(parseInt(i)) < 0) {
+                name += " [";
+                name += action_component.get_disabled_reason ? action_component.get_disabled_reason(this.state.edit_task.action) : __("automation.content.action_disabled");
+                name += "]";
+            }
+
+            action.push([i, name]);
         }
 
         let triggerSelector: ComponentChild[] = [
-            <FormRow label={__("automation.content.condition")}>
+            <FormRow key="trigger_row" label={__("automation.content.condition")}>
                 <InputSelect
                     required
                     placeholder={__("automation.content.select")}
@@ -99,13 +140,13 @@ export class Automation extends ConfigComponent<"automation/config", {}, Automat
             const trigger_config = automation_trigger_components[this.state.displayed_trigger].get_edit_children(this.state.edit_task.trigger, (trigger) => {
                 this.setState({edit_task: {...this.state.edit_task, trigger: trigger}});
             });
-            triggerSelector = triggerSelector.concat(toChildArray(trigger_config));
+            triggerSelector = triggerSelector.concat(<div key={`trigger_config_${this.state.displayed_trigger}`}>{trigger_config}</div>);
         }
 
-        triggerSelector = triggerSelector.concat(<hr />);
+        triggerSelector = triggerSelector.concat(<hr key="trigger_action_separator"/>);
 
         let actionSelector: ComponentChild[] = [
-            <FormRow label={__("automation.content.action")}>
+            <FormRow key="action_row" label={__("automation.content.action")}>
                 <InputSelect
                     required
                     placeholder={__("automation.content.select")}
@@ -128,22 +169,41 @@ export class Automation extends ConfigComponent<"automation/config", {}, Automat
             const action_config = automation_action_components[this.state.displayed_action].get_edit_children(this.state.edit_task.action, (action) => {
                 this.setState({edit_task: {...this.state.edit_task, action: action}});
             });
-            actionSelector = actionSelector.concat(toChildArray(action_config));
+            actionSelector = actionSelector.concat(<div key={`action_config_${this.state.displayed_action}`}>{action_config}</div>);
         }
 
         const preview = [];
-        const trigger_children = automation_trigger_components[this.state.displayed_trigger];
-        if (trigger_children) {
-            preview.push(trigger_children.get_table_children(this.state.edit_task.trigger));
+        const trigger_component = automation_trigger_components[this.state.displayed_trigger];
+        if (trigger_component) {
+            if (this.state.enabled_triggers.indexOf(this.state.displayed_trigger) < 0) {
+                let reason = trigger_component.get_disabled_reason ? trigger_component.get_disabled_reason(this.state.edit_task.trigger) : __("automation.content.trigger_disabled");
+                preview.push(<span class="text-danger" key={`trigger_disabled_reason_${this.state.displayed_trigger}`}>[{reason}]</span>);
+                preview.push(" ");
+            }
+
+            preview.push(<span key={`trigger_preview_${this.state.displayed_trigger}`}>{trigger_component.get_table_children(this.state.edit_task.trigger)}</span>);
         }
-        const action_children = automation_action_components[this.state.displayed_action];
-        if (action_children) {
-            preview.push(action_children.get_table_children(this.state.edit_task.action));
+
+        const action_component = automation_action_components[this.state.displayed_action];
+        if (action_component) {
+            if (preview.length > 0) {
+                preview.push(<br key="preview_trigger_action_separator"/>);
+            }
+
+            if (this.state.enabled_actions.indexOf(this.state.displayed_action) < 0) {
+                let reason = action_component.get_disabled_reason ? action_component.get_disabled_reason(this.state.edit_task.action) : __("automation.content.action_disabled");
+                preview.push(<span class="text-danger" key={`action_disabled_reason_${this.state.displayed_action}`}>[{reason}]</span>);
+                preview.push(" ");
+            }
+
+            preview.push(<span key={`action_preview_${this.state.displayed_trigger}`}>{action_component.get_table_children(this.state.edit_task.action)}</span>);
         }
+
         if (preview.length === 0) {
             return triggerSelector.concat(actionSelector);
         }
-        return triggerSelector.concat(actionSelector).concat(<hr/>).concat(<div class="pb-3">{preview}</div>);
+
+        return triggerSelector.concat(actionSelector).concat(<hr key="action_preview_separator"/>).concat(<FormRow label={__("automation.content.preview")}><div class="form-control" style="height: unset;">{preview}</div></FormRow>);
     }
 
     assembleTable() {
@@ -159,17 +219,25 @@ export class Automation extends ConfigComponent<"automation/config", {}, Automat
                 trigger: trigger_component.clone_config(task.trigger),
                 action: action_component.clone_config(task.action),
             };
+
             const trigger_children = trigger_component.get_table_children(task.trigger);
             const action_children = action_component.get_table_children(task.action);
+
+            const trigger_disabled = this.state.enabled_triggers.indexOf(trigger_id) < 0
+                                     ? (<span class="text-danger">[{trigger_component.get_disabled_reason ? trigger_component.get_disabled_reason(task.trigger) : __("automation.content.trigger_disabled")}]</span>)
+                                     : undefined;
+            const action_disabled = this.state.enabled_actions.indexOf(action_id) < 0
+                                    ? (<span class="text-danger">[{action_component.get_disabled_reason ? action_component.get_disabled_reason(task.action) : __("automation.content.action_disabled")}]</span>)
+                                    : undefined;
 
             let row: TableRow = {
                 columnValues: [
                     [idx + 1],
-                    [trigger_children],
-                    [action_children],
+                    [<Fragment key={`trigger_${trigger_id}`}>{trigger_disabled}{" "}{trigger_children}</Fragment>],
+                    [<Fragment key={`actionr_${action_id}`}>{action_disabled}{" "}{action_children}</Fragment>],
                 ],
                 fieldNames: ["", ""],
-                fieldValues: [__("automation.content.rule") + " #" + (idx + 1) as ComponentChild, <div class="pb-3">{trigger_children}{action_children}</div>],
+                fieldValues: [__("automation.content.rule") + " #" + (idx + 1) as ComponentChild, <div class="pb-3">{trigger_disabled}{" "}{trigger_children}<hr class="my-2"/>{action_disabled}{" "}{action_children}</div>],
                 onEditShow: async () => {
                     this.setState({
                         displayed_trigger: task.trigger[0] as number,
@@ -198,9 +266,9 @@ export class Automation extends ConfigComponent<"automation/config", {}, Automat
 
     render(props: {}, state: AutomationState) {
         if (!util.render_allowed())
-            return <></>;
+            return <SubPage name="automation" />;
 
-        return <SubPage>
+        return <SubPage name="automation">
              <ConfigForm
                 id="automation-config-form"
                 title={__("automation.content.automation")}
@@ -240,8 +308,6 @@ export class Automation extends ConfigComponent<"automation/config", {}, Automat
     }
 }
 
-render(<Automation />, $("#automation")[0]);
-
 export function init() {
     let result = plugins_init();
 
@@ -266,11 +332,4 @@ export function init() {
             }
         }
     }
-}
-
-export function add_event_listeners(source: API.APIEventTarget) {
-}
-
-export function update_sidebar_state(module_init: any) {
-    $("#sidebar-automation").prop("hidden", !module_init.automation);
 }

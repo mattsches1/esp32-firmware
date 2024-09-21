@@ -1,3 +1,22 @@
+/* esp32-firmware
+ * Copyright (C) 2020-2024 Erik Fleckstein <erik@tinkerforge.com>
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the
+ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+ * Boston, MA 02111-1307, USA.
+ */
+
 #include "owned_config.h"
 
 OwnedConfig::OwnedConfigWrap::OwnedConfigWrap(const OwnedConfig *_conf) : conf(_conf)
@@ -12,8 +31,7 @@ const OwnedConfig *OwnedConfig::OwnedConfigWrap::operator->() const
 const OwnedConfig::OwnedConfigWrap OwnedConfig::get() const
 {
     if (!this->is<OwnedConfig::OwnedConfigUnion>()) {
-        logger.printfln("Config is not a union!");
-        esp_system_abort("");
+        esp_system_abort("Config is not a union!");
     }
     OwnedConfig::OwnedConfigWrap wrap(&strict_variant::get<OwnedConfig::OwnedConfigUnion>(&value)->value[0]);
 
@@ -23,15 +41,14 @@ const OwnedConfig::OwnedConfigWrap OwnedConfig::get() const
 const OwnedConfig::OwnedConfigWrap OwnedConfig::get(uint16_t i) const
 {
     if (!this->is<OwnedConfig::OwnedConfigArray>()) {
-        logger.printfln("Config is not an array!");
-        esp_system_abort("");
+        esp_system_abort("Config is not an array!");
     }
 
     const auto &elements = strict_variant::get<OwnedConfig::OwnedConfigArray>(&value)->elements;
 
     if (i >= elements.size()) {
-        logger.printfln("Config index %u out of bounds (vector size %u)!", i, elements.size());
-        esp_system_abort("");
+        char *message;
+        esp_system_abort(asprintf(&message, "Config index %u out of bounds (vector size %u)!", i, elements.size()) < 0 ? "" : message);
     }
 
     return OwnedConfig::OwnedConfigWrap(&elements[i]);
@@ -40,8 +57,7 @@ const OwnedConfig::OwnedConfigWrap OwnedConfig::get(uint16_t i) const
 const OwnedConfig::OwnedConfigWrap OwnedConfig::get(const String &key) const
 {
     if (!this->is<OwnedConfig::OwnedConfigObject>()) {
-        logger.printfln("Config is not an object!");
-        esp_system_abort("");
+        esp_system_abort("Config is not an object!");
     }
 
     const auto &elements = strict_variant::get<OwnedConfig::OwnedConfigObject>(&value)->elements;
@@ -53,15 +69,14 @@ const OwnedConfig::OwnedConfigWrap OwnedConfig::get(const String &key) const
             return OwnedConfig::OwnedConfigWrap(&val_pair.second);
     }
 
-    logger.printfln("Config key %s not found!", key.c_str());
-    esp_system_abort("");
+    char *message;
+    esp_system_abort(asprintf(&message, "Config key %s not found!", key.c_str()) < 0 ? "" : message);
 }
 
 size_t OwnedConfig::count() const
 {
     if (!this->is<OwnedConfig::OwnedConfigArray>()) {
-        logger.printfln("Config is not an array!");
-        esp_system_abort("");
+        esp_system_abort("Config is not an array!");
     }
 
     const auto &elements = strict_variant::get<OwnedConfig::OwnedConfigArray>(&value)->elements;
@@ -71,8 +86,7 @@ size_t OwnedConfig::count() const
 const std::vector<OwnedConfig>::const_iterator OwnedConfig::cbegin() const
 {
     if (!this->is<OwnedConfig::OwnedConfigArray>()) {
-        logger.printfln("Config is not an array!");
-        esp_system_abort("");
+        esp_system_abort("Config is not an array!");
     }
     const auto &elements = strict_variant::get<OwnedConfig::OwnedConfigArray>(&value)->elements;
     return elements.cbegin();
@@ -81,8 +95,7 @@ const std::vector<OwnedConfig>::const_iterator OwnedConfig::cbegin() const
 const std::vector<OwnedConfig>::const_iterator OwnedConfig::cend() const
 {
     if (!this->is<OwnedConfig::OwnedConfigArray>()) {
-        logger.printfln("Config is not an array!");
-        esp_system_abort("");
+        esp_system_abort("Config is not an array!");
     }
     const auto &elements = strict_variant::get<OwnedConfig::OwnedConfigArray>(&value)->elements;
     return elements.cend();

@@ -18,8 +18,8 @@
  */
 
 import { __ } from "../../ts/translation";
-import { AutomationTrigger } from "../automation/types";
-import { AutomationTriggerID } from "../automation/automation_defs";
+import { AutomationTrigger, InitResult } from "../automation/types";
+import { AutomationTriggerID } from "../automation/automation_trigger_id.enum";
 import { ComponentChildren } from "preact";
 
 export type ChargeLimitsAutomationTrigger = [
@@ -32,7 +32,7 @@ function get_charge_limits_table_children(_: ChargeLimitsAutomationTrigger) {
 }
 
 function get_charge_limits_edit_children(_: ChargeLimitsAutomationTrigger, __: (trigger: AutomationTrigger) => void): ComponentChildren {
-    return []
+    return [];
 }
 
 function new_charge_limits_config(): AutomationTrigger {
@@ -42,7 +42,7 @@ function new_charge_limits_config(): AutomationTrigger {
     ];
 }
 
-export function init() {
+export function init(): InitResult {
     return {
         trigger_components: {
             [AutomationTriggerID.ChargeLimits]: {

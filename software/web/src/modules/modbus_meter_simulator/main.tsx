@@ -17,17 +17,22 @@
  * Boston, MA 02111-1307, USA.
  */
 
-import $ from "../../ts/jq";
 import * as API from "../../ts/api";
 import * as util from "../../ts/util";
 import { __ } from "../../ts/translation";
 import { METERS_SLOTS } from "../../build";
-import { h, render, Fragment } from "preact";
+import { h, Fragment } from "preact";
 import { ConfigComponent } from "../../ts/components/config_component";
 import { ConfigForm      } from "../../ts/components/config_form";
 import { FormRow         } from "../../ts/components/form_row";
 import { InputSelect     } from "../../ts/components/input_select";
 import { SubPage } from "../../ts/components/sub_page";
+import { NavbarItem } from "../../ts/components/navbar_item";
+import { LogOut } from "react-feather";
+
+export function ModbusMeterSimulatorNavbar() {
+    return <NavbarItem name="modbus_meter_simulator" module="modbus_meter_simulator" title={__("modbus_meter_simulator.navbar.entry")} symbol={<LogOut />} />;
+}
 
 export class ModbusMeterSimulator extends ConfigComponent<'modbus_meter_simulator/config'> {
     constructor() {
@@ -38,7 +43,7 @@ export class ModbusMeterSimulator extends ConfigComponent<'modbus_meter_simulato
 
     render(props: {}, s: Readonly<API.getType['modbus_meter_simulator/config']>) {
         if (!util.render_allowed())
-            return <></>;
+            return <SubPage name="modbus_meter_simulator" />;
 
         let meter_names: [string, string][] = [];
         for (let i = 0; i < METERS_SLOTS; i++) {
@@ -48,7 +53,7 @@ export class ModbusMeterSimulator extends ConfigComponent<'modbus_meter_simulato
             }
         }
 
-        return <SubPage>
+        return <SubPage name="modbus_meter_simulator">
             <ConfigForm id="modbus_meter_simulator_config_form" title={__("modbus_meter_simulator.content.page_header")} isModified={this.isModified()} isDirty={this.isDirty()} onSave={this.save} onReset={this.reset} onDirtyChange={this.setDirty}>
 
                 <FormRow label={__("modbus_meter_simulator.content.meter_type")} label_muted={__("modbus_meter_simulator.content.meter_type_muted")}>
@@ -80,12 +85,4 @@ export class ModbusMeterSimulator extends ConfigComponent<'modbus_meter_simulato
 }
 
 export function init() {
-}
-render(<ModbusMeterSimulator />, $("#modbus_meter_simulator")[0]);
-
-export function add_event_listeners(source: API.APIEventTarget) {
-}
-
-export function update_sidebar_state(module_init: any) {
-    $('#sidebar-modbus_meter_simulator').prop('hidden', !module_init.modbus_meter_simulator);
 }

@@ -29,10 +29,8 @@ public:
     ESP32EthernetBrick(){}
 
     bool initHAL();
-    void initI2C();
+    bool destroyHAL();
 
     void pre_init() override;
     void setup() override;
-
-    bool is_warp_esp_ethernet_brick = false;
 };

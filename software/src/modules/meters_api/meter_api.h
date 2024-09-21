@@ -21,17 +21,14 @@
 
 #include <stdint.h>
 
-#include "config.h"
 #include "modules/meters/imeter.h"
+#include "config.h"
 
 #if defined(__GNUC__)
     #pragma GCC diagnostic push
     #include "gcc_warnings.h"
     #pragma GCC diagnostic ignored "-Weffc++"
 #endif
-
-// Limited to 256 values because processing requires at least 20 bytes per value.
-#define METER_API_MAX_VALUES 256
 
 class MeterAPI final : public IMeter
 {

@@ -17,11 +17,10 @@
  * Boston, MA 02111-1307, USA.
  */
 
-import $ from "../../ts/jq";
 import * as util from "../../ts/util";
 import * as API from "../../ts/api";
 import YaMD5 from "../../ts/yamd5";
-import { h, render, Fragment } from "preact";
+import { h, Fragment } from "preact";
 import { __ } from "../../ts/translation";
 import { ConfigComponent, ConfigComponentState } from "../../ts/components/config_component";
 import { ConfigForm } from "../../ts/components/config_form";
@@ -30,11 +29,15 @@ import { InputText } from "../../ts/components/input_text";
 import { InputFloat } from "../../ts/components/input_float";
 import { Switch } from "../../ts/components/switch";
 import { InputPassword } from "../../ts/components/input_password";
-import { Slash } from "react-feather";
 import { EVSE_SLOT_USER } from "../evse_common/api";
 import { SubPage } from "../../ts/components/sub_page";
 import { Table } from "../../ts/components/table";
-import { Check } from "react-feather";
+import { NavbarItem } from "../../ts/components/navbar_item";
+import { Slash, Check, Users as UsersSymbol } from "react-feather";
+
+export function UsersNavbar() {
+    return <NavbarItem name="users" module="users" title={__("users.navbar.users")} symbol={<UsersSymbol />} />;
+}
 
 type User = (API.getType['users/config']['users'][0]) & {password: string, is_invalid: number};
 type UsersConfig = Omit<API.getType['users/config'], 'users'> & {users: User[]};
@@ -166,8 +169,7 @@ export class Users extends ConfigComponent<'users/config', {}, UsersState> {
         await API.call_unchecked('users/http_auth_update', {
             "enabled": enabled
         },
-        __("users.script.save_failed"),
-        __("users.script.reboot_content_changed"));
+        __("users.script.save_failed"));
     }
 
     user_has_password(u: User) {
@@ -222,7 +224,12 @@ export class Users extends ConfigComponent<'users/config', {}, UsersState> {
         }
 
         for (let u of users_to_modify) {
-            u.digest_hash = (u.password != null && u.password != "") ? YaMD5.YaMD5.hashStr(u.username + ":esp32-lib:" + u.password) : u.password
+            // Don't hash if u.password is falsy, i.e. null, undefined or the empty string
+            u.digest_hash = u.password ? YaMD5.YaMD5.hashStr(u.username + ":esp32-lib:" + u.password) : u.password
+            // Always send digest_hash, but as null if we don't want to change it.
+            // digest_hash can be undefined if this user was not modified.
+            if (u.digest_hash === undefined)
+                u.digest_hash = null;
             await modify_user(u);
         }
 
@@ -230,7 +237,10 @@ export class Users extends ConfigComponent<'users/config', {}, UsersState> {
 
         outer_loop:
         for (let u of users_to_add) {
-            u.digest_hash = (u.password != null && u.password != "") ? YaMD5.YaMD5.hashStr(u.username + ":esp32-lib:" + u.password) : u.password
+            // Don't hash if u.password is falsy, i.e. null, or the empty string.
+            // u.password can't be undefined (as is handled above when modifying users),
+            // because adding a user sets password to "" if nothing was entered.
+            u.digest_hash = u.password ? YaMD5.YaMD5.hashStr(u.username + ":esp32-lib:" + u.password) : u.password
             u.id = next_user_id;
             await add_user(u);
             for (let i = 0; i < 20; ++i) {
@@ -246,7 +256,7 @@ export class Users extends ConfigComponent<'users/config', {}, UsersState> {
 
         await this.save_authentication_config(new_config.http_auth_enabled);
 
-        await API.save_unchecked('evse/user_enabled', {"enabled": this.state.userSlotEnabled}, __("evse.script.save_failed"));
+        await API.save('evse/user_enabled', {"enabled": this.state.userSlotEnabled}, __("evse.script.save_failed"), __("users.script.reboot_content_changed"));
     }
 
     setUser(i: number, val: Partial<User>) {
@@ -323,7 +333,7 @@ export class Users extends ConfigComponent<'users/config', {}, UsersState> {
 
     override render(props: {}, state: UsersConfig & UsersState & ConfigComponentState) {
         if (!util.render_allowed())
-            return <></>
+            return <SubPage name="users" />;
 
         const MAX_ACTIVE_USERS = API.hasModule("esp32_ethernet_brick") ? 33 : 17;
 
@@ -333,7 +343,7 @@ export class Users extends ConfigComponent<'users/config', {}, UsersState> {
         let user_slot_allowed = state.users.length > 1;
 
         return (
-            <SubPage>
+            <SubPage name="users">
                 <ConfigForm id="users_config_form" title={__("users.content.users")} isModified={this.isModified()} isDirty={this.isDirty()} onSave={this.save}
                     onReset={this.reset}
                     onDirtyChange={this.setDirty}>
@@ -502,8 +512,6 @@ export class Users extends ConfigComponent<'users/config', {}, UsersState> {
     }
 }
 
-render(<Users />, $("#users")[0]);
-
 export function getAllUsernames() {
     return util.download('/users/all_usernames')
         .then(blob => blob.arrayBuffer())
@@ -532,11 +540,4 @@ export function getAllUsernames() {
 }
 
 export function init() {
-}
-
-export function add_event_listeners(source: API.APIEventTarget) {
-}
-
-export function update_sidebar_state(module_init: any) {
-    $("#sidebar-users").prop("hidden", !module_init.users);
 }

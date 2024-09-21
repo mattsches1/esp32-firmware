@@ -19,11 +19,17 @@
 
 #pragma once
 
-#include "config.h"
-
-#include "modules/meters/meter_value_availability.h"
 #include "module.h"
+#include "config.h"
+#include "modules/meters/meter_value_availability.h"
+#include "modules/power_manager/phase_switcher_back-end.h"
+#include "modules/debug_protocol/debug_protocol_backend.h"
 #include "tools.h"
+#include "module_available.h"
+
+#if MODULE_AUTOMATION_AVAILABLE()
+#include "modules/automation/automation_backend.h"
+#endif
 
 #define CHARGING_SLOT_COUNT 15
 #define CHARGING_SLOT_COUNT_SUPPORTED_BY_EVSE 20
@@ -64,11 +70,16 @@
 
 #define EXTERNAL_TIMEOUT 30
 
-class IEvseBackend : virtual public IModule {
+class IEvseBackend : public PhaseSwitcherBackend, public IDebugProtocolBackend
+{
     friend class EvseCommon;
+
 protected:
     IEvseBackend() {}
     virtual ~IEvseBackend() {}
+
+    virtual bool is_initialized() = 0;
+    virtual void set_initialized(bool initialized) = 0;
 
     virtual void post_setup() = 0;
     virtual void post_register_urls() = 0;
@@ -100,20 +111,22 @@ protected:
     virtual int set_charging_slot_default(uint8_t slot, uint16_t current, bool enabled, bool clear_on_disconnect) = 0;
     // End: Pass through to bindings functions
 
-    virtual String get_evse_debug_header() = 0;
-    virtual String get_evse_debug_line() = 0;
     virtual void update_all_data() = 0;
 };
 
 class EvseCommon final : public IModule
+#if MODULE_AUTOMATION_AVAILABLE()
+                       , public IAutomationBackend
+#endif
 {
     // TODO: It's a bit ugly that we have to declare all specific EVSE modules as friends here.
     // But this allows us to make the configs private, to enforce all access happens via the public methods below.
     friend class EVSE;
     friend class EVSEV2;
 
-private:
+public: // We need to access the backend in cm_networking for the phase switch. FIXME: Let EvseCommon implement PhaseSwitcherBackend instead.
     IEvseBackend *backend = nullptr;
+private:
     unsigned long last_external_update = 0;
 
 public:
@@ -122,7 +135,6 @@ public:
     void pre_setup() override;
     void setup() override;
     void register_urls() override;
-    void loop() override;
 
     void setup_evse();
 
@@ -134,8 +146,8 @@ public:
     void set_modbus_enabled(bool);
 
     uint32_t get_charger_meter();
-    MeterValueAvailability get_charger_meter_power(float *power, micros_t max_age = 0_usec);
-    MeterValueAvailability get_charger_meter_energy(float *energy, micros_t max_age = 0_usec);
+    MeterValueAvailability get_charger_meter_power(float *power, micros_t max_age = 0_us);
+    MeterValueAvailability get_charger_meter_energy(float *energy, micros_t max_age = 0_us);
     bool get_use_imexsum();
 
     void set_require_meter_blocking(bool);
@@ -162,16 +174,14 @@ public:
     ConfigRoot &get_slots();
     ConfigRoot &get_low_level_state();
     bool get_management_enabled();
+    uint32_t get_evse_version();
 
-    bool action_triggered(Config *config, void *data);
-
-    void check_debug();
+#if MODULE_AUTOMATION_AVAILABLE()
+    bool has_triggered(const Config *conf, void *data) override;
+#endif
 
     uint32_t last_current_update = 0;
     bool shutdown_logged = false;
-
-    uint32_t last_debug_keep_alive = 0;
-    bool debug = false;
 
 private:
     ConfigRoot low_level_state;

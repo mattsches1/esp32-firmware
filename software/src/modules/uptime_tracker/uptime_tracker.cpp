@@ -19,9 +19,8 @@
 
 #include "uptime_tracker.h"
 
-#include "api.h"
-#include "event_log.h"
-#include "task_scheduler.h"
+#include "event_log_prefix.h"
+#include "module_dependencies.h"
 
 #define MAX_UPTIMES 10
 
@@ -77,7 +76,7 @@ void UptimeTracker::setup()
 
             //timestamp_min initialized with 0. 0 means not synced
             if (clock_synced(&timestamp))
-                uptimes.get(idx)->get("timestamp_min")->updateUint(timestamp.tv_sec / 60);
+                uptimes.get(idx)->get("timestamp_min")->updateUint((timestamp.tv_sec - millis() / 1000) / 60);
 
             uptimes.get(idx)->get("reset_reason")->updateUint(esp_reset_reason());
             uptimes.get(idx)->get("uptime")->updateUint(old_uptime.uptime);

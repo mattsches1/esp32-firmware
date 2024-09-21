@@ -17,10 +17,9 @@
  * Boston, MA 02111-1307, USA.
  */
 
-import $ from "../../ts/jq";
 import * as util from "../../ts/util";
 import * as API from "../../ts/api";
-import { h, render, Fragment, Component } from "preact";
+import { h, Fragment, Component, RefObject } from "preact";
 import { __ } from "../../ts/translation";
 import { Switch } from "../../ts/components/switch";
 import { ConfigComponent } from "../../ts/components/config_component";
@@ -32,10 +31,17 @@ import { Button } from "react-bootstrap";
 import { InputText } from "../../ts/components/input_text";
 import { IndicatorGroup } from "../../ts/components/indicator_group";
 import { SubPage } from "../../ts/components/sub_page";
+import { NavbarItem } from "../../ts/components/navbar_item";
+import { StatusSection } from "../../ts/components/status_section";
+import { Clock } from "react-feather";
+
+export function NTPNavbar() {
+    return <NavbarItem name="ntp" module="ntp" title={__("ntp.navbar.ntp")} symbol={<Clock />} />;
+}
 
 type NTPConfig = API.getType["ntp/config"];
 
-export class NTP extends ConfigComponent<'ntp/config'> {
+export class NTP extends ConfigComponent<'ntp/config', {status_ref?: RefObject<NTPStatus>}> {
     constructor() {
         super('ntp/config',
               __("ntp.script.save_failed"),
@@ -59,12 +65,12 @@ export class NTP extends ConfigComponent<'ntp/config'> {
 
     render(props: {}, state: Readonly<NTPConfig>) {
         if (!util.render_allowed())
-            return <></>
+            return <SubPage name="ntp" />;
 
         let splt = state.timezone.split("/");
 
         return (
-            <SubPage>
+            <SubPage name="ntp">
                 <ConfigForm id="ntp_config_form"
                             title={__("ntp.content.ntp")}
                             isModified={this.isModified()}
@@ -138,8 +144,6 @@ export class NTP extends ConfigComponent<'ntp/config'> {
     }
 }
 
-render(<NTP />, $("#ntp")[0]);
-
 interface NTPStatusState {
     state: API.getType["ntp/state"];
     config: API.getType["ntp/config"];
@@ -160,10 +164,10 @@ export class NTPStatus extends Component<{}, NTPStatusState> {
 
     render(props: {}, state: NTPStatusState) {
         if (!util.render_allowed() || !state.config.enable)
-            return <></>;
+            return <StatusSection name="ntp" />;
 
-        return <>
-                <FormRow label={__("ntp.status.ntp")} label_muted={util.timestamp_min_to_date(state.state.time, "")} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4">
+        return <StatusSection name="ntp">
+                <FormRow label={__("ntp.status.ntp")} label_muted={util.timestamp_min_to_date(state.state.time, "")}>
                     <IndicatorGroup
                         style="width: 100%"
                         class="flex-wrap"
@@ -174,18 +178,9 @@ export class NTPStatus extends Component<{}, NTPStatusState> {
                             ["success", __("ntp.status.synced")],
                         ]}/>
                 </FormRow>
-            </>;
+            </StatusSection>;
     }
 }
 
-render(<NTPStatus />, $("#status-ntp")[0]);
-
 export function init() {
-}
-
-export function add_event_listeners(source: API.APIEventTarget) {
-}
-
-export function update_sidebar_state(module_init: any) {
-    $("#sidebar-ntp").prop("hidden", !module_init.ntp);
 }

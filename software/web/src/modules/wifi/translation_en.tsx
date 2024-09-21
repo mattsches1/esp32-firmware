@@ -24,11 +24,12 @@ let x = {
             "sta_enable_sta_desc": "Automatically connects to the configured network on start-up",
             "sta_ssid": "Network name (SSID)",
             "sta_scan": "Search for networks",
-            "sta_scanning": "Searching for networks...",
             "sta_bssid": "BSSID",
             "sta_bssid_invalid": "The BSSID must have six groups separated by a colon, each with a two-digit hexadecimal number. For example 01:23:45:67:89:AB",
             "sta_bssid_lock": "BSSID lock",
             "sta_bssid_lock_desc": "Connects only to the network with the configured BSSID. Leave disabled if you use multiple access points or repeaters with with the same network name.",
+            "sta_enable_11b": "Optimize reception",
+            "sta_enable_11b_desc": <>Uses deprecated slow 802.11b mode for sightly better WiFi range. <strong>Also slows down other devices connected to this network</strong> but can improve reception quality and robustness of the WiFi connection somewhat.</>,
             "sta_passphrase": "Passphrase",
 
             "ap_settings": "WiFi Access Point",
@@ -74,7 +75,6 @@ let x = {
         "script": {
             "scan_wifi_init_failed": "Search for networks failed. Failed to start scan.",
             "scan_wifi_results_failed": "Search for networks failed. Failed to fetch scan results.",
-            "select_ap": "Found networks",
             "no_ap_found": "No network found",
             "hidden_ap": "[Hidden AP]",
 

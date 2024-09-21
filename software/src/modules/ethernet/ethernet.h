@@ -19,16 +19,9 @@
 
 #pragma once
 
-#include "config.h"
-
 #include "module.h"
-
-enum class EthernetState {
-    NOT_CONFIGURED = 0,
-    NOT_CONNECTED = 1,
-    CONNECTING = 2,
-    CONNECTED = 3
-};
+#include "config.h"
+#include "ethernet_state.enum.h"
 
 class Ethernet final : public IModule
 {
@@ -52,5 +45,5 @@ private:
 
     OwnedConfig config_in_use;
     String hostname;
-    EthernetState connection_state = EthernetState::NOT_CONFIGURED;
+    EthernetState connection_state = EthernetState::NotConfigured;
 };

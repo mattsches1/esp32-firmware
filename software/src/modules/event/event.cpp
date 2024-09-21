@@ -19,6 +19,10 @@
 
 #include "event.h"
 
+#include "event_log_prefix.h"
+#include "module_dependencies.h"
+#include "tools.h"
+
 void Event::pre_setup()
 {
     backendIdx = api.registerBackend(this);
@@ -31,6 +35,10 @@ void Event::setup()
 
 int64_t Event::registerEvent(const String &path, const std::vector<ConfPath> values, std::function<EventResult(const Config *)> &&callback)
 {
+    if (boot_stage < BootStage::REGISTER_EVENTS) {
+        logger.printfln("Attempted to register event for %s before the REGISTER_EVENTS BootStage!", path.c_str());
+    }
+
     auto api_states = api.states.size();
     for (size_t i = 0; i < api_states; i++) {
         if (path.length() != api.states[i].path_len || path != api.states[i].path) {
@@ -48,9 +56,9 @@ int64_t Event::registerEvent(const String &path, const std::vector<ConfPath> val
 
             if (config == nullptr) {
                 if (is_obj)
-                    logger.printfln("event: Value %s in state %s not found", *strict_variant::get<const char *>(&value), path.c_str());
+                    logger.printfln("Value %s in state %s not found", *strict_variant::get<const char *>(&value), path.c_str());
                 else
-                    logger.printfln("event: Index %u in state %s not found", *strict_variant::get<uint16_t>(&value), path.c_str());
+                    logger.printfln("Index %u in state %s not found", *strict_variant::get<uint16_t>(&value), path.c_str());
                 return -1;
             }
         }
@@ -78,7 +86,7 @@ int64_t Event::registerEvent(const String &path, const std::vector<ConfPath> val
         return eventID;
     }
 
-    logger.printfln("event: State %s not found", path.c_str());
+    logger.printfln("State %s not found", path.c_str());
     return -1;
 }
 
@@ -88,7 +96,7 @@ void Event::deregisterEvent(int64_t eventID)
         return;
 
     if (state_update_in_progress.load(std::memory_order_consume)) {
-        logger.printfln("BUG: event: Tried to deregister an event handler for eventID %llu from within an event handler.", eventID);
+        logger.printfln("BUG: Tried to deregister an event handler for eventID %llu from within an event handler.", eventID);
         return;
     }
 
@@ -105,10 +113,6 @@ void Event::addCommand(size_t commandIdx, const CommandRegistration &reg)
 }
 
 void Event::addState(size_t stateIdx, const StateRegistration &reg)
-{
-}
-
-void Event::addRawCommand(size_t rawCommandIdx, const RawCommandRegistration &reg)
 {
 }
 

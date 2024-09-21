@@ -17,25 +17,22 @@
  * Boston, MA 02111-1307, USA.
  */
 
-#include "meter_sun_spec.h"
 #include "meters_sun_spec.h"
-#include "api.h"
-#include "event_log.h"
-#include "task_scheduler.h"
-#include "tools.h"
+
+#include <esp_random.h>
+#include <TFJson.h>
+
+#include "event_log_prefix.h"
 #include "module_dependencies.h"
-#include "TFJson.h"
+#include "meter_sun_spec.h"
+#include "tools.h"
 #include "sun_spec_model_id.h"
-#include "esp_random.h"
 
 #include "gcc_warnings.h"
 
 #define MAX_READ_CHUNK_SIZE 125
 #define MAX_SCAN_READ_RETRIES 5
 #define MAX_SCAN_READ_TIMEOUT_BURST 10
-
-#define DEVICE_ADDRESS_FIRST 1u
-#define DEVICE_ADDRESS_LAST 247u
 
 #define SUN_SPEC_ID 0x53756E53
 
@@ -55,9 +52,13 @@ void MetersSunSpec::pre_setup()
     config_prototype = Config::Object({
         {"display_name", Config::Str("", 0, 65)}, // 32 chars manufacturer name; space; 32 chars model name
         {"host", Config::Str("", 0, 64)},
-        {"port", Config::Uint16(502)}, // 0 == auto discover
-        {"device_address", Config::Uint(0, 1, 247)}, // 0 == auto discover
+        {"port", Config::Uint16(502)},
+        {"device_address", Config::Uint(1, 1, 247)},
+        {"manufacturer_name", Config::Str("", 0, 32)},
+        {"model_name", Config::Str("", 0, 32)},
+        {"serial_number", Config::Str("", 0, 32)},
         {"model_id", Config::Uint16(0)}, // 0 == invalid
+        {"model_instance", Config::Uint16(0)},
     });
 
     meters.register_meter_generator(get_class(), this);
@@ -65,6 +66,8 @@ void MetersSunSpec::pre_setup()
     scan_config = ConfigRoot{Config::Object({
         {"host", Config::Str("", 0, 64)},
         {"port", Config::Uint16(0)},
+        {"device_address_first", Config::Uint(1, 1, 247)},
+        {"device_address_last", Config::Uint(247, 1, 247)},
         {"cookie", Config::Uint32(0)},
     })};
 
@@ -92,7 +95,14 @@ void MetersSunSpec::register_urls()
 
         scan_new_host = scan_config.get("host")->asString();
         scan_new_port = static_cast<uint16_t>(scan_config.get("port")->asUint());
+        scan_new_device_address_first = static_cast<uint8_t>(scan_config.get("device_address_first")->asUint());
+        scan_new_device_address_last = static_cast<uint8_t>(scan_config.get("device_address_last")->asUint());
         scan_new_cookie = scan_config.get("cookie")->asUint();
+
+        if (scan_new_device_address_last < scan_new_device_address_first) {
+            scan_new_device_address_last = scan_new_device_address_first;
+        }
+
         scan_new = true;
         scan_last_keep_alive = now_us();
     }, true);
@@ -130,11 +140,11 @@ void MetersSunSpec::register_urls()
 
 void MetersSunSpec::loop()
 {
-    if (scan_printfln_buffer_used > 0 && deadline_elapsed(scan_printfln_last_flush + 2000000_usec)) {
+    if (scan_printfln_buffer_used > 0 && deadline_elapsed(scan_printfln_last_flush + 2_s)) {
         scan_flush_log();
     }
 
-    if (scan_state != ScanState::Idle && !scan_abort && deadline_elapsed(scan_last_keep_alive + 10000000_usec)) {
+    if (scan_state != ScanState::Idle && !scan_abort && deadline_elapsed(scan_last_keep_alive + 10_s)) {
         const char *message = "Aborting scan because no continue call was received for more than 10 seconds";
 
         logger.printfln("%s", message);
@@ -151,8 +161,10 @@ void MetersSunSpec::loop()
             scan_state = ScanState::Resolve;
             scan_host = scan_new_host;
             scan_port = scan_new_port;
+            scan_device_address_first = scan_new_device_address_first;
+            scan_device_address_last = scan_new_device_address_last;
             scan_cookie = scan_new_cookie;
-            scan_device_address = DEVICE_ADDRESS_FIRST;
+            scan_device_address = scan_device_address_first;
             scan_base_address_index = 0;
             scan_read_timeout_burst = 0;
             ++scan_read_cookie;
@@ -257,12 +269,15 @@ void MetersSunSpec::loop()
 
             ++scan_read_cookie;
             scan_state = ScanState::Idle;
+
+            // force the map to free its memory, clear() doesn't guaranteed that the memory gets freed
+            scan_model_instances = std::unordered_map<uint16_t, uint16_t>();
         }
 
         break;
 
     case ScanState::NextDeviceAddress:
-        if (scan_abort || scan_device_address >= DEVICE_ADDRESS_LAST) {
+        if (scan_abort || scan_device_address >= scan_device_address_last) {
             scan_state = ScanState::Disconnect;
         }
         else {
@@ -271,7 +286,7 @@ void MetersSunSpec::loop()
 
             json.addObject();
             json.addMemberNumber("cookie", scan_cookie);
-            json.addMemberNumber("progress", static_cast<float>(scan_device_address + 1u - DEVICE_ADDRESS_FIRST) * 100.0f / static_cast<float>(DEVICE_ADDRESS_LAST - DEVICE_ADDRESS_FIRST));
+            json.addMemberNumber("progress", static_cast<float>(scan_device_address + 1u - scan_device_address_first) * 100.0f / static_cast<float>(scan_device_address_last - scan_device_address_first));
             json.endObject();
             json.end();
 
@@ -373,7 +388,7 @@ void MetersSunSpec::loop()
                     scan_printfln("Reading timed out, retrying");
 
                     --scan_read_retries;
-                    scan_read_delay_deadline = now_us() + 100000_usec + static_cast<micros_t>(esp_random() % 2400000);
+                    scan_read_delay_deadline = now_us() + 100_ms + static_cast<micros_t>(esp_random() % 2400000);
                     scan_state = ScanState::ReadDelay;
 
                     return true;
@@ -399,7 +414,7 @@ void MetersSunSpec::loop()
 
             if (rc == 0) {
                 if (scan_read_retries > 0) {
-                    scan_printfln("Read error, retrying");
+                    scan_printfln("Unknown read error, retrying");
 
                     --scan_read_retries;
                     scan_state = ScanState::ReadNext;
@@ -446,7 +461,7 @@ void MetersSunSpec::loop()
             if (sun_spec_id == SUN_SPEC_ID) {
                 scan_printfln("SunSpec ID found");
 
-                scan_state = ScanState::ReadCommonModelHeader;
+                scan_state = ScanState::ReadModelHeader;
             }
             else {
                 scan_printfln("No SunSpec ID found (sun-spec-id: %08x)", sun_spec_id);
@@ -462,64 +477,15 @@ void MetersSunSpec::loop()
 
         break;
 
-    case ScanState::ReadCommonModelHeader:
-        if (scan_abort) {
-            scan_state = ScanState::Disconnect;
-            break;
-        }
-
-        scan_printfln("Reading Common Model");
-
-        scan_read_size = 2;
-        scan_read_state = ScanState::ReadCommonModelHeaderDone;
-        scan_state = ScanState::Read;
-
-        break;
-
-    case ScanState::ReadCommonModelHeaderDone:
-        if (scan_abort) {
-            scan_state = ScanState::Disconnect;
-            break;
-        }
-
-        if (scan_read_result == Modbus::ResultCode::EX_SUCCESS) {
-            uint16_t model_id = scan_deserializer.read_uint16();
-            size_t block_length = scan_deserializer.read_uint16();
-
-            if (model_id == COMMON_MODEL_ID && (block_length == 65 || block_length == 66)) {
-                scan_printfln("Common Model found (block-length: %zu)", block_length);
-
-                scan_common_block_length = block_length;
-                scan_state = ScanState::ReadCommonModelBlock;
-            }
-            else {
-                scan_printfln("No Common Model found (model-id: %u, block-length: %zu)", model_id, block_length);
-
-                scan_state = ScanState::NextBaseAddress;
-            }
-        }
-        else {
-            scan_printfln("Could not read Common Model header (error: %s [%d])", get_modbus_result_code_name(scan_read_result), scan_read_result);
-
-            if (scan_read_result == Modbus::ResultCode::EX_TIMEOUT) {
-                scan_read_size = 2;
-                scan_read_state = ScanState::ReadCommonModelHeaderDone;
-                scan_state = ScanState::Read;
-            }
-            else {
-                scan_state = scan_get_next_state_after_read_error();
-            }
-        }
-
-        break;
-
     case ScanState::ReadCommonModelBlock:
         if (scan_abort) {
             scan_state = ScanState::Disconnect;
             break;
         }
 
-        scan_read_size = scan_common_block_length;
+        scan_printfln("Reading Common Model block");
+
+        scan_read_size = 65; // don't read optional padding, skip it later
         scan_read_state = ScanState::ReadCommonModelBlockDone;
         scan_state = ScanState::Read;
 
@@ -532,28 +498,37 @@ void MetersSunSpec::loop()
         }
 
         if (scan_read_result == Modbus::ResultCode::EX_SUCCESS) {
+            char options[16 + 1];
+            char version[16 + 1];
+
             scan_deserializer.read_string(scan_common_manufacturer_name, sizeof(scan_common_manufacturer_name));
             scan_deserializer.read_string(scan_common_model_name, sizeof(scan_common_model_name));
-            scan_deserializer.read_string(scan_common_options, sizeof(scan_common_options));
-            scan_deserializer.read_string(scan_common_version, sizeof(scan_common_version));
+            scan_deserializer.read_string(options, sizeof(options));
+            scan_deserializer.read_string(version, sizeof(version));
             scan_deserializer.read_string(scan_common_serial_number, sizeof(scan_common_serial_number));
 
             uint16_t device_address = scan_deserializer.read_uint16();
 
-            scan_printfln("Manufacturer Name: %s\n"
-                          "Model Name: %s\n"
-                          "Options: %s\n"
-                          "Version: %s\n"
-                          "Serial Number: %s\n"
-                          "Device Address: %u",
+            scan_printfln("  Manufacturer Name: %s\n"
+                          "  Model Name: %s\n"
+                          "  Options: %s\n"
+                          "  Version: %s\n"
+                          "  Serial Number: %s\n"
+                          "  Device Address: %u",
                           scan_common_manufacturer_name,
                           scan_common_model_name,
-                          scan_common_options,
-                          scan_common_version,
+                          options,
+                          version,
                           scan_common_serial_number,
                           device_address);
 
-            scan_state = ScanState::ReadStandardModelHeader;
+            if (scan_block_length == 66) {
+                scan_printfln("Skipping Common Model padding");
+
+                ++scan_read_address; // skip padding
+            }
+
+            scan_state = ScanState::ReadModelHeader;
         }
         else {
             scan_printfln("Could not read Common Model block (error: %s [%d])", get_modbus_result_code_name(scan_read_result), scan_read_result);
@@ -563,21 +538,21 @@ void MetersSunSpec::loop()
 
         break;
 
-    case ScanState::ReadStandardModelHeader:
+    case ScanState::ReadModelHeader:
         if (scan_abort) {
             scan_state = ScanState::Disconnect;
             break;
         }
 
-        scan_printfln("Reading Standard Model");
+        scan_printfln("Reading Model header (address: %zu)", scan_read_address);
 
         scan_read_size = 2;
-        scan_read_state = ScanState::ReadStandardModelHeaderDone;
+        scan_read_state = ScanState::ReadModelHeaderDone;
         scan_state = ScanState::Read;
 
         break;
 
-    case ScanState::ReadStandardModelHeaderDone:
+    case ScanState::ReadModelHeaderDone:
         if (scan_abort) {
             scan_state = ScanState::Disconnect;
             break;
@@ -587,10 +562,20 @@ void MetersSunSpec::loop()
             uint16_t model_id = scan_deserializer.read_uint16();
             size_t block_length = scan_deserializer.read_uint16();
 
-            if (model_id == NON_IMPLEMENTED_UINT16 && block_length == 0) {
-                scan_printfln("End Model found");
+            if (model_id == NON_IMPLEMENTED_UINT16 && (block_length == 0 || block_length == NON_IMPLEMENTED_UINT16)) {
+                // accept non-implemented block length as a SUNGROW quirk
+                scan_printfln("End Model found (block-length: %zu)", block_length);
 
                 scan_state = ScanState::NextDeviceAddress;
+            }
+            else if (model_id == COMMON_MODEL_ID && (block_length == 65 || block_length == 66)) {
+                scan_printfln("Common Model found (block-length: %zu)", block_length);
+
+                scan_model_instances.clear();
+
+                scan_model_id = model_id;
+                scan_block_length = block_length;
+                scan_state = ScanState::ReadCommonModelBlock;
             }
             else {
                 const char *model_name = nullptr;
@@ -611,22 +596,29 @@ void MetersSunSpec::loop()
                     }
                 }
 
-                scan_printfln("Found %s Model (model-id: %u, block-length: %zu)", model_name, model_id, block_length);
+                if (scan_model_instances.find(model_id) == scan_model_instances.end()) {
+                    scan_model_instances.insert({model_id, 0});
+                }
+                else {
+                    ++scan_model_instances[model_id];
+                }
 
-                scan_standard_model_id = model_id;
-                scan_standard_block_length = block_length;
-                scan_state = ScanState::ReportStandardModelResult;
+                scan_printfln("%s Model found (model-id/instance: %u/%u, block-length: %zu)", model_name, model_id, scan_model_instances.at(model_id), block_length);
+
+                scan_model_id = model_id;
+                scan_block_length = block_length;
+                scan_state = ScanState::ReportModelResult;
             }
         }
         else {
-            scan_printfln("Could not read Standard Model header (error: %s [%d])", get_modbus_result_code_name(scan_read_result), scan_read_result);
+            scan_printfln("Could not read Model header (error: %s [%d])", get_modbus_result_code_name(scan_read_result), scan_read_result);
 
             scan_state = scan_get_next_state_after_read_error();
         }
 
         break;
 
-    case ScanState::ReportStandardModelResult: {
+    case ScanState::ReportModelResult: {
             if (scan_abort) {
                 scan_state = ScanState::Disconnect;
                 break;
@@ -639,11 +631,10 @@ void MetersSunSpec::loop()
             json.addMemberNumber("cookie", scan_cookie);
             json.addMemberString("manufacturer_name", scan_common_manufacturer_name);
             json.addMemberString("model_name", scan_common_model_name);
-            json.addMemberString("options", scan_common_options);
-            json.addMemberString("version", scan_common_version);
             json.addMemberString("serial_number", scan_common_serial_number);
             json.addMemberNumber("device_address", scan_device_address);
-            json.addMemberNumber("model_id", scan_standard_model_id);
+            json.addMemberNumber("model_id", scan_model_id);
+            json.addMemberNumber("model_instance", scan_model_instances.at(scan_model_id));
             json.endObject();
             json.end();
 
@@ -651,8 +642,8 @@ void MetersSunSpec::loop()
                 break; // need report the scan result before doing something else
             }
 
-            scan_read_address += scan_standard_block_length;
-            scan_state = ScanState::ReadStandardModelHeader;
+            scan_read_address += scan_block_length; // skip block
+            scan_state = ScanState::ReadModelHeader;
         }
 
         break;
@@ -677,19 +668,19 @@ IMeter *MetersSunSpec::new_meter(uint32_t slot, Config *state, Config *errors)
 }
 
 [[gnu::const]]
-const Config * MetersSunSpec::get_config_prototype()
+const Config *MetersSunSpec::get_config_prototype()
 {
     return &config_prototype;
 }
 
 [[gnu::const]]
-const Config * MetersSunSpec::get_state_prototype()
+const Config *MetersSunSpec::get_state_prototype()
 {
     return Config::Null();
 }
 
 [[gnu::const]]
-const Config * MetersSunSpec::get_errors_prototype()
+const Config *MetersSunSpec::get_errors_prototype()
 {
     return Config::Null();
 }

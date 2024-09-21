@@ -20,14 +20,14 @@
 #pragma once
 
 #include <stdint.h>
+#include <unordered_map>
+#include <ModbusTCP.h>
+#include <lwip/ip_addr.h>
 
-#include "ModbusTCP.h"
-
-#include "config.h"
+#include "module.h"
 #include "modules/meters/meter_generator.h"
 #include "modules/meters_modbus_tcp/modbus_tcp_tools.h"
-#include "module.h"
-#include "lwip/ip_addr.h"
+#include "config.h"
 
 #if defined(__GNUC__)
     #pragma GCC diagnostic push
@@ -51,7 +51,7 @@ public:
     [[gnu::const]] virtual const Config *get_state_prototype()  override;
     [[gnu::const]] virtual const Config *get_errors_prototype() override;
 
-//private:
+private:
     enum class ScanState {
         Idle,
         Resolve,
@@ -67,13 +67,11 @@ public:
         ReadNext,
         ReadSunSpecID,
         ReadSunSpecIDDone,
-        ReadCommonModelHeader,
-        ReadCommonModelHeaderDone,
         ReadCommonModelBlock,
         ReadCommonModelBlockDone,
-        ReadStandardModelHeader,
-        ReadStandardModelHeaderDone,
-        ReportStandardModelResult,
+        ReadModelHeader,
+        ReadModelHeaderDone,
+        ReportModelResult,
     };
 
     ScanState scan_get_next_state_after_read_error();
@@ -90,15 +88,19 @@ public:
     bool scan_new = false;
     String scan_new_host;
     uint16_t scan_new_port;
+    uint8_t scan_new_device_address_first;
+    uint8_t scan_new_device_address_last;
     uint32_t scan_new_cookie;
 
-    micros_t scan_last_keep_alive = 0_usec;
+    micros_t scan_last_keep_alive = 0_us;
     bool scan_abort = false;
     ScanState scan_state = ScanState::Idle;
     String scan_host;
     dns_gethostbyname_addrtype_lwip_ctx_async_data scan_host_data;
     IPAddress scan_host_address;
     uint16_t scan_port;
+    uint8_t scan_device_address_first;
+    uint8_t scan_device_address_last;
     uint32_t scan_cookie;
     uint8_t scan_device_address;
     size_t scan_base_address_index;
@@ -113,18 +115,15 @@ public:
     size_t scan_read_index;
     Modbus::ResultCode scan_read_result;
     ScanState scan_read_state;
-    size_t scan_common_block_length;
-    uint16_t scan_standard_model_id;
-    size_t scan_standard_block_length;
+    uint16_t scan_model_id;
+    std::unordered_map<uint16_t, uint16_t> scan_model_instances;
+    size_t scan_block_length;
     char scan_printfln_buffer[512] = "";
     size_t scan_printfln_buffer_used = 0;
-    micros_t scan_printfln_last_flush = 0_usec;
+    micros_t scan_printfln_last_flush = 0_us;
     char scan_common_manufacturer_name[32 + 1];
     char scan_common_model_name[32 + 1];
-    char scan_common_options[16 + 1];
-    char scan_common_version[16 + 1];
     char scan_common_serial_number[32 + 1];
-    uint16_t scan_common_device_address;
 };
 
 #if defined(__GNUC__)

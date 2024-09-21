@@ -18,9 +18,10 @@
  */
 
 #include "model_parser.h"
-#include "module_dependencies.h"
 
 #include <stdlib.h>
+
+#include "module_dependencies.h"
 
 #include "gcc_warnings.h"
 
@@ -91,4 +92,14 @@ bool MetersSunSpecParser::parse_values(const uint16_t *const register_data[2], u
 bool MetersSunSpecParser::must_read_twice()
 {
     return model->read_twice;
+}
+
+uint32_t MetersSunSpecParser::get_model_length()
+{
+    return model->model_length;
+}
+
+uint32_t MetersSunSpecParser::get_interesting_registers_count()
+{
+    return model->interesting_registers_count;
 }

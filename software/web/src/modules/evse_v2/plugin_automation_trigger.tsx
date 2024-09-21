@@ -19,8 +19,8 @@
 
 import { h, ComponentChildren } from "preact";
 import { __ } from "../../ts/translation";
-import { AutomationTriggerID } from "../automation/automation_defs";
-import { AutomationTrigger } from "../automation/types";
+import { AutomationTriggerID } from "../automation/automation_trigger_id.enum";
+import { AutomationTrigger, InitResult } from "../automation/types";
 import { InputSelect } from "../../ts/components/input_select";
 import { FormRow } from "../../ts/components/form_row";
 import * as util from "../../ts/util";
@@ -119,7 +119,7 @@ function new_evse_gp_input_config(): AutomationTrigger {
     ];
 }
 
-export function init() {
+export function init(): InitResult {
     return {
         trigger_components: {
             [AutomationTriggerID.EVSEButton]: {
@@ -128,7 +128,6 @@ export function init() {
                 clone_config: (trigger: AutomationTrigger) => [trigger[0], null] as AutomationTrigger,
                 get_edit_children: get_evse_button_edit_children,
                 get_table_children: get_evse_button_table_children,
-                require_feature: "button_configuration",
             },
             [AutomationTriggerID.EVSEShutdownInput]: {
                 name: __("evse.automation.automation_trigger_shutdown_input"),
@@ -136,7 +135,6 @@ export function init() {
                 clone_config: (trigger: AutomationTrigger) => [trigger[0], {...trigger[1]}] as AutomationTrigger,
                 get_edit_children: get_evse_shutdown_edit_children,
                 get_table_children: get_evse_shutdown_table_children,
-                require_feature: "button_configuration",
             },
             [AutomationTriggerID.EVSEGPInput]: {
                 name: __("evse.automation.automation_trigger_gp_input"),
@@ -144,7 +142,6 @@ export function init() {
                 clone_config: (trigger: AutomationTrigger) => [trigger[0], {...trigger[1]}] as AutomationTrigger,
                 get_edit_children: get_evse_gp_input_edit_children,
                 get_table_children: get_evse_gp_input_table_children,
-                require_feature: "button_configuration",
             },
         },
     };

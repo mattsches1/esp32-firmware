@@ -20,8 +20,8 @@
 import { h, Fragment } from "preact";
 import { useState } from "preact/hooks";
 import { __ } from "../../ts/translation";
-import { AutomationActionID } from "../automation/automation_defs";
-import { AutomationAction } from "../automation/types";
+import { AutomationActionID } from "../automation/automation_action_id.enum";
+import { AutomationAction, InitResult } from "../automation/types";
 import { InputText } from "../../ts/components/input_text";
 import { FormRow } from "../../ts/components/form_row";
 import { Switch } from "../../ts/components/switch";
@@ -49,7 +49,7 @@ function get_mqtt_edit_children(action: MqttAutomationAction, on_action: (action
     const mqtt_config = API.get("mqtt/config");
     const [isInvalid, isInvalidSetter] = useState(false);
 
-    return [<>
+    return [
         <FormRow label={__("mqtt.automation.use_topic_prefix")}>
             <Switch
                 checked={action[1].use_prefix}
@@ -57,13 +57,13 @@ function get_mqtt_edit_children(action: MqttAutomationAction, on_action: (action
                     on_action(util.get_updated_union(action, {use_prefix: !action[1].use_prefix}));
                 }}
                 desc={__("mqtt.automation.use_topic_prefix_muted") + mqtt_config.global_topic_prefix + "/automation_action/"}/>
-        </FormRow>
+        </FormRow>,
         <FormRow label={__("mqtt.automation.send_topic")}>
              <InputText
                 required
                 value={action[1].topic}
                 class={isInvalid ? "is-invalid" : undefined}
-                maxLength={64}
+                maxLength={32}
                 onValue={(v) => {
                     if (v.startsWith(mqtt_config.global_topic_prefix)) {
                         isInvalidSetter(true);
@@ -74,25 +74,25 @@ function get_mqtt_edit_children(action: MqttAutomationAction, on_action: (action
                     on_action(util.get_updated_union(action, {topic: v}));
                 }}
                 invalidFeedback={__("mqtt.automation.use_topic_prefix_invalid")} />
-        </FormRow>
+        </FormRow>,
         <FormRow label={__("mqtt.automation.send_payload")}>
             <InputText
                 required={!action[1].retain}
                 placeholder={!action[1].retain ? "" : __("mqtt.automation.delete_reatianed_message")}
-                maxLength={64}
+                maxLength={32}
                 value={action[1].payload}
                 onValue={(v) => {
                     on_action(util.get_updated_union(action, {payload: v}));
                 }} />
-        </FormRow>
+        </FormRow>,
         <FormRow label={__("mqtt.automation.retain")}>
             <Switch
                 checked={action[1].retain}
                 onClick={() => {
                     on_action(util.get_updated_union(action, {retain: !action[1].retain}));
                 }} />
-        </FormRow>
-    </>]
+        </FormRow>,
+    ];
 }
 
 function new_mqtt_config(): AutomationAction {
@@ -107,7 +107,7 @@ function new_mqtt_config(): AutomationAction {
     ];
 }
 
-export function init() {
+export function init(): InitResult {
     return {
         action_components: {
             [AutomationActionID.MQTT]: {

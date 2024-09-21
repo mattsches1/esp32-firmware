@@ -21,14 +21,14 @@
 
 #include <IPAddress.h>
 #include <stdint.h>
-#include "lwip/ip_addr.h"
+#include <lwip/ip_addr.h>
 
 // Connect attempts are blocking. Use a low timeout that should usually work and just try again if it doesn't.
 #define MODBUSIP_CONNECT_TIMEOUT 500
-
-#include "ModbusTCP.h"
+#include <ModbusTCP.h>
 
 #include "tools.h"
+#include "modbus_register_type.enum.h"
 
 #if defined(__GNUC__)
     #pragma GCC diagnostic push
@@ -47,7 +47,7 @@ class GenericModbusTCPClient
 {
 protected:
     struct read_request {
-        TAddress::RegType register_type;
+        ModbusRegisterType register_type;
         size_t start_address;
         size_t register_count;
         uint16_t *data[2] = { nullptr, nullptr };
@@ -56,13 +56,14 @@ protected:
         std::function<void(void)> done_callback;
     };
 
-    GenericModbusTCPClient(ModbusTCP *mb_) : mb(mb_) {}
+    GenericModbusTCPClient(ModbusTCP *modbus_) : modbus(modbus_) {}
     virtual ~GenericModbusTCPClient() = default;
 
     void start_connection();
+    void stop_connection();
     void start_generic_read();
 
-    ModbusTCP *const mb;
+    ModbusTCP *const modbus;
 
     String host_name;
     IPAddress host_ip = IPAddress(0u);
@@ -78,8 +79,8 @@ private:
     void read_next();
 
     dns_gethostbyname_addrtype_lwip_ctx_async_data host_data;
-    micros_t last_successful_read = 0_usec;
-    micros_t successful_read_timeout = 60000000_usec;
+    micros_t last_successful_read = 0_us;
+    micros_t successful_read_timeout = 1_m;
     uint32_t connect_backoff_ms = 1000;
     int last_connect_errno = 0;
     bool resolve_error_printed = false;

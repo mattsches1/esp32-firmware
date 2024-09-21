@@ -17,18 +17,18 @@
  * Boston, MA 02111-1307, USA.
  */
 
-import $ from "../../ts/jq";
 import * as util from "../../ts/util";
 import * as API from "../../ts/api";
-import { h, render, Fragment, Component } from "preact";
+import { h, Fragment, Component } from "preact";
 import { __ } from "../../ts/translation";
 import { FormRow } from "../../ts/components/form_row";
 import { InputSelect } from "../../ts/components/input_select";
+import { StatusSection } from "../../ts/components/status_section";
 
 export class ChargeLimitsStatus extends Component {
     render() {
         if (!util.render_allowed() || !API.hasFeature("evse"))
-            return <></>;
+            return <StatusSection name="charge_limits" />;
 
         let config_in_use = API.get("charge_limits/active_limits");
         let config = API.get("charge_limits/default_limits");
@@ -145,7 +145,7 @@ export class ChargeLimitsStatus extends Component {
                     energy_items[conf_idx][1] += " " + __("charge_limits.content.overridden");
             }
 
-            energy_row = <FormRow label={__("charge_limits.content.override_energy")} labelColClasses="col-sm-4" contentColClasses="col-lg-8 col-xl-4">
+            energy_row = <FormRow label={__("charge_limits.content.override_energy")}>
                 <InputSelect items={energy_items}
                     placeholder={energy_placeholder}
                     value={""}
@@ -156,8 +156,8 @@ export class ChargeLimitsStatus extends Component {
             </FormRow>
         }
 
-        return <>
-                <FormRow label={__("charge_limits.content.override_duration")} labelColClasses="col-sm-4" contentColClasses="col-lg-8 col-xl-4">
+        return <StatusSection name="charge_limits">
+                <FormRow label={__("charge_limits.content.override_duration")}>
                     <InputSelect items={duration_items}
                         placeholder={duration_placeholder}
                         value={""}
@@ -167,17 +167,9 @@ export class ChargeLimitsStatus extends Component {
                     }}/>
                 </FormRow>
                 {energy_row}
-            </>;
+            </StatusSection>;
     }
 }
 
-render(<ChargeLimitsStatus />, $("#charge_limits_override")[0]);
-
 export function init() {
-}
-
-export function add_event_listeners() {
-}
-
-export function update_sidebar_state(module_init: any) {
 }

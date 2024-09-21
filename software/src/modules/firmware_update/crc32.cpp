@@ -20,9 +20,6 @@
  */
 
 #include "crc32.h"
-#include "event_log.h"
-
-//#include "configs/config.h"
 
 typedef unsigned int word_t;
 

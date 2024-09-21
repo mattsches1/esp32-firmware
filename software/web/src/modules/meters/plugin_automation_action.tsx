@@ -19,8 +19,8 @@
 
 import { h } from "preact";
 import { __ } from "../../ts/translation";
-import { AutomationAction } from "../automation/types";
-import { AutomationActionID } from "../automation/automation_defs";
+import { AutomationAction, InitResult } from "../automation/types";
+import { AutomationActionID } from "../automation/automation_action_id.enum";
 import { ComponentChildren } from "preact";
 import { FormRow } from "../../ts/components/form_row";
 import { METERS_SLOTS } from "../../build";
@@ -59,7 +59,7 @@ function get_meter_reset_edit_children(action: MeterAutomationAction, on_action:
                     on_action([AutomationActionID.MeterReset, {...action[1], meter_slot: parseInt(v)}]);
                 }}
                 value={action[1].meter_slot.toString()}/>
-        </FormRow>
+        </FormRow>,
     ];
 }
 
@@ -72,7 +72,7 @@ function new_meter_reset_config(): AutomationAction {
     ];
 }
 
-export function init() {
+export function init(): InitResult {
     return {
         action_components: {
             [AutomationActionID.MeterReset]: {

@@ -18,23 +18,27 @@
  */
 
 #include "evse_v2.h"
+
+#include "event_log_prefix.h"
 #include "module_dependencies.h"
-
 #include "bindings/errors.h"
-
-#include "api.h"
-#include "event_log.h"
-#include "task_scheduler.h"
+#include "build.h"
 #include "tools.h"
-#include "web_server.h"
+#include "string_builder.h"
+#include "evse_v2_bricklet_firmware_bin.embedded.h"
 
 extern EVSEV2 evse_v2;
 
-extern bool firmware_update_allowed;
-
 extern void evse_v2_button_recovery_handler();
 
-EVSEV2::EVSEV2() : DeviceModule("evse", "EVSE 2.0", "EVSE", [](){evse_common.setup_evse();}) {}
+static void energy_meter_values_callback(struct TF_EVSEV2 * evse_v2, float power, float current[3], bool phases_active[3], bool phases_connected[3], void *user_data);
+
+EVSEV2::EVSEV2() : DeviceModule(evse_v2_bricklet_firmware_bin_data,
+                                evse_v2_bricklet_firmware_bin_length,
+                                "evse",
+                                "EVSE 2.0",
+                                "EVSE",
+                                [](){evse_common.setup_evse();}) {}
 
 void EVSEV2::pre_init()
 {
@@ -107,14 +111,13 @@ void EVSEV2::pre_setup()
         {"temperature", Config::Int16(0)},
         {"phases_current", Config::Uint16(0)},
         {"phases_requested", Config::Uint16(0)},
-        {"phases_status", Config::Uint16(0)},
+        {"phases_state", Config::Uint16(0)},
+        {"phases_info", Config::Uint16(0)},
         {"dc_fault_pins", Config::Uint8(0)},
         {"dc_fault_sensor_type", Config::Uint8(0)}
     });
 
-
     // Actions
-
     reset_dc_fault_current_state = Config::Object({
         {"password", Config::Uint32(0)} // 0xDC42FA23
     });
@@ -138,6 +141,16 @@ void EVSEV2::pre_setup()
     });
     ev_wakeup_update = ev_wakeup;
 
+    phase_auto_switch = Config::Object({
+        {"enabled", Config::Bool(false)}
+    });
+    phase_auto_switch_update = phase_auto_switch;
+
+    phases_connected = Config::Object({
+        {"phases", Config::Uint8(0)}
+    });
+    phases_connected_update = phases_connected;
+
     control_pilot_disconnect = Config::Object({
         {"disconnect", Config::Bool(false)}
     });
@@ -151,6 +164,7 @@ void EVSEV2::pre_setup()
     gp_output_update = gp_output;
 
 #if MODULE_AUTOMATION_AVAILABLE()
+    // Create a temporary config that allocates a schema.
     auto automation_cfg = Config::Object({
         {"closed", Config::Bool(true)}
     });
@@ -161,12 +175,13 @@ void EVSEV2::pre_setup()
     );
 
     automation.register_trigger(
-        AutomationTriggerID::EVSEGPInput,
+        AutomationTriggerID::EVSEShutdownInput,
         automation_cfg
     );
 
+#if BUILD_IS_WARP2()
     automation.register_trigger(
-        AutomationTriggerID::EVSEShutdownInput,
+        AutomationTriggerID::EVSEGPInput,
         automation_cfg
     );
 
@@ -178,20 +193,9 @@ void EVSEV2::pre_setup()
         }
     );
 #endif
-}
 
-#if MODULE_AUTOMATION_AVAILABLE()
-static bool trigger_action(Config *cfg, void *data)
-{
-    return evse_v2.action_triggered(cfg, data);
-}
-
-enum class InputState {
-    Unknown,
-    Open,
-    Closed
-};
 #endif
+}
 
 void EVSEV2::post_setup()
 {
@@ -251,16 +255,6 @@ void EVSEV2::post_register_urls()
         }
     }, true);
 
-#if MODULE_DEBUG_AVAILABLE()
-    api.addCommand("evse/debug_switch_to_one_phase", Config::Null(), {}, [this]() {
-        is_in_bootloader(tf_evse_v2_set_phase_control(&device, 1));
-    }, true);
-
-    api.addCommand("evse/debug_switch_to_three_phases", Config::Null(), {}, [this]() {
-        is_in_bootloader(tf_evse_v2_set_phase_control(&device, 3));
-    }, true);
-#endif
-
     // Configurations. Note that those are _not_ configs in the api.addPersistentConfig sense:
     // The configs are stored on the EVSE itself, not the ESP's flash.
     // All _update APIs that write the EVSEs flash without checking first if this was a change
@@ -283,10 +277,21 @@ void EVSEV2::post_register_urls()
         is_in_bootloader(tf_evse_v2_set_ev_wakeup(&device, ev_wakeup_update.get("enabled")->asBool()));
     }, true);
 
+    api.addState("evse/phase_auto_switch", &phase_auto_switch);
+    api.addCommand("evse/phase_auto_switch_update", &phase_auto_switch_update, {}, [this](){
+        is_in_bootloader(tf_evse_v2_set_phase_auto_switch(&device, phase_auto_switch_update.get("enabled")->asBool()));
+    }, true);
+
+
+    api.addState("evse/phases_connected", &phases_connected);
+    api.addCommand("evse/phases_connected_update", &phases_connected_update, {}, [this](){
+        is_in_bootloader(tf_evse_v2_set_phases_connected(&device, phases_connected_update.get("phases")->asUint()));
+    }, true);
+
     api.addState("evse/control_pilot_disconnect", &control_pilot_disconnect);
     api.addCommand("evse/control_pilot_disconnect_update", &control_pilot_disconnect_update, {}, [this](){
         if (evse_common.management_enabled.get("enabled")->asBool()) { // Disallow updating control pilot configuration if management is enabled because the charge manager will override the CP config every second.
-            logger.printfln("evse: Control pilot cannot be (dis)connected by API while charge management is enabled.");
+            logger.printfln("Control pilot cannot be (dis)connected by API while charge management is enabled.");
             return;
         }
         is_in_bootloader(tf_evse_v2_set_control_pilot_disconnect(&device, control_pilot_disconnect_update.get("disconnect")->asBool(), nullptr));
@@ -296,6 +301,12 @@ void EVSEV2::post_register_urls()
     api.addCommand("evse/gp_output_update", &gp_output_update, {}, [this](){
         is_in_bootloader(tf_evse_v2_set_gp_output(&device, gp_output_update.get("gp_output")->asUint()));
     }, true);
+}
+
+void EVSEV2::register_events()
+{
+    // Register callback in the events stage so that it doesn't keep firing during the setup stage.
+    tf_evse_v2_register_energy_meter_values_callback(&device, energy_meter_values_callback, this);
 }
 
 void EVSEV2::factory_reset()
@@ -368,116 +379,178 @@ int EVSEV2::set_charging_slot_default(uint8_t slot, uint16_t current, bool enabl
     return tf_evse_v2_set_charging_slot_default(&device, slot, current, enabled, clear_on_disconnect);
 }
 
-String EVSEV2::get_evse_debug_header()
+static const char *debug_header_prefix =
+    "STATE,"
+    "iec61851_state,"
+    "charger_state,"
+    "contactor_state,"
+    "contactor_error,"
+    "allowed_charging_current,"
+    "error_state,"
+    "lock_state,"
+    "dc_fault_current_state,"
+    "HARDWARE_CONFIG,"
+    "jumper_configuration,"
+    "has_lock_switch,"
+    "evse_version,"
+    "energy_meter_type,"
+    "ENERGY_METER,"
+    "power,"
+    "current_0,"
+    "current_1,"
+    "current_2,"
+    "phase_0_active,"
+    "phase_1_active,"
+    "phase_2_active,"
+    "phase_0_connected,"
+    "phase_1_connected,"
+    "phase_2_connected,"
+    "ENERGY_METER_ERRORS,"
+    "local_timeout,"
+    "global_timeout,"
+    "illegal_function,"
+    "illegal_data_access,"
+    "illegal_data_value,"
+    "slave_device_failure,"
+    "LL_STATE,"
+    "led_state,"
+    "cp_pwm_duty_cycle,"
+    "charging_time,"
+    "time_since_state_change,"
+    "uptime,"
+    "ADC_VALUES,"
+    "adc_cp_pe_before_pwm_high,"
+    "adc_cp_pe_after_pwm_high,"
+    "adc_cp_pe_before_pwm_low,"
+    "adc_cp_pe_after_pwm_low,"
+    "adc_pp_pe,"
+    "adc_plus_12v,"
+    "adc_minus_12v,"
+    "VOLTAGES,"
+    "voltage_cp_pe_before_pwm_high,"
+    "voltage_cp_pe_after_pwm_high,"
+    "voltage_cp_pe_before_pwm_low,"
+    "voltage_cp_pe_after_pwm_low,"
+    "voltage_pp_pe,"
+    "voltage_plus_12v,"
+    "voltage_minus_12v,"
+    "RESISTANCES,"
+    "resistance_cp_pe,"
+    "resistance_pp_pe,";
+
+static const char *debug_header_infix_v2 =
+    "GPIOS,"
+    "gpio_config_jumper_0,"
+    "gpio_motor_fault,"
+    "gpio_dc_error,"
+    "gpio_config_jumper_1,"
+    "gpio_dc_test,"
+    "gpio_gp_shutdown,"
+    "gpio_button,"
+    "gpio_cp_pwm,"
+    "gpio_motor_input_switch,"
+    "gpio_contactor,"
+    "gpio_gp_output,"
+    "gpio_cp_disconnect,"
+    "gpio_motor_active,"
+    "gpio_motor_phase,"
+    "gpio_contactor_check_before,"
+    "gpio_contactor_check_after,"
+    "gpio_gp_input,"
+    "gpio_dc_x6,"
+    "gpio_dc_x30,"
+    "gpio_led,"
+    "gpio_20,"
+    "gpio_21,"
+    "gpio_22,"
+    "gpio_23,";
+
+static const char *debug_header_infix_v3 =
+    "GPIOS,"
+    "gpio_dc_x30,"
+    "gpio_dc_x6,"
+    "gpio_dc_error,"
+    "gpio_dc_test,"
+    "gpio_led_status,"
+    "gpio_button,"
+    "gpio_led_red,"
+    "gpio_led_blue,"
+    "gpio_led_green,"
+    "gpio_cp_pwm,"
+    "gpio_contactor_1,"
+    "gpio_contactor_0,"
+    "gpio_contactor_1_feedback,"
+    "gpio_contactor_0_feedback,"
+    "gpio_pe_check,"
+    "gpio_config_jumper_1,"
+    "gpio_cp_disconnect,"
+    "gpio_config_jumper_0,"
+    "gpio_gp_shutdown,"
+    "gpio_version_detect,"
+    "gpio_20,"
+    "gpio_21,"
+    "gpio_22,"
+    "gpio_23,";
+
+static const char *debug_header_suffix =
+    "SLOTS,"
+    "slot_incoming_cable,"
+    "slot_outgoing_cable,"
+    "slot_shutdown_input,"
+    "slot_gp_input,"
+    "slot_autostart_button,"
+    "slot_global,"
+    "slot_user,"
+    "slot_charge_manager,"
+    "slot_external,"
+    "slot_modbus_tcp,"
+    "slot_modbus_tcp_enable,"
+    "slot_ocpp,"
+    "slot_charge_limits,"
+    "slot_require_meter,"
+    "slot_automation,"
+    "slot_15,"
+    "slot_16,"
+    "slot_17,"
+    "slot_18,"
+    "slot_19";
+
+static const size_t debug_header_prefix_len = strlen(debug_header_prefix);
+static const size_t debug_header_infix_v2_len = strlen(debug_header_infix_v2);
+static const size_t debug_header_infix_v3_len = strlen(debug_header_infix_v3);
+static const size_t debug_header_suffix_len = strlen(debug_header_suffix);
+
+[[gnu::const]]
+size_t EVSEV2::get_debug_header_length() const
 {
-    return "\"millis,"
-           "STATE,"
-           "iec61851_state,"
-           "charger_state,"
-           "contactor_state,"
-           "contactor_error,"
-           "allowed_charging_current,"
-           "error_state,"
-           "lock_state,"
-           "dc_fault_current_state,"
-           "HARDWARE CONFIG,"
-           "jumper_configuration,"
-           "has_lock_switch,"
-           "evse_version,"
-           "energy_meter_type,"
-           "ENERGY METER,"
-           "power,"
-           "current_0,"
-           "current_1,"
-           "current_2,"
-           "phase_0_active,"
-           "phase_1_active,"
-           "phase_2_active,"
-           "phase_0_connected,"
-           "phase_1_connected,"
-           "phase_2_connected,"
-           "ENERGY METER ERRORS,"
-           "local_timeout,"
-           "global_timeout,"
-           "illegal_function,"
-           "illegal_data_access,"
-           "illegal_data_value,"
-           "slave_device_failure,"
-           "LL-State,"
-           "led_state,"
-           "cp_pwm_duty_cycle,"
-           "charging_time,"
-           "time_since_state_change,"
-           "uptime,"
-           "ADC VALUES,"
-           "CP/PE before (PWM high),"
-           "CP/PE after (PWM high),"
-           "CP/PE before (PWM low),"
-           "CP/PE after (PWM low),"
-           "PP/PE,"
-           "+12V,"
-           "-12V,"
-           "VOLTAGES,"
-           "CP/PE before (PWM high),"
-           "CP/PE after (PWM high),"
-           "CP/PE before (PWM low),"
-           "CP/PE after (PWM low),"
-           "PP/PE,"
-           "+12V,"
-           "-12V,"
-           "RESISTANCES,"
-           "CP/PE,"
-           "PP/PE,"
-           "GPIOs,"
-           "Config Jumper 0 (0),"
-           "Motor Fault (1),"
-           "DC Error (2),"
-           "Config Jumper 1 (3),"
-           "DC Test (4),"
-           "Enable (5),"
-           "Switch (6),"
-           "CP PWM (7),"
-           "Input Motor Switch (8),"
-           "Relay (Contactor) (9),"
-           "GP Output (10),"
-           "CP Disconnect (11),"
-           "Motor Enable (12),"
-           "Motor Phase (13),"
-           "AC 1 (14),"
-           "AC 2 (15),"
-           "GP Input (16),"
-           "DC X6 (17),"
-           "DC X30 (18),"
-           "LED (19),"
-           "unused (20),"
-           "unused (21),"
-           "unused (22),"
-           "unused (23),"
-           "SLOTS,"
-           "incoming_cable,"
-           "outgoing_cable,"
-           "shutdown_input,"
-           "gp_input,"
-           "autostart_button,"
-           "global,"
-           "user,"
-           "charge_manager,"
-           "external,"
-           "modbus_tcp,"
-           "modbus_tcp_enable,"
-           "ocpp,"
-           "charge_limits,"
-           "require_meter,"
-           "unused (14),"
-           "unused (15),"
-           "unused (16),"
-           "unused (17),"
-           "unused (18),"
-           "unused (19)"
-           "\"";
+    return debug_header_prefix_len +
+           (evse_common.get_evse_version() >= 30
+            ? debug_header_infix_v3_len
+            : debug_header_infix_v2_len) +
+           debug_header_suffix_len;
 }
 
-String EVSEV2::get_evse_debug_line()
+void EVSEV2::get_debug_header(StringBuilder *sb)
+{
+    sb->puts(debug_header_prefix, debug_header_prefix_len);
+
+    if (evse_common.get_evse_version() >= 30) {
+        sb->puts(debug_header_infix_v3, debug_header_infix_v3_len);
+    }
+    else {
+        sb->puts(debug_header_infix_v2, debug_header_infix_v2_len);
+    }
+
+    sb->puts(debug_header_suffix, debug_header_suffix_len);
+}
+
+[[gnu::const]]
+size_t EVSEV2::get_debug_line_length() const
+{
+    return 768; // FIXME: currently max ~510, make tighter estimate
+}
+
+void EVSEV2::get_debug_line(StringBuilder *sb)
 {
     uint8_t iec61851_state;
     uint8_t charger_state;
@@ -497,7 +570,7 @@ String EVSEV2::get_evse_debug_line()
     bool phases_connected[3];
     uint32_t error_count[6];
 
-    // get_low_level_state - 61 byte
+    // get_low_level_state
     uint8_t led_state;
     uint16_t cp_pwm_duty_cycle;
     uint16_t adc_values[7];
@@ -509,7 +582,7 @@ String EVSEV2::get_evse_debug_line()
     uint32_t time_since_dc_fault_check;
     uint32_t uptime;
 
-    // get_all_charging_slots - 60 byte
+    // get_all_charging_slots
     uint16_t max_current[20];
     uint8_t active_and_clear_on_disconnect[20];
 
@@ -535,7 +608,8 @@ String EVSEV2::get_evse_debug_line()
     if (rc != TF_E_OK) {
         logger.printfln("get_all_data_1 %d", rc);
         is_in_bootloader(rc);
-        return "\"get_all_data_1 failed\"";
+        sb->puts("get_all_data_1 failed");
+        return;
     }
 
     rc = tf_evse_v2_get_low_level_state(&device,
@@ -553,22 +627,20 @@ String EVSEV2::get_evse_debug_line()
     if (rc != TF_E_OK) {
         logger.printfln("get_low_level_state %d", rc);
         is_in_bootloader(rc);
-        return "\"get_low_level_state failed\"";
+        sb->puts("get_low_level_state failed");
+        return;
     }
 
     rc = tf_evse_v2_get_all_charging_slots(&device, max_current, active_and_clear_on_disconnect);
 
     if (rc != TF_E_OK) {
-        logger.printfln("slots %d", rc);
+        logger.printfln("get_all_charging_slots %d", rc);
         is_in_bootloader(rc);
-        return "\"get_all_charging_slots failed\"";
+        sb->puts("get_all_charging_slots failed");
+        return;
     }
 
-    // Currently max ~ 510
-    char line[768] = {0};
-    snprintf(line,
-             sizeof(line) / sizeof(line[0]),
-             "\"%lu,,"
+    sb->printf(","
              "%u,%u,%u,%u,%u,%u,%u,%u,,"
              "%u,%c,%u,%u,,"
              "%.3f,%.3f,%.3f,%.3f,%c,%c,%c,%c,%c,%c,,"
@@ -578,8 +650,7 @@ String EVSEV2::get_evse_debug_line()
              "%d,%d,%d,%d,%d,%d,%d,,"
              "%u,%u,,"
              "%c,%c,%c,%c,%c,%c,%c,%c,%c,%c,%c,%c,%c,%c,%c,%c,%c,%c,%c,%c,%c,%c,%c,%c,,"
-             "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\"",
-             millis(),
+             "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u",
              iec61851_state,
              charger_state,
              contactor_state,
@@ -682,7 +753,67 @@ String EVSEV2::get_evse_debug_line()
              SLOT_ACTIVE(active_and_clear_on_disconnect[17]) ? max_current[17] : 32000,
              SLOT_ACTIVE(active_and_clear_on_disconnect[18]) ? max_current[18] : 32000,
              SLOT_ACTIVE(active_and_clear_on_disconnect[19]) ? max_current[19] : 32000);
-    return String(line);
+}
+
+bool EVSEV2::phase_switching_capable()
+{
+    return evse_common.get_evse_version() >= 30 && evse_v2.phases_connected.get("phases")->asUint() > 1;
+}
+
+bool EVSEV2::can_switch_phases_now(bool wants_3phase)
+{
+    if (wants_3phase) {
+        uint32_t phases_info = evse_common.low_level_state.get("phases_info")->asUint();
+        if (phases_info & EVSEV2_PHASES_INFO_1P_CAR_MASK) {
+            // Car wants to charge single-phase, don't allow switching to three phases.
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool EVSEV2::get_is_3phase()
+{
+    return evse_common.low_level_state.get("phases_current")->asUint() == 3;
+}
+
+PhaseSwitcherBackend::SwitchingState EVSEV2::get_phase_switching_state()
+{
+    if (evse_common.state.get("error_state")->asUint() != 0) {
+        return PhaseSwitcherBackend::SwitchingState::Error;
+    }
+
+    uint32_t state = evse_common.low_level_state.get("phases_state")->asUint();
+    if (state != 0) {
+        return PhaseSwitcherBackend::SwitchingState::Busy;
+    }
+
+    return PhaseSwitcherBackend::SwitchingState::Ready;
+}
+
+bool EVSEV2::switch_phases_3phase(bool wants_3phase)
+{
+    if (!can_switch_phases_now(wants_3phase)) {
+        logger.printfln("Requested phase switch but can't switch at the moment.");
+        return false;
+    }
+
+    uint8_t phases_wanted = wants_3phase ? 3 : 1;
+
+    int err = tf_evse_v2_set_phase_control(&device, phases_wanted);
+    if (err == TF_E_OK) {
+        return true;
+    }
+
+    logger.printfln("switch_phases_3phase failed: %s (%i)", tf_hal_strerror(err), err);
+
+    return false;
+}
+
+bool EVSEV2::is_external_control_allowed()
+{
+    return !evse_common.management_enabled.get("enabled")->asBool();
 }
 
 void EVSEV2::update_all_data()
@@ -690,7 +821,7 @@ void EVSEV2::update_all_data()
     if (!initialized)
         return;
 
-    // get_all_data_1 - 51 byte
+    // get_all_data_1
     uint8_t iec61851_state;
     uint8_t charger_state;
     uint8_t contactor_state;
@@ -702,9 +833,9 @@ void EVSEV2::update_all_data()
     uint8_t jumper_configuration;
     bool has_lock_switch;
     uint8_t evse_version;
-    struct meter_data meter_data;
+    EVSEV2MeterData meter_data;
 
-    // get_all_data_2 - 26 byte
+    // get_all_data_2
     uint8_t shutdown_input_configuration;
     uint8_t input_configuration;
     uint8_t output_configuration;
@@ -723,9 +854,12 @@ void EVSEV2::update_all_data()
     int16_t temperature;
     uint8_t phases_current;
     uint8_t phases_requested;
-    uint8_t phases_status;
+    uint8_t phases_state;
+    uint8_t phases_info;
+    bool phase_auto_switch_enabled;
+    uint8_t phases_connected_;
 
-    // get_low_level_state - 61 byte
+    // get_low_level_state
     uint8_t led_state;
     uint16_t cp_pwm_duty_cycle;
     uint16_t adc_values[7];
@@ -737,7 +871,7 @@ void EVSEV2::update_all_data()
     uint32_t time_since_dc_fault_check;
     uint32_t uptime;
 
-    // get_all_charging_slots - 60 byte
+    // get_all_charging_slots
     uint16_t max_current[20];
     uint8_t active_and_clear_on_disconnect[20];
 
@@ -785,7 +919,10 @@ void EVSEV2::update_all_data()
                                    &temperature,
                                    &phases_current,
                                    &phases_requested,
-                                   &phases_status);
+                                   &phases_state,
+                                   &phases_info,
+                                   &phase_auto_switch_enabled,
+                                   &phases_connected_);
 
     if (rc != TF_E_OK) {
         logger.printfln("all_data_2 %d", rc);
@@ -843,7 +980,9 @@ void EVSEV2::update_all_data()
     // then the EVSE could potentially start to charge, which is okay,
     // as the ESP firmware is already running, so we can for example
     // track the charge.
-    firmware_update_allowed = charger_state == 0 || charger_state == 4;
+#if MODULE_FIRMWARE_UPDATE_AVAILABLE()
+    firmware_update.vehicle_connected = charger_state != 0 && charger_state != 4;
+#endif
 
     // get_state
 
@@ -865,29 +1004,29 @@ void EVSEV2::update_all_data()
 
     if (contactor_error_changed) {
         if (contactor_error != 0) {
-            logger.printfln("EVSE: Contactor error %u PE error %u", contactor_error >> 1, contactor_error & 1);
+            logger.printfln("Contactor error %u PE error %u", contactor_error >> 1, contactor_error & 1);
         } else {
-            logger.printfln("EVSE: Contactor/PE error cleared");
+            logger.printfln("Contactor/PE error cleared");
         }
     }
 
     if (error_state_changed) {
         if (error_state != 0) {
-            logger.printfln("EVSE: Error state %d", error_state);
+            logger.printfln("Error state %d", error_state);
         } else {
-            logger.printfln("EVSE: Error state cleared");
+            logger.printfln("Error state cleared");
         }
     }
 
     if (dc_fault_current_state_changed) {
         if (dc_fault_current_state != 0) {
-            logger.printfln("EVSE: DC Fault current state %u (%s %u; sensor type %u)",
-                                dc_fault_current_state,
-                                dc_fault_current_state == 4 ? "calibration error code" : "pins",
-                                dc_fault_pins,
-                                dc_sensor_type);
+            logger.printfln("DC Fault current state %u (%s %u; sensor type %u)",
+                            dc_fault_current_state,
+                            dc_fault_current_state == 4 ? "calibration error code" : "pins",
+                            dc_fault_pins,
+                            dc_sensor_type);
         } else {
-            logger.printfln("EVSE: DC Fault current state cleared");
+            logger.printfln("DC Fault current state cleared");
         }
     }
 
@@ -895,46 +1034,63 @@ void EVSEV2::update_all_data()
     evse_common.hardware_configuration.get("jumper_configuration")->updateUint(jumper_configuration);
     evse_common.hardware_configuration.get("has_lock_switch")->updateBool(has_lock_switch);
     evse_common.hardware_configuration.get("evse_version")->updateUint(evse_version);
+
     evse_common.hardware_configuration.get("energy_meter_type")->updateUint(meter_data.meter_type);
 
     // get_low_level_state
     evse_common.low_level_state.get("led_state")->updateUint(led_state);
     evse_common.low_level_state.get("cp_pwm_duty_cycle")->updateUint(cp_pwm_duty_cycle);
 
-    for (int i = 0; i < sizeof(adc_values) / sizeof(adc_values[0]); ++i)
+    for (int i = 0; i < ARRAY_SIZE(adc_values); ++i)
         evse_common.low_level_state.get("adc_values")->get(i)->updateUint(adc_values[i]);
 
-    for (int i = 0; i < sizeof(voltages) / sizeof(voltages[0]); ++i)
+    for (int i = 0; i < ARRAY_SIZE(voltages); ++i)
         evse_common.low_level_state.get("voltages")->get(i)->updateInt(voltages[i]);
 
-    for (int i = 0; i < sizeof(resistances) / sizeof(resistances[0]); ++i)
+    for (int i = 0; i < ARRAY_SIZE(resistances); ++i)
         evse_common.low_level_state.get("resistances")->get(i)->updateUint(resistances[i]);
 
-    for (int i = 0; i < sizeof(gpio) / sizeof(gpio[0]); ++i)
+    for (int i = 0; i < ARRAY_SIZE(gpio); ++i)
         evse_common.low_level_state.get("gpio")->get(i)->updateBool(gpio[i]);
 
 #if MODULE_AUTOMATION_AVAILABLE()
-    static InputState last_shutdown_input_state = InputState::Unknown;
+    enum class InputState {
+        Unknown,
+        Open,
+        Closed
+    };
 
-    InputState shutdown_input_state = gpio[5] ? InputState::Closed : InputState::Open;
+    static InputState last_shutdown_input_state = InputState::Unknown;
+#if BUILD_IS_WARP2()
+    bool gpio_enable = gpio[5];
+#elif BUILD_IS_WARP3()
+    bool gpio_enable = gpio[18];
+#else
+    #error "GPIO layout is unknown"
+#endif
+
+    InputState shutdown_input_state = gpio_enable ? InputState::Closed : InputState::Open;
     if (last_shutdown_input_state != shutdown_input_state) {
         // We need to schedule this since the first call of update_all_data happens before automation is initialized.
-        task_scheduler.scheduleOnce([this, gpio]() {
-            automation.trigger_action(AutomationTriggerID::EVSEShutdownInput, (void *)&gpio[5], &trigger_action);
+        task_scheduler.scheduleOnce([this, gpio_enable]() {
+            automation.trigger(AutomationTriggerID::EVSEShutdownInput, (void *)&gpio_enable, this);
         }, 0);
         last_shutdown_input_state = shutdown_input_state;
     }
 
+#if BUILD_IS_WARP2()
     static InputState last_input_state = InputState::Unknown;
 
     InputState input_state = gpio[16] ? InputState::Closed : InputState::Open;
     if (last_input_state != input_state) {
         // We need to schedule this since the first call of update_all_data happens before automation is initialized.
         task_scheduler.scheduleOnce([this, gpio]() {
-            automation.trigger_action(AutomationTriggerID::EVSEGPInput, (void *)&gpio[16], &trigger_action);
+            automation.trigger(AutomationTriggerID::EVSEGPInput, (void *)&gpio[16], this);
         }, 0);
         last_input_state = input_state;
     }
+#endif
+
 #endif
 
     evse_common.low_level_state.get("charging_time")->updateUint(charging_time);
@@ -961,7 +1117,7 @@ void EVSEV2::update_all_data()
 
 #if MODULE_AUTOMATION_AVAILABLE()
     if (button_pressed && !evse_common.button_state.get("button_pressed")->asBool())
-        automation.trigger_action(AutomationTriggerID::EVSEButton, nullptr, &trigger_action);
+        automation.trigger(AutomationTriggerID::EVSEButton, nullptr, this);
 #endif
 
     // get_button_state
@@ -970,6 +1126,8 @@ void EVSEV2::update_all_data()
     evse_common.button_state.get("button_pressed")->updateBool(button_pressed);
 
     ev_wakeup.get("enabled")->updateBool(ev_wakeup_enabled);
+    phase_auto_switch.get("enabled")->updateBool(phase_auto_switch_enabled);
+    phases_connected.get("phases")->updateUint(phases_connected_);
     evse_common.boost_mode.get("enabled")->updateBool(boost_mode_enabled);
 
     control_pilot_disconnect.get("disconnect")->updateBool(cp_disconnect);
@@ -990,7 +1148,12 @@ void EVSEV2::update_all_data()
     evse_common.modbus_enabled.get("enabled")->updateBool(SLOT_ACTIVE(active_and_clear_on_disconnect[CHARGING_SLOT_MODBUS_TCP]));
     evse_common.ocpp_enabled.get("enabled")->updateBool(SLOT_ACTIVE(active_and_clear_on_disconnect[CHARGING_SLOT_OCPP]));
 
-    evse_common.external_enabled.get("enabled")->updateBool(SLOT_ACTIVE(active_and_clear_on_disconnect[CHARGING_SLOT_EXTERNAL]));
+    if (evse_common.external_enabled.get("enabled")->updateBool(SLOT_ACTIVE(active_and_clear_on_disconnect[CHARGING_SLOT_EXTERNAL]))) {
+#if MODULE_AUTOMATION_AVAILABLE()
+        automation.set_enabled(AutomationTriggerID::EVSEExternalCurrentWd, evse_common.external_enabled.get("enabled")->asBool());
+#endif
+    }
+
     evse_common.external_clear_on_disconnect.get("clear_on_disconnect")->updateBool(SLOT_CLEAR_ON_DISCONNECT(active_and_clear_on_disconnect[CHARGING_SLOT_EXTERNAL]));
 
     evse_common.global_current.get("current")->updateUint(max_current[CHARGING_SLOT_GLOBAL]);
@@ -1008,7 +1171,8 @@ void EVSEV2::update_all_data()
     evse_common.low_level_state.get("temperature")->updateInt(temperature);
     evse_common.low_level_state.get("phases_current")->updateUint(phases_current);
     evse_common.low_level_state.get("phases_requested")->updateUint(phases_requested);
-    evse_common.low_level_state.get("phases_status")->updateUint(phases_status);
+    evse_common.low_level_state.get("phases_state")->updateUint(phases_state);
+    evse_common.low_level_state.get("phases_info")->updateUint(phases_info);
 
 #if MODULE_WATCHDOG_AVAILABLE()
     static size_t watchdog_handle = watchdog.add("evse_v2_all_data", "EVSE not reachable");
@@ -1038,16 +1202,27 @@ uint8_t EVSEV2::get_energy_meter_type()
     return evse_common.hardware_configuration.get("energy_meter_type")->asUint();
 }
 
-#if MODULE_AUTOMATION_AVAILABLE()
-bool EVSEV2::action_triggered(Config *config, void *data)
+static void energy_meter_values_callback(struct TF_EVSEV2 * /*evse_v2*/, float power, float current[3], bool phases_active[3], bool phases_connected[3], void *user_data)
 {
-    auto cfg = config->get();
-    switch (config->getTag<AutomationTriggerID>())
+    //EVSEV2 *_this = static_cast<EVSEV2 *>(user_data);
+
+#if MODULE_METERS_EVSE_V2_AVAILABLE()
+    meters_evse_v2.energy_meter_values_callback(power, current);
+#endif
+}
+
+#if MODULE_AUTOMATION_AVAILABLE()
+bool EVSEV2::has_triggered(const Config *conf, void *data)
+{
+    const Config *cfg = static_cast<const Config *>(conf->get());
+    switch (conf->getTag<AutomationTriggerID>())
     {
     case AutomationTriggerID::EVSEButton:
         return true;
 
+#if BUILD_IS_WARP2()
     case AutomationTriggerID::EVSEGPInput:
+#endif
     case AutomationTriggerID::EVSEShutdownInput:
         return *static_cast<bool *>(data) != cfg->get("closed")->asBool();
     default:

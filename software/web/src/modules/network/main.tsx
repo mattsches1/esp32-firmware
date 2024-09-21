@@ -17,10 +17,9 @@
  * Boston, MA 02111-1307, USA.
  */
 
-import $ from "../../ts/jq";
 import * as util from "../../ts/util";
 import * as API from "../../ts/api";
-import { h, render, Fragment } from "preact";
+import { h, Fragment } from "preact";
 import { __ } from "../../ts/translation";
 import { Switch } from "../../ts/components/switch";
 import { ConfigComponent } from "../../ts/components/config_component";
@@ -29,6 +28,12 @@ import { FormRow } from "../../ts/components/form_row";
 import { InputText } from "../../ts/components/input_text";
 import { InputNumber } from "../../ts/components/input_number";
 import { SubPage } from "../../ts/components/sub_page";
+import { NavbarItem } from "../../ts/components/navbar_item";
+import { Settings } from "react-feather";
+
+export function NetworkNavbar() {
+    return <NavbarItem name="network" module="network" title={__("network.navbar.network")} symbol={<Settings />} />;
+}
 
 type NetworkConfig = API.getType["network/config"];
 
@@ -41,10 +46,10 @@ export class Network extends ConfigComponent<'network/config'> {
 
     render(props: {}, state: Readonly<NetworkConfig>) {
         if (!util.render_allowed())
-            return <></>
+            return <SubPage name="network" />;
 
         return (
-            <SubPage>
+            <SubPage name="network">
                 <ConfigForm id="network_config_form"
                             title={__("network.content.network")}
                             isModified={this.isModified()}
@@ -81,14 +86,5 @@ export class Network extends ConfigComponent<'network/config'> {
     }
 }
 
-render(<Network />, $("#network")[0]);
-
 export function init() {
-}
-
-export function add_event_listeners(source: API.APIEventTarget) {
-}
-
-export function update_sidebar_state(module_init: any) {
-    $("#sidebar-network").prop("hidden", !module_init.network);
 }

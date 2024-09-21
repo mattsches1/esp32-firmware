@@ -20,7 +20,7 @@
 import { h, ComponentChildren } from "preact";
 import { __, translate_unchecked } from "../../ts/translation";
 import * as util from "../../ts/util";
-import { MeterClassID } from "../meters/meters_defs";
+import { MeterClassID } from "../meters/meter_class_id.enum";
 import { MeterConfig } from "../meters/types";
 import { InputText } from "../../ts/components/input_text";
 import { FormRow } from "../../ts/components/form_row";
@@ -61,7 +61,7 @@ export function init() {
                         <InputText class="form-control-sm"
                                 value={meter_type_string}/>
                     </div></div>
-                </FormRow>
+                </FormRow>;
             },
         },
     };

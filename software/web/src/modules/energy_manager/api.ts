@@ -1,61 +1,23 @@
-export interface low_level_state {
-    consecutive_bricklet_errors: number;
+import { EMV1State, EMV2State, EMV1LowLevelState, EMV2LowLevelState } from "./types"
 
-    contactor: boolean;
-    led_rgb: number[];
+export interface low_level_state extends Partial<EMV1LowLevelState>, Partial<EMV2LowLevelState> {
+    consecutive_bricklet_errors: number;
     input_voltage: number;
-    contactor_check_state: number;
+    uptime: number;
 }
 
-export interface state {
-    phases_switched: number;
+export interface state extends Partial<EMV1State>, Partial<EMV2State> {
     error_flags: number;
     config_error_flags: number;
-    input3_state: boolean;
-    input4_state: boolean;
-    relay_state: boolean;
+    em_version: number;
 }
 
 export interface config {
     contactor_installed: boolean;
 }
 
-export interface history_wallbox_5min_changed {
-    uid: number;
-    year: number;
-    month: number;
-    day: number;
-    hour: number;
-    minute: number;
-    flags: number;
-    power: number;
+export interface reflash {
 }
 
-export interface history_wallbox_daily_changed {
-    uid: number;
-    year: number;
-    month: number;
-    day: number;
-    energy: number;
+export interface reset {
 }
-
-export interface history_energy_manager_5min_changed {
-    year: number;
-    month: number;
-    day: number;
-    hour: number;
-    minute: number;
-    flags: number;
-    power: number[];
-}
-
-export interface history_energy_manager_daily_changed {
-    year: number;
-    month: number;
-    day: number;
-    energy_import: number[];
-    energy_export: number[];
-}
-
-export type debug_header = string;
-export type debug = string;

@@ -18,19 +18,57 @@
  */
 
 #include "evse.h"
+
+#include "event_log_prefix.h"
 #include "module_dependencies.h"
-
 #include "bindings/errors.h"
-
-#include "api.h"
-#include "event_log.h"
-#include "task_scheduler.h"
+#include "bindings/hal_common.h"
 #include "tools.h"
-#include "web_server.h"
+#include "string_builder.h"
+#include "evse_bricklet_firmware_bin.embedded.h"
 
-extern bool firmware_update_allowed;
+#include "module_available.h"
 
-EVSE::EVSE() : DeviceModule("evse", "EVSE", "EVSE", [](){evse_common.setup_evse();}) {}
+EVSE::EVSE() : DeviceModule(evse_bricklet_firmware_bin_data,
+                            evse_bricklet_firmware_bin_length,
+                            "evse",
+                            "EVSE",
+                            "EVSE",
+                            [](){evse_common.setup_evse();}) {}
+
+void EVSE::pre_init()
+{
+#if MODULE_ESP32_BRICK_AVAILABLE()
+    auto esp_brick = esp32_brick;
+#elif MODULE_ESP32_ETHERNET_BRICK_AVAILABLE()
+    auto esp_brick = esp32_ethernet_brick;
+#else
+    #warning "Using EVSE module without ESP32 Brick or ESP32 Ethernet Brick module. Pre-init will not work!"
+    return;
+#endif
+
+    if (!esp_brick.initHAL())
+        return;
+
+    defer {
+        esp_brick.destroyHAL();
+    };
+
+    TF_EVSE evse;
+    int result = tf_evse_create(&evse, nullptr, &hal);
+    if (result != TF_E_OK)
+        return;
+
+    defer {
+        tf_evse_destroy(&evse);
+    };
+
+    uint32_t evse_uptime = 0;
+    tf_evse_get_low_level_state(&evse, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, &evse_uptime);
+    if (evse_uptime > 10000) {
+        tf_evse_set_indicator_led(&evse, 2005, 3000, nullptr);
+    }
+}
 
 void EVSE::pre_setup()
 {
@@ -146,9 +184,9 @@ void EVSE::get_data_storage(uint8_t page, uint8_t *data)
 void EVSE::set_indicator_led(int16_t indication, uint16_t duration, uint16_t color_h, uint8_t color_s, uint8_t color_v, uint8_t *ret_status)
 {
     // EVSE 1.0 does not support setting the LED's color.
-    (void) color_h;
-    (void) color_s;
-    (void) color_v;
+    (void)color_h;
+    (void)color_s;
+    (void)color_v;
     tf_evse_set_indicator_led(&device, indication, duration, ret_status);
 }
 
@@ -192,68 +230,81 @@ int EVSE::set_charging_slot_default(uint8_t slot, uint16_t current, bool enabled
     return tf_evse_set_charging_slot_default(&device, slot, current, enabled, clear_on_disconnect);
 }
 
-String EVSE::get_evse_debug_header()
+static const char *debug_header =
+    "STATE,"
+    "iec61851_state,"
+    "charger_state,"
+    "contactor_state,"
+    "contactor_error,"
+    "allowed_charging_current,"
+    "error_state,"
+    "lock_state,"
+    "HARDWARE_CONFIG,"
+    "jumper_configuration,"
+    "has_lock_switch,"
+    "evse_version,"
+    "LL_STATE,"
+    "led_state,"
+    "cp_pwm_duty_cycle,"
+    "charging_time,"
+    "time_since_state_change,"
+    "uptime,"
+    "ADC_VALUES,"
+    "adc_cp_pe,"
+    "adc_pp_pe,"
+    "VOLTAGES,"
+    "voltage_cp_pe,"
+    "voltage_pp_pe,"
+    "voltage_cp_pe_high,"
+    "RESISTANCES,"
+    "resistance_cp_pe,"
+    "resistance_pp_pe,"
+    "GPIOs,"
+    "gpio_input,"
+    "gpio_output,"
+    "gpio_motor_input_switch,"
+    "gpio_contactor,"
+    "gpio_motor_fault,"
+    "SLOTS,"
+    "slot_incoming_cable,"
+    "slot_outgoing_cable,"
+    "slot_shutdown_input,"
+    "slot_gp_input,"
+    "slot_autostart_button,"
+    "slot_global,"
+    "slot_user,"
+    "slot_charge_manager,"
+    "slot_external,"
+    "slot_modbus_tcp,"
+    "slot_modbus_tcp_enable,"
+    "slot_ocpp,"
+    "slot_charge_limits,"
+    "slot_require_meter,"
+    "slot_automation,"
+    "slot_15,"
+    "slot_16,"
+    "slot_17,"
+    "slot_18,"
+    "slot_19";
+
+static const size_t debug_header_len = strlen(debug_header);
+
+size_t EVSE::get_debug_header_length() const
 {
-    return "\"millis,"
-           "STATE,"
-           "iec61851_state,"
-           "charger_state,"
-           "contactor_state,"
-           "contactor_error,"
-           "allowed_charging_current,"
-           "error_state,"
-           "lock_state,"
-           "HARDWARE CONFIG,"
-           "jumper_configuration,"
-           "has_lock_switch,"
-           "evse_version,"
-           "LL-State,"
-           "led_state,"
-           "cp_pwm_duty_cycle,"
-           "charging_time,"
-           "time_since_state_change,"
-           "uptime,"
-           "ADC VALUES,"
-           "CP/PE,"
-           "PP/PE,"
-           "VOLTAGES,"
-           "CP/PE,"
-           "PP/PE,"
-           "CP/PE (High),"
-           "RESISTANCES,"
-           "CP/PE,"
-           "PP/PE,"
-           "GPIOs,"
-           "Input (0),"
-           "Output (1),"
-           "Motor Input (2),"
-           "Relay (3),"
-           "Motor Fault (4),"
-           "SLOTS,"
-           "incoming_cable,"
-           "outgoing_cable,"
-           "shutdown_input,"
-           "gp_input,"
-           "autostart_button,"
-           "global,"
-           "user,"
-           "charge_manager,"
-           "external,"
-           "modbus_tcp,"
-           "modbus_tcp_enable,"
-           "ocpp,"
-           "charge_limits,"
-           "require_meter,"
-           "unused (14),"
-           "unused (15),"
-           "unused (16),"
-           "unused (17),"
-           "unused (18),"
-           "unused (19)"
-           "\"";
+    return debug_header_len;
 }
 
-String EVSE::get_evse_debug_line()
+void EVSE::get_debug_header(StringBuilder *sb)
+{
+    sb->puts(debug_header, debug_header_len);
+}
+
+size_t EVSE::get_debug_line_length() const
+{
+    return 512; // FIXME: currently max ~290, make tighter estimate
+}
+
+void EVSE::get_debug_line(StringBuilder *sb)
 {
     uint8_t iec61851_state;
     uint8_t charger_state;
@@ -276,7 +327,7 @@ String EVSE::get_evse_debug_line()
     uint32_t time_since_state_change;
     uint32_t uptime;
 
-    // get_all_charging_slots - 60 byte
+    // get_all_charging_slots
     uint16_t max_current[20];
     uint8_t active_and_clear_on_disconnect[20];
 
@@ -311,22 +362,20 @@ String EVSE::get_evse_debug_line()
     if (rc != TF_E_OK) {
         logger.printfln("get_all_data_1 %d", rc);
         is_in_bootloader(rc);
-        return "\"get_all_data_1 failed\"";
+        sb->puts("get_all_data_1 failed");
+        return;
     }
 
     rc = tf_evse_get_all_charging_slots(&device, max_current, active_and_clear_on_disconnect);
 
     if (rc != TF_E_OK) {
-        logger.printfln("slots %d", rc);
+        logger.printfln("get_all_charging_slots %d", rc);
         is_in_bootloader(rc);
-        return "\"get_all_charging_slots failed\"";
+        sb->puts("get_all_charging_slots failed");
+        return;
     }
 
-    // Currently max ~ 290
-    char line[512] = {0};
-    snprintf(line,
-             sizeof(line) / sizeof(line[0]),
-             "\"%lu,,"
+    sb->printf(","
              "%u,%u,%u,%u,%u,%u,%u,,"
              "%u,%c,%u,,"
              "%u,%u,%u,%u,%u,,"
@@ -334,8 +383,7 @@ String EVSE::get_evse_debug_line()
              "%d,%d,%d,,"
              "%u,%u,,"
              "%c,%c,%c,%c,%c,,"
-             "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\"",
-             millis(),
+             "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u",
              iec61851_state,
              charger_state,
              contactor_state,
@@ -390,7 +438,6 @@ String EVSE::get_evse_debug_line()
              SLOT_ACTIVE(active_and_clear_on_disconnect[17]) ? max_current[17] : 32000,
              SLOT_ACTIVE(active_and_clear_on_disconnect[18]) ? max_current[18] : 32000,
              SLOT_ACTIVE(active_and_clear_on_disconnect[19]) ? max_current[19] : 32000);
-    return String(line);
 }
 
 void EVSE::update_all_data()
@@ -398,7 +445,7 @@ void EVSE::update_all_data()
     if (!initialized)
         return;
 
-    // get_all_data_1 - 51 byte
+    // get_all_data_1
     uint8_t iec61851_state;
     uint8_t charger_state;
     uint8_t contactor_state;
@@ -411,14 +458,14 @@ void EVSE::update_all_data()
     uint8_t evse_version;
     bool boost_mode_enabled;
 
-    // get_all_data_2 - 18 byte
+    // get_all_data_2
     int16_t indication;
     uint16_t duration;
     uint32_t button_press_time;
     uint32_t button_release_time;
     bool button_pressed;
 
-    // get_low_level_state - 57 byte
+    // get_low_level_state
     uint8_t led_state;
     uint16_t cp_pwm_duty_cycle;
     uint16_t adc_values[2];
@@ -429,11 +476,11 @@ void EVSE::update_all_data()
     uint32_t time_since_state_change;
     uint32_t uptime;
 
-    // get_all_charging_slots - 60 byte
+    // get_all_charging_slots
     uint16_t max_current[20];
     uint8_t active_and_clear_on_disconnect[20];
 
-    // get_user_calibration - 37 byte
+    // get_user_calibration
     bool user_calibration_active;
     int16_t voltage_diff;
     int16_t voltage_mul;
@@ -520,7 +567,9 @@ void EVSE::update_all_data()
     // then the EVSE could potentially start to charge, which is okay,
     // as the ESP firmware is already running, so we can for example
     // track the charge.
-    firmware_update_allowed = charger_state == 0 || charger_state == 4;
+#if MODULE_FIRMWARE_UPDATE_AVAILABLE()
+    firmware_update.vehicle_connected = charger_state != 0 && charger_state != 4;
+#endif
 
     // get_state
 
@@ -534,17 +583,17 @@ void EVSE::update_all_data()
 
     if (contactor_error_changed) {
         if (contactor_error != 0) {
-            logger.printfln("EVSE: Contactor error %d", contactor_error);
+            logger.printfln("Contactor error %d", contactor_error);
         } else {
-            logger.printfln("EVSE: Contactor error cleared");
+            logger.printfln("Contactor error cleared");
         }
     }
 
     if (error_state_changed) {
         if (error_state != 0) {
-            logger.printfln("EVSE: Error state %d", error_state);
+            logger.printfln("Error state %d", error_state);
         } else {
-            logger.printfln("EVSE: Error state cleared");
+            logger.printfln("Error state cleared");
         }
     }
 
@@ -557,16 +606,16 @@ void EVSE::update_all_data()
     evse_common.low_level_state.get("led_state")->updateUint(led_state);
     evse_common.low_level_state.get("cp_pwm_duty_cycle")->updateUint(cp_pwm_duty_cycle);
 
-    for (int i = 0; i < sizeof(adc_values) / sizeof(adc_values[0]); ++i)
+    for (int i = 0; i < ARRAY_SIZE(adc_values); ++i)
         evse_common.low_level_state.get("adc_values")->get(i)->updateUint(adc_values[i]);
 
-    for (int i = 0; i < sizeof(voltages) / sizeof(voltages[0]); ++i)
+    for (int i = 0; i < ARRAY_SIZE(voltages); ++i)
         evse_common.low_level_state.get("voltages")->get(i)->updateInt(voltages[i]);
 
-    for (int i = 0; i < sizeof(resistances) / sizeof(resistances[0]); ++i)
+    for (int i = 0; i < ARRAY_SIZE(resistances); ++i)
         evse_common.low_level_state.get("resistances")->get(i)->updateUint(resistances[i]);
 
-    for (int i = 0; i < sizeof(gpio) / sizeof(gpio[0]); ++i)
+    for (int i = 0; i < ARRAY_SIZE(gpio); ++i)
         evse_common.low_level_state.get("gpio")->get(i)->updateBool(gpio[i]);
 
     evse_common.low_level_state.get("charging_time")->updateUint(charging_time);
@@ -602,7 +651,12 @@ void EVSE::update_all_data()
     evse_common.modbus_enabled.get("enabled")->updateBool(SLOT_ACTIVE(active_and_clear_on_disconnect[CHARGING_SLOT_MODBUS_TCP]));
     evse_common.ocpp_enabled.get("enabled")->updateBool(SLOT_ACTIVE(active_and_clear_on_disconnect[CHARGING_SLOT_OCPP]));
 
-    evse_common.external_enabled.get("enabled")->updateBool(SLOT_ACTIVE(active_and_clear_on_disconnect[CHARGING_SLOT_EXTERNAL]));
+    if (evse_common.external_enabled.get("enabled")->updateBool(SLOT_ACTIVE(active_and_clear_on_disconnect[CHARGING_SLOT_EXTERNAL]))) {
+#if MODULE_AUTOMATION_AVAILABLE()
+        automation.set_enabled(AutomationTriggerID::EVSEExternalCurrentWd, evse_common.external_enabled.get("enabled")->asBool());
+#endif
+    }
+
     evse_common.external_clear_on_disconnect.get("clear_on_disconnect")->updateBool(SLOT_CLEAR_ON_DISCONNECT(active_and_clear_on_disconnect[CHARGING_SLOT_EXTERNAL]));
 
     evse_common.global_current.get("current")->updateUint(max_current[CHARGING_SLOT_GLOBAL]);
@@ -622,7 +676,7 @@ void EVSE::update_all_data()
     user_calibration.get("voltage_div")->updateInt(voltage_div);
     user_calibration.get("resistance_2700")->updateInt(resistance_2700);
 
-    for (int i = 0; i < sizeof(resistance_880) / sizeof(resistance_880[0]); ++i)
+    for (int i = 0; i < ARRAY_SIZE(resistance_880); ++i)
         user_calibration.get("resistance_880")->get(i)->updateInt(resistance_880[i]);
 
 #if MODULE_WATCHDOG_AVAILABLE()
