@@ -28,9 +28,6 @@
 
 void MultiValueHistory::setup()
 {
-// !!! FIXME
-    logger.printfln("Setting up multi value history...");
-
     for(int j = 0; j < MULTI_VALUE_HISTORY_NUMBER_OF_VALUES; ++j){
         history[j].setup();
         live[j].setup();
@@ -65,51 +62,6 @@ void MultiValueHistory::setup()
     chars_per_value = max(4U, chars_per_value);
     // For ',' between the values.
     ++chars_per_value;
-
-// #if MODULE_WS_AVAILABLE()
-//     {
-//         const size_t buf_size = MULTI_VALUE_RING_BUF_SIZE * MULTI_VALUE_HISTORY_NUMBER_OF_VALUES * (chars_per_value + 3) + 100;
-
-//         // live
-//         size_t buf_written = 0;
-//         char *buf = static_cast<char *>(malloc(buf_size));
-
-//         if (buf == nullptr)
-//             return;
-
-//         buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, "{\"topic\":\"%s/live\",\"payload\":", base_url.c_str());
-//         buf_written += format_live(buf + buf_written, buf_size - buf_written);
-//         buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, "}\n");
-
-//         ws.web_sockets.sendToAllOwned(buf, buf_written);
-
-//         if (debug_level >= 1){
-//             logger.printfln("Live initialized:");
-//             logger.write(buf, buf_written);
-//             logger.printfln(" ");
-//         }
-
-//         // history
-//         buf_written = 0;
-//         buf = static_cast<char *>(malloc(buf_size));
-
-//         if (buf == nullptr)
-//             return;
-
-//         buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, "{\"topic\":\"%s/history\",\"payload\":", base_url.c_str());
-//         buf_written += format_history(buf + buf_written, buf_size - buf_written);
-//         buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, "}\n");
-
-//         ws.web_sockets.sendToAllOwned(buf, buf_written);
-
-//         if (debug_level >= 1){
-//             logger.printfln("History live initialized:");
-//             logger.write(buf, buf_written);
-//             logger.printfln(" ");
-//         }
-
-//     };
-// #endif
 }
 
 void MultiValueHistory::register_urls(String base_url_)

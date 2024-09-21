@@ -623,7 +623,7 @@ void PhaseSwitcher::sequencer_state_pausing_while_switching()
 void PhaseSwitcher::sequencer_state_stopped_by_evse()
 {
     if (quick_charging_active){
-        logger.printfln("Phase switcher: Requesting EVSE to start charging.");
+        logger.printfln("Phase switcher: Quick charging active, requesting EVSE to start charging.");
         sequencer_state = waiting_for_evse_start;
     } else if (charger_state == ready_for_charging || charger_state == charging){
         if (delayed_phase_request[0]){

@@ -42,19 +42,19 @@ export type vin_info = VinInfo[] | string;
 export interface live {
     offset: number,
     samples_per_second: number,
-    samples: number[]
+    samples: number[][]
 }
 
 export interface live_samples {
     samples_per_second: number,
-    samples: number[]
+    samples: number[][]
 }
 
 export interface history {
     offset: number,
-    samples: number[]
+    samples: number[][]
 }
 
 export interface history_samples {
-    samples: number[]
+    samples: number[][]
 }

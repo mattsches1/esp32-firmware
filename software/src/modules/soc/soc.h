@@ -77,7 +77,7 @@ private:
     String get_vin_list();
 
     void sequencer();
-    void sequencer_state_inactive();
+    void sequencer_state_idle();
     void sequencer_state_init();
     void sequencer_state_login1();
     void sequencer_state_login1(CookieJar *cookie_jar);
@@ -93,6 +93,8 @@ private:
     void sequencer_state_waiting_for_evse_stop();
 
     void update_all_data();
+    void update_history();
+    float live_samples_per_second();
 
     int http_request(const String &url, const char* cert, http_method method, std::vector<Header> *headers, String *payload, CookieJar *cookie_jar, const char *headers_to_collect[]=nullptr, size_t num_headers_to_collect=0);
     int http_request(const String &url, const char* cert, http_method method, std::vector<Header> *headers, String *payload, CookieJar *cookie_jar, DynamicJsonDocument *response, const char *headers_to_collect[]=nullptr, size_t num_headers_to_collect=0);
@@ -105,8 +107,10 @@ private:
     void aws_get_signature(const String &secret_key, const String &date_stamp, const String &region_name, const String &service_name, const String &string_to_sign, String &signature);
     void aws_get_authorization_header(http_method method, String &canonical_uri, String &canonical_query_string, String &canonical_headers, String &signed_headers, String &hashed_payload, String &amz_date, String &secret_key, String &access_key_id, String &authorization_header);
     void log_memory();
+    void test_http_client();
 
-    bool debug = false;
+    bool debug = true;
+    int debug_level = 0;
 
     bool login_ok = false, pin_auth_ok = false, soc_status_ok = false;
     bool api_login_retry = false, pin_auth_retry = false;
@@ -159,7 +163,20 @@ private:
     } api_data;
 
     ValueHistory soc_history;
-    CookieJar cookie_jar;
 
+    size_t history_chars_per_value;
+    uint32_t last_live_update = 0;
+    uint32_t last_history_update = 0;
+    uint32_t last_history_slot = UINT32_MAX;
+
+    int samples_this_interval = 0;
+    uint32_t begin_this_interval = 0;
+    uint32_t end_this_interval = 0;
+
+    int samples_last_interval = 0;
+    uint32_t begin_last_interval = 0;
+    uint32_t end_last_interval = 0;
+
+    CookieJar cookie_jar;
 };
                                     

@@ -40,6 +40,8 @@ extern EventLog logger;
 extern TaskScheduler task_scheduler;
 extern WebServer server;
 
+extern API api;
+
 void SOC::pre_setup()
 {
     state = Config::Object({
@@ -84,6 +86,12 @@ void SOC::setup()
 
     soc_history.setup();
 
+    history_chars_per_value = max(String(METER_VALUE_HISTORY_VALUE_MIN).length(), String(METER_VALUE_HISTORY_VALUE_MAX).length());
+    // val_min values are replaced with null -> require at least 4 chars per value.
+    history_chars_per_value = max(4U, history_chars_per_value);
+    // For ',' between the values.
+    ++history_chars_per_value;
+
     if (!enabled){
         initialized = true;
         logger.printfln("SOC module disabled by configuration.");
@@ -109,6 +117,10 @@ void SOC::setup()
     task_scheduler.scheduleWithFixedDelay([this](){
         update_all_data();
     }, 30, 250);
+
+    task_scheduler.scheduleWithFixedDelay([this](){
+        update_history();
+    }, 0, 1000);
 
     initialized = true;
 }
@@ -155,7 +167,7 @@ void SOC::register_urls()
     api.addCommand("soc/manual_request", Config::Null(), {}, [this](){
         if (enabled){
             soc_requested = true;
-            if (debug) logger.printfln("SOC: Manual request received");
+            if (debug) logger.printfln("SOC: Manual request received; initialized: %d, enabled: %d", initialized, enabled);
         }
     }, false);
 
@@ -177,6 +189,41 @@ void SOC::register_urls()
         debug = false;
         return request.send(200);
     });
+
+    server.on("/soc/test_http_client", HTTP_GET, [this](WebServerRequest request){
+        logger.printfln("SOC: Testing HTTP client...");
+        test_http_client();
+        return request.send(200);
+    });
+
+// !!! FIXME
+    server.on("/soc/set_debug0", HTTP_GET, [this](WebServerRequest request) {
+        debug_level = 0;
+        return request.send(200, "application/text; charset=utf-8", "SOC debug level set to 0", 40);
+    });
+    server.on("/soc/set_debug1", HTTP_GET, [this](WebServerRequest request) {
+        debug_level = 1;
+        return request.send(200, "application/text; charset=utf-8", "SOC debug level set to 1", 40);
+    });
+    server.on("/soc/set_debug2", HTTP_GET, [this](WebServerRequest request) {
+        debug_level = 2;
+        return request.send(200, "application/text; charset=utf-8", "SOC debug level set to 2", 40);
+    });
+    server.on("/soc/set_debug3", HTTP_GET, [this](WebServerRequest request) {
+        debug_level = 3;
+        return request.send(200, "application/text; charset=utf-8", "SOC debug level set to 3", 40);
+    });
+    server.on("/soc/set_debug4", HTTP_GET, [this](WebServerRequest request) {
+        debug_level = 4;
+        return request.send(200, "application/text; charset=utf-8", "SOC debug level set to 4", 40);
+    });
+    server.on("/soc/set_debug5", HTTP_GET, [this](WebServerRequest request) {
+        debug_level = 5;
+        return request.send(200, "application/text; charset=utf-8", "SOC debug level set to 5", 40);
+    });
+
+// !!! FIXME
+
 }
 
 void SOC::check_for_vin_list_completion()
@@ -234,7 +281,7 @@ void SOC::sequencer()
 
     std::lock_guard<std::mutex> lock(mutex);
 
-    if (!api.hasFeature("wifi") || !api.hasFeature("evse")) {
+    if (!api.hasFeature("evse")) {
         return;
     }
 
@@ -260,7 +307,7 @@ void SOC::sequencer()
     // }
 
     switch(sequencer_state){
-        case inactive:              sequencer_state_inactive(); break;
+        case inactive:              sequencer_state_idle(); break;
         case init:                  sequencer_state_init(); break;
         case login1:                sequencer_state_login1(&cookie_jar); break;
         case login2:                sequencer_state_login2(&cookie_jar); break;
@@ -278,7 +325,7 @@ void SOC::sequencer()
 
 }
 
-void SOC::sequencer_state_inactive()
+void SOC::sequencer_state_idle()
 {
     if (!initialized) 
         return;
@@ -346,14 +393,14 @@ void SOC::sequencer_state_init()
     std::vector<Header> headers;
 
     if (debug){
-        logger.printfln("Allocated  before request: cookie jar: %d; payload: %d; headers: %d", cookie_jar.capacity(), payload.length(), headers.capacity());
+        logger.printfln("Allocated memory before request: cookie jar: %u; payload: %u; headers: %u", cookie_jar.capacity(), payload.length(), headers.capacity());
         log_memory();
     }
 
     int result = http_request(url, loginmyuconnect_fiat_com_root_cert_pem, HTTP_GET, &headers, &payload, &cookie_jar);
 
     if (debug){
-        logger.printfln("Allocated after request: cookie jar: %d; payload: %d; headers: %d", cookie_jar.capacity(), payload.length(), headers.capacity());
+        logger.printfln("Allocated memory after request: cookie jar: %u; payload: %u; headers: %u", cookie_jar.capacity(), payload.length(), headers.capacity());
         log_memory();
     }
 
@@ -362,7 +409,7 @@ void SOC::sequencer_state_init()
     payload.clear();
 
     if (debug){
-        logger.printfln("Allocated memory after destroy: cookie jar: %d; payload: %d; headers: %d", cookie_jar.capacity(), payload.length(), headers.capacity());
+        logger.printfln("Allocated memory after destroy: cookie jar: %u; payload: %u; headers: %u", cookie_jar.capacity(), payload.length(), headers.capacity());
         log_memory();
     }
 
@@ -1249,6 +1296,131 @@ void SOC::update_all_data()
     soc_history.add_sample(soc);
 }
 
+void SOC::update_history()
+{
+    uint32_t now = millis();
+    uint32_t current_history_slot = now / (HISTORY_MINUTE_INTERVAL * 60 * 1000);
+    bool update_history = current_history_slot != last_history_slot;
+    METER_VALUE_HISTORY_VALUE_TYPE live_sample;
+    METER_VALUE_HISTORY_VALUE_TYPE history_sample;
+    METER_VALUE_HISTORY_VALUE_TYPE val_min = std::numeric_limits<METER_VALUE_HISTORY_VALUE_TYPE>::lowest();
+
+    soc_history.tick(now, true, &live_sample, &history_sample);
+
+    last_live_update = now;
+    end_this_interval = last_live_update;
+
+    if (samples_this_interval == 0) {
+        begin_this_interval = last_live_update;
+    }
+
+    ++samples_this_interval;
+
+#if MODULE_WS_AVAILABLE()
+    {
+        const size_t buf_size = history_chars_per_value + 100;
+        char *buf_ptr = static_cast<char *>(malloc(sizeof(char) * buf_size));
+        size_t buf_written = 0;
+
+        buf_written += snprintf_u(buf_ptr + buf_written, buf_size - buf_written, "{\"topic\":\"soc/live_samples\",\"payload\":{\"samples_per_second\":%f,\"samples\":[", static_cast<double>(live_samples_per_second()));
+
+        if (buf_written < buf_size) {
+            for (uint32_t slot = 0; slot < METERS_SLOTS && buf_written < buf_size; slot++) {
+                if (live_sample == val_min) {
+                    buf_written += snprintf_u(buf_ptr + buf_written, buf_size - buf_written, slot == 0 ? "[%s]" : ",[%s]", "null");
+                }
+                else {
+                    buf_written += snprintf_u(buf_ptr + buf_written, buf_size - buf_written, slot == 0 ? "[%d]" : ",[%d]", static_cast<int>(live_sample));
+                }
+            }
+
+            if (buf_written < buf_size) {
+                buf_written += snprintf_u(buf_ptr + buf_written, buf_size - buf_written, "%s", "]}}\n");
+            }
+        }
+
+        if (buf_written > 0) {
+            ws.web_sockets.sendToAllOwned(buf_ptr, static_cast<size_t>(buf_written));
+        }
+    }
+#endif
+
+    if (update_history) {
+        last_history_update = now;
+        samples_last_interval = samples_this_interval;
+        begin_last_interval = begin_this_interval;
+        end_last_interval = end_this_interval;
+
+        samples_this_interval = 0;
+        begin_this_interval = 0;
+        end_this_interval = 0;
+
+#if MODULE_WS_AVAILABLE()
+        {
+            const size_t buf_size = history_chars_per_value + 100;
+            char *buf_ptr = static_cast<char *>(malloc(sizeof(char) * buf_size));
+            size_t buf_written = 0;
+
+            buf_written += snprintf_u(buf_ptr + buf_written, buf_size - buf_written, "%s", "{\"topic\":\"soc/history_samples\",\"payload\":{\"samples\":[");
+
+            if (buf_written < buf_size) {
+                for (uint32_t slot = 0; slot < METERS_SLOTS && buf_written < buf_size; slot++) {
+                    if (history_sample == val_min) {
+                        buf_written += snprintf_u(buf_ptr + buf_written, buf_size - buf_written, slot == 0 ? "[%s]" : ",[%s]", "null");
+                    }
+                    else {
+                        buf_written += snprintf_u(buf_ptr + buf_written, buf_size - buf_written, slot == 0 ? "[%d]" : ",[%d]", static_cast<int>(history_sample));
+                    }
+                }
+
+                if (buf_written < buf_size) {
+                    buf_written += snprintf_u(buf_ptr + buf_written, buf_size - buf_written, "%s", "]}}\n");
+                }
+            }
+
+            if (buf_written > 0) {
+                ws.web_sockets.sendToAllOwned(buf_ptr, static_cast<size_t>(buf_written));
+            }
+        }
+#endif
+    }
+}
+
+float SOC::live_samples_per_second()
+{
+    float samples_per_second = 0;
+
+    // Only calculate samples_per_second based on the last interval
+    // if we have seen at least 2 values. With the API meter module,
+    // it can happen that we see exactly one value in the first interval.
+    // In this case 0 samples_per_second is reported for the next
+    // interval (i.e. four minutes).
+    if (samples_last_interval > 1) {
+        uint32_t duration = end_last_interval - begin_last_interval;
+
+        if (duration > 0) {
+            // (samples_last_interval - 1) because there are N samples but only (N - 1) gaps
+            // between them covering (end_last_interval - begin_last_interval) milliseconds
+            samples_per_second = static_cast<float>((samples_last_interval - 1) * 1000) / static_cast<float>(duration);
+        }
+    }
+    // Checking only for > 0 in this branch is fine: If we have seen
+    // 0 or 1 samples in the last interval and exactly 1 in this interval,
+    // we can only report that samples_per_second is 0.
+    // This fixes itself when the next sample arrives.
+    else if (samples_this_interval > 0) {
+        uint32_t duration = end_this_interval - begin_this_interval;
+
+        if (duration > 0) {
+            // (samples_this_interval - 1) because there are N samples but only (N - 1) gaps
+            // between them covering (end_this_interval - begin_this_interval) milliseconds
+            samples_per_second = static_cast<float>((samples_this_interval - 1) * 1000) / static_cast<float>(duration);
+        }
+    }
+
+    return samples_per_second;
+}
+
 int SOC::http_request(const String &url, const char* cert, http_method method, std::vector<Header> *headers, String *payload, CookieJar *cookie_jar, const char *headers_to_collect[], size_t num_headers_to_collect) 
 {
     WiFiClientSecure *client = new WiFiClientSecure;
@@ -1269,11 +1441,11 @@ int SOC::http_request(const String &url, const char* cert, http_method method, s
             if (headers_to_collect)
                 http.collectHeaders(headers_to_collect, num_headers_to_collect);
 
-            // if (debug) {
-            //     logger.printfln("Starting HTTP request");
-            //     logger.printfln("URL: ");
-            //     logger.write(url.c_str(), url.length());
-            // }
+            if (debug) {
+                logger.printfln("Starting HTTP request");
+                logger.printfln("URL: ");
+                logger.write(url.c_str(), url.length());
+            }
             
             // http.useHTTP10(true);
 
@@ -1293,7 +1465,7 @@ int SOC::http_request(const String &url, const char* cert, http_method method, s
                 }
 
                 // start connection and send HTTP header
-                // if (debug) logger.printfln("SOC: [HTTPS] request...");
+                if (debug) logger.printfln("SOC: [HTTPS] request...");
 
                 switch (method) {
                     case HTTP_POST: http_code = http.POST(*payload); break;
@@ -1315,16 +1487,16 @@ int SOC::http_request(const String &url, const char* cert, http_method method, s
                         for (int i = 0; i< http.headers(); i++){
                             headers->push_back({http.headerName(i), http.header(i)});
                         }
-                        // if (debug) {
-                        //     logger.printfln("SOC: [HTTPS] Collected headers:");
-                        //     for (int i = 0; i< http.headers(); i++){
-                        //         logger.printfln(("             " + http.headerName(i) + " : " + http.header(i)).c_str());
-                        //     }
-                        // }
+                        if (debug) {
+                            logger.printfln("SOC: [HTTPS] Collected headers:");
+                            for (int i = 0; i< http.headers(); i++){
+                                logger.printfln(("             " + http.headerName(i) + " : " + http.header(i)).c_str());
+                            }
+                        }
                     }
 
-                // } else {
-                //     if (debug) logger.printfln("SOC: [HTTPS] ... failed, error: %s", http.errorToString(http_code).c_str());
+                } else {
+                    if (debug) logger.printfln("SOC: [HTTPS] ... failed, error: %s", http.errorToString(http_code).c_str());
                 }
                 
                 http.end();
@@ -1692,5 +1864,20 @@ void SOC::log_memory()
 {
     multi_heap_info_t dram_info;
     heap_caps_get_info(&dram_info,  MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    logger.printfln("Mem info: Total free: %d, Largest free: %d",dram_info.total_free_bytes, dram_info.largest_free_block);
+    logger.printfln("Mem info: Total free: %u, Largest free: %u",dram_info.total_free_bytes, dram_info.largest_free_block);
+}
+
+void SOC::test_http_client()
+{
+    String url = "https://www.howsmyssl.com=";
+    String payload;
+    payload.reserve(220);
+    std::vector<Header> headers;
+    
+    logger.printfln("Testing HTTP request with URL %s", url.c_str());
+    int result = http_request(url, howsmyssl_com_root_cert_pem, HTTP_GET, &headers, &payload, &cookie_jar);
+
+    logger.printfln("HTTP result: %d", result);
+    log_memory();
+
 }

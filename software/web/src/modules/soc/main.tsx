@@ -52,7 +52,7 @@ interface SocState {
 
 interface UplotData {
     timestamps: number[];
-    samples: number[];
+    samples: number[][];
 }
 
 interface UplotWrapperProps {
@@ -346,16 +346,20 @@ class UplotWrapper extends Component<UplotWrapperProps, {}> {
         let y_min: number = this.props.y_min;
         let y_max: number = this.props.y_max;
 
-        for (let i = 0; i < this.data.samples.length; ++i) {
-            let value = this.data.samples[i];
+        for (let j = 0; j < this.data.samples.length - 1; ++j){
 
-            if (value !== null) {
-                if (y_min === undefined || value < y_min) {
-                    y_min = value;
-                }
+            for (let i = 0; i < this.data.samples[j].length; ++i) {
 
-                if (y_max === undefined || value > y_max) {
-                    y_max = value;
+                let value = this.data.samples[j][i];
+
+                if (value !== null) {
+                    if (y_min === undefined || value < y_min) {
+                        y_min = value;
+                    }
+
+                    if (y_max === undefined || value > y_max) {
+                        y_max = value;
+                    }
                 }
             }
         }
@@ -393,10 +397,11 @@ class UplotWrapper extends Component<UplotWrapperProps, {}> {
             }
         }
 
+        y_min = 0;
         this.y_min = y_min;
         this.y_max = y_max;
-
-        this.uplot.setData([this.data.timestamps, this.data.samples]);
+        
+        this.uplot.setData([this.data.timestamps, ...this.data.samples]);
     }
 
     set_data(data: UplotData) {
@@ -412,7 +417,7 @@ class UplotWrapper extends Component<UplotWrapperProps, {}> {
     }
 }
 
-function calculate_live_data(offset: number, samples_per_second: number, samples: number[]): UplotData {
+function calculate_live_data(offset: number, samples_per_second: number, samples: number[][]): UplotData {
     let data: UplotData = {timestamps: new Array(samples.length), samples: samples};
     let now = Date.now();
     let start;
@@ -436,7 +441,7 @@ function calculate_live_data(offset: number, samples_per_second: number, samples
     return data;
 }
 
-function calculate_history_data(offset: number, samples: number[]): UplotData {
+function calculate_history_data(offset: number, samples: number[][]): UplotData {
     const HISTORY_MINUTE_INTERVAL = 4;
 
     let data: UplotData = {timestamps: new Array(samples.length), samples: samples};
@@ -464,8 +469,10 @@ function array_append<T>(a: Array<T>, b: Array<T>, tail: number): Array<T> {
 
 export class Soc extends ConfigComponent<'soc/config', {}, SocConfig & SocState> {
     timeout?: number;
+    live_initialized = false;
     live_data: UplotData;
     pending_live_data: UplotData = {timestamps: [], samples: []};
+    history_initialized = false;
     history_data: UplotData;
     uplot_wrapper_live_ref = createRef();
     uplot_wrapper_history_ref = createRef();
@@ -473,7 +480,9 @@ export class Soc extends ConfigComponent<'soc/config', {}, SocConfig & SocState>
     constructor() {
         super('soc/config',
                 __("soc.script.save_failed"),
-                __("soc.script.reboot_content_changed"));
+                __("soc.script.reboot_content_changed"), {
+                    chart_selected: "history",
+              });
 
         this.timeout = undefined;
 
@@ -486,25 +495,20 @@ export class Soc extends ConfigComponent<'soc/config', {}, SocConfig & SocState>
             this.setState({setpoint: _setpoint});
         });
 
-        util.addApiEventListener("soc/live", () => {
-            let live = API.get("soc/live");
-
-            this.live_data = calculate_live_data(live.offset, live.samples_per_second, live.samples);
-            this.pending_live_data = {timestamps: [], samples: []};
-
-            if (this.state.chart_selected == "live") {
-                this.update_uplot();
-            }
-        });
-
         util.addApiEventListener("soc/live_samples", () => {
+            if (!this.live_initialized) {
+                // received live_samples before live cache initialization
+                this.update_live_cache();
+                return;
+            }
+
             let live = API.get("soc/live_samples");
             let live_extra = calculate_live_data(0, live.samples_per_second, live.samples);
 
             this.pending_live_data.timestamps.push(...live_extra.timestamps);
             this.pending_live_data.samples.push(...live_extra.samples);
 
-            if (this.pending_live_data.samples.length >= 5) {
+            if (this.pending_live_data.timestamps.length >= 5) {
                 this.live_data.timestamps = array_append(this.live_data.timestamps, this.pending_live_data.timestamps, 720);
                 this.live_data.samples = array_append(this.live_data.samples, this.pending_live_data.samples, 720);
 
@@ -517,29 +521,93 @@ export class Soc extends ConfigComponent<'soc/config', {}, SocConfig & SocState>
             }
         });
 
-        util.addApiEventListener("soc/history", () => {
-            let history = API.get("soc/history");
-
-            this.history_data = calculate_history_data(history.offset, history.samples);
-
-            if (this.state.chart_selected == "history") {
-                this.update_uplot();
-            }
-        });
-
         util.addApiEventListener("soc/history_samples", () => {
-            let history = API.get("soc/history_samples");
+            if (!this.history_initialized) {
+                // received history_samples before history cache initialization
+                this.update_history_cache();
+                return;
+            }
 
-            this.history_data = calculate_history_data(0, array_append(this.history_data.samples, history.samples, 720));
+            let history = API.get("soc/history_samples");
+            let history_samples: number[][] = []
+
+            if (history.samples !== null) {
+                history_samples = array_append(this.history_data.samples, history.samples, 720);
+            }
+
+            this.history_data = calculate_history_data(0, history_samples);
 
             if (this.state.chart_selected == "history") {
                 this.update_uplot();
             }
         });
+    }
 
-        this.state = {
-            chart_selected: "history",
-        } as any;
+    update_live_cache() {
+        this.update_live_cache_async()
+            .then((success: boolean) => {
+                if (!success) {
+                    window.setTimeout(() => {
+                        this.update_live_cache();
+                    }, 100);
+
+                    return;
+                }
+
+                this.update_uplot();
+            });
+    }
+
+    async update_live_cache_async() {
+        let response: string = '';
+
+        try {
+            response = await (await util.download('soc/live')).text();
+        } catch (e) {
+            console.log('SOC: Could not get SOC live data: ' + e);
+            return false;
+        }
+
+        let payload = JSON.parse(response);
+
+        this.live_initialized = true;
+        this.live_data = calculate_live_data(payload.offset, payload.samples_per_second, payload.samples);
+        this.pending_live_data = {timestamps: [], samples: []}
+
+        return true;
+    }
+
+    update_history_cache() {
+        this.update_history_cache_async()
+            .then((success: boolean) => {
+                if (!success) {
+                    window.setTimeout(() => {
+                        this.update_history_cache();
+                    }, 100);
+
+                    return;
+                }
+
+                this.update_uplot();
+            });
+    }
+
+    async update_history_cache_async() {
+        let response: string = '';
+
+        try {
+            response = await (await util.download('soc/history')).text();
+        } catch (e) {
+            console.log('SOC: Could not get SOC history data: ' + e);
+            return false;
+        }
+
+        let payload = JSON.parse(response);
+
+        this.history_initialized = true;
+        this.history_data = calculate_history_data(payload.offset, payload.samples);
+
+        return true;
     }
 
     update_uplot() {
