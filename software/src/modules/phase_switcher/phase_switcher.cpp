@@ -14,23 +14,16 @@
  * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
  * Boston, MA 02111-1307, USA.
  */
+#include "module_dependencies.h"
 #include "phase_switcher.h"
 
 #include "bindings/errors.h"
 
-#include "api.h"
-#include "event_log.h"
-#include "task_scheduler.h"
+#include "event_log_prefix.h"
 #include "tools.h"
-#include "web_server.h"
-#include "modules.h"
 #include "delay_timer.h"
 
-extern EventLog logger;
-
-extern TaskScheduler task_scheduler;
 extern TF_HAL hal;
-extern WebServer server;
 
 void PhaseSwitcher::pre_setup()
 {

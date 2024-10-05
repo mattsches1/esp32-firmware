@@ -212,6 +212,7 @@ export type feature =
     "meters" |
     "nfc" |
     "phase_switch" |
+    "phase_switcher" |
     "rtc"|
     "meter" |
     "meter_phases" |

@@ -23,8 +23,7 @@
 #include "bindings/base58.h"
 #include "bindings/hal_common.h"
 #include "bindings/errors.h"
-
-extern EventLog logger;
+#include "header_logger.h"
 
 extern TF_HAL hal;
 
@@ -47,7 +46,7 @@ public:
         TF_TFP *tfp = tf_hal_get_tfp(&hal, nullptr, nullptr, &device_id, false);
 
         if (tfp == nullptr) {
-            logger.printfln("No %s Bricklet found. Disabling %s support.", device_name, module_name);
+            header_printfln("No %s Bricklet found. Disabling %s support.", device_name, module_name);
             return false;
         }
 
@@ -60,7 +59,7 @@ public:
         int result = init_function(&device, uid, &hal);
 
         if(result != TF_E_OK) {
-            logger.printfln("Failed to initialize %s bricklet (%d). Disabling %s support.", device_name, result, module_name);
+            header_printfln("Failed to initialize %s bricklet (%d). Disabling %s support.", device_name, result, module_name);
             return false;
         }
 
