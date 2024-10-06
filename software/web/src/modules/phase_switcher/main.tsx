@@ -53,25 +53,9 @@ interface PhaseSwitcherState {
     chart_selected: "history_48"|"history_24"|"history_12"|"history_6"|"history_3"|"live";
 }
 
-interface MeterValues {
-    meter: API.getType["meters/0/values"];
-}
-
 interface CachedData {
     timestamps: number[];
     samples: number[][];
-}
-interface UplotWrapperProps {
-    id: string;
-    class: string;
-    sidebar_id: string;
-    show: boolean;
-    legend_time_with_seconds: boolean;
-    x_height: number;
-    x_include_date: boolean;
-    y_min?: number;
-    y_max?: number;
-    y_diff_min?: number;
 }
 
 function calculate_live_data(offset: number, samples_per_second: number, samples: number[/*channel index*/][]): CachedData {
@@ -87,7 +71,7 @@ function calculate_live_data(offset: number, samples_per_second: number, samples
         }
     }
 
-    let data: CachedData = {timestamps: new Array(timestamp_slot_count), samples: new Array(samples.length-1)};
+    let data: CachedData = {timestamps: new Array(timestamp_slot_count), samples: new Array(samples.length)};
     let now = Date.now();
     let start: number;
     let step: number;
@@ -166,10 +150,10 @@ function array_append<T>(a: Array<T>, b: Array<T>, tail: number): Array<T> {
 // export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, PhaseSwitcherConfig & PhaseSwitcherState> {
 export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {status_ref?: RefObject<PhaseSwitcherStatus>},PhaseSwitcherConfig & PhaseSwitcherState> {
     live_initialized = false;
-    live_data: CachedData;
-    pending_live_data: CachedData = {timestamps: [], samples: [[], [], []]};
+    live_data: CachedData = {timestamps: [], samples: []};
+    pending_live_data: CachedData;
     history_initialized = false;
-    history_data: CachedData = {timestamps: [], samples: [[], [], []]};
+    history_data: CachedData = {timestamps: [], samples: []};
     uplot_loader_live_ref = createRef();
     uplot_loader_history_ref = createRef();
     uplot_wrapper_live_ref = createRef();
@@ -179,7 +163,8 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {sta
         super('phase_switcher/config',
                 __("phase_switcher.script.save_failed"),
                 __("phase_switcher.script.reboot_content_changed"), {
-              });
+                    chart_selected: "history_48",
+                });
 
         util.addApiEventListener('phase_switcher/state', () => {
             this.setState({state: API.get('phase_switcher/state')});
@@ -216,7 +201,6 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {sta
                 this.pending_live_data.samples = [[], [], []];
 
                 if (this.state.chart_selected == "live") {
-                    console.log("update live uplot; samples: " + this.live_data.samples); //FIXME
                     this.update_live_uplot();
                 }
             }
@@ -327,7 +311,6 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {sta
                     live_data.values.push(this.live_data.samples[channel_index]);
                 }
             }
-
             this.uplot_loader_live_ref.current.set_data(live_data.keys.length > 1);
             this.uplot_wrapper_live_ref.current.set_data(live_data);
         }
@@ -356,7 +339,7 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {sta
                 values: [this.history_data.timestamps.slice(-history_tail)],
             };
 
-            for(let channel_index = 0; channel_index < this.pending_live_data.samples.length; ++channel_index){
+            for(let channel_index = 0; channel_index < this.history_data.samples.length; ++channel_index){
                 if (this.history_data.samples[channel_index].length > 0) {
                     history_data.keys.push('phase_switcher_' + channel_index);
                     history_data.names.push(get_chart_channel_name(channel_index));
@@ -538,6 +521,7 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {sta
                         </div>
                     </FormRow>
 
+                    {/* Chart */}                                
                     <FormSeparator heading={__("phase_switcher.content.meter")} first={true} colClasses={"justify-content-between align-items-center col"} extraClasses={"pr-0 pr-lg-3"} >
                         <div class="mb-2">
                             <InputSelect value={this.state.chart_selected} onValue={(v) => {
@@ -546,12 +530,16 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {sta
                                 this.setState({chart_selected: chart_selected}, () => {
                                     if (chart_selected == 'live') {
                                         this.uplot_loader_live_ref.current.set_show(true);
+                                        this.uplot_wrapper_live_ref.current.set_show(true);
                                         this.uplot_loader_history_ref.current.set_show(false);
-                                        this.update_live_uplot();
+                                        this.uplot_wrapper_history_ref.current.set_show(false);
+                                            this.update_live_uplot();
                                     }
                                     else {
                                         this.uplot_loader_history_ref.current.set_show(true);
+                                        this.uplot_wrapper_history_ref.current.set_show(true);
                                         this.uplot_loader_live_ref.current.set_show(false);
+                                        this.uplot_wrapper_live_ref.current.set_show(false);
                                         this.update_history_uplot();
                                     }
                                 });
