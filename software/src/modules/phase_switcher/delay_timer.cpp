@@ -15,11 +15,9 @@
  * Boston, MA 02111-1307, USA.
  */
 #include "delay_timer.h"
+#include "module_dependencies.h"
 
-#include "event_log.h"
 #include "tools.h"
-
-extern EventLog logger;
 
 bool DelayTimer::on_delay(bool signal, uint32_t delay_ms)
 {

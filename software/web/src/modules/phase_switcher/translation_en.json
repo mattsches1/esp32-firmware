@@ -1,5 +1,8 @@
 {
     "phase_switcher": {
+        "navbar": {
+            "phase_switcher": "Phase Switcher"
+        },
         "status": {
             "available_charging_power": "Available charging power",
             "active_phases": "Active phases",
@@ -9,9 +12,6 @@
             "three_phases": "Three",
             "quick_charging": "Quick charging",
             "start_quick_charging": "Start Quick Charging"
-        },
-        "navbar": {
-            "phase_switcher": "Phase Switcher"
         },
         "content": {
             "phase_switcher": "Phase Switcher",
@@ -76,8 +76,14 @@
 
             "meter": "Energy Meter",
             "actual_charging_power": "Actual charging power",
-            "history": "History (12 h)",
-            "live": "Live"
+            "history_48": "History (48 h)",
+            "history_24": "History (24 h)",
+            "history_12": "History (12 h)",
+            "history_6": "History (6 h)",
+            "history_3": "History (3 h)",
+            "live": "Live (6 min)",
+            "no_data": "No data available!",
+            "loading": "Loading data..."
         },
         "script": {
             "save_failed": "Failed to save the phase switcher configuration",

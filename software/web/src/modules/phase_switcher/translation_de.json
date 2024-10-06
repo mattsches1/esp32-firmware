@@ -1,5 +1,8 @@
 {
     "phase_switcher": {
+        "navbar": {
+            "phase_switcher": "Phasenumschaltung"
+        },
         "status": {
             "available_charging_power": "Verfügbare Ladeleistung",
             "active_phases": "Aktive Phasen",
@@ -9,9 +12,6 @@
             "three_phases": "Drei",
             "quick_charging": "Schnellladen",
             "start_quick_charging": "Schnellladen starten"
-        },
-        "navbar": {
-            "phase_switcher": "Phasenumschaltung"
         },
         "content": {
             "phase_switcher": "Phasenumschaltung",
@@ -76,8 +76,14 @@
 
             "meter": "Stromzähler",
             "actual_charging_power": "Aktuelle Ladeleistung",
-            "history": "Verlauf (12 h)",
-            "live": "Live"    
+            "history_48": "Verlauf (48 h)",
+            "history_24": "Verlauf (24 h)",
+            "history_12": "Verlauf (12 h)",
+            "history_6": "Verlauf (6 h)",
+            "history_3": "Verlauf (3 h)",
+            "live": "Live (6 min)",
+            "no_data": "Keine Daten vorhanden!",
+            "loading": "Lade Daten..."
         },
         "script": {
             "save_failed": "Speichern der Konfiguration für die automatische Phasenumschaltung fehlgeschlagen.",

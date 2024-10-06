@@ -16,14 +16,10 @@
  * Boston, MA 02111-1307, USA.
  */
 
-import $ from "../../ts/jq";
-
 import * as util from "../../ts/util";
 import * as API from "../../ts/api";
-
-import { h, render, createRef, Fragment, Component, ComponentChild } from "preact";
+import { h, createRef, Fragment, Component, ComponentChild, RefObject} from "preact";
 import { translate_unchecked, __ } from "../../ts/translation";
-
 import { ConfigComponent } from "../../ts/components/config_component";
 import { ConfigForm } from "../../ts/components/config_form";
 import { FormRow } from "../../ts/components/form_row";
@@ -36,10 +32,16 @@ import { CollapsedSection } from "../../ts/components/collapsed_section";
 import { OutputFloat } from "../../ts/components/output_float";
 import { IndicatorGroup } from "../../ts/components/indicator_group";
 import { Button } from "react-bootstrap";
-import uPlot from 'uplot';
+import { UplotLoader } from "../../ts/components/uplot_loader";
+import { UplotWrapper, UplotData } from "../../ts/components/uplot_wrapper";
 import { FormSeparator } from "../../ts/components/form_separator";
-
 import { MeterValueID, METER_VALUE_IDS, METER_VALUE_INFOS, METER_VALUE_ORDER } from "../meters/meter_value_id";
+import { NavbarItem } from "../../ts/components/navbar_item";
+import { Zap } from "react-feather";
+
+export function PhaseSwitcherNavbar() {
+    return <NavbarItem name="phase_switcher" module="phase_switcher" title={__("phase_switcher.navbar.phase_switcher")} symbol={<Zap/>} />;
+}
 
 // ========= CONFIG =========
 
@@ -48,487 +50,92 @@ type PhaseSwitcherConfig = API.getType['phase_switcher/config'];
 interface PhaseSwitcherState {
     state: API.getType['phase_switcher/state'];
     low_level_state: API.getType['phase_switcher/low_level_state'];
-    chart_selected: "history"|"live";
+    chart_selected: "history_48"|"history_24"|"history_12"|"history_6"|"history_3"|"live";
 }
 
-interface MeterValues {
-    meter: API.getType["meters/0/values"];
-}
-
-
-interface UplotData {
+interface CachedData {
     timestamps: number[];
     samples: number[][];
 }
 
-interface UplotWrapperProps {
-    id: string;
-    class: string;
-    sidebar_id: string;
-    show: boolean;
-    legend_time_with_seconds: boolean;
-    x_height: number;
-    x_include_date: boolean;
-    y_min?: number;
-    y_max?: number;
-    y_diff_min?: number;
-}
+function calculate_live_data(offset: number, samples_per_second: number, samples: number[/*channel index*/][]): CachedData {
+    let timestamp_slot_count: number = 0;
 
-class UplotWrapper extends Component<UplotWrapperProps, {}> {
-    uplot: uPlot;
-    data: UplotData;
-    pending_data: UplotData;
-    visible: boolean = false;
-    div_ref = createRef();
-    observer: ResizeObserver;
-    y_min: number = 0;
-    y_max: number = 0;
-
-    shouldComponentUpdate() {
-        return false;
-    }
-
-    componentDidMount() {
-        if (this.uplot) {
-            return;
-        }
-
-        // FIXME: special hack for status page that is visible by default
-        //        and doesn't receive an initial shown event because of that
-        this.visible = this.props.sidebar_id === "status";
-
-        // We have to use jquery here or else the events don't fire?
-        // This can be removed once the sidebar is ported to preact.
-        $(`#sidebar-${this.props.sidebar_id}`).on('shown.bs.tab', () => {
-            this.visible = true;
-
-            if (this.pending_data !== undefined) {
-                this.set_data(this.pending_data);
+    if (samples_per_second == 0) { // implies atmost one sample
+        timestamp_slot_count = 1;
+    } else {
+        for (let channel_index = 0; channel_index < samples.length; ++channel_index) {
+            if (samples[channel_index] !== null) {
+                timestamp_slot_count = Math.max(timestamp_slot_count, samples[channel_index].length);
             }
-        });
-
-        $(`#sidebar-${this.props.sidebar_id}`).on('hidden.bs.tab', () => {
-            this.visible = false;
-        });
-
-        let get_size = () => {
-            let div = this.div_ref.current;
-            let aspect_ratio = parseFloat(getComputedStyle(div).aspectRatio);
-
-            if (isNaN(aspect_ratio)) {
-                aspect_ratio = 2;
-            }
-
-            return {
-                width: div.clientWidth,
-                height: Math.floor((div.clientWidth + (window.innerWidth - document.documentElement.clientWidth)) / aspect_ratio),
-            }
-        }
-
-        let options = {
-            ...get_size(),
-            pxAlign: 0,
-            cursor: {
-                drag: {
-                    x: false, // disable zoom
-                },
-            },
-            series: [
-                {
-                    label: __("phase_switcher.script.time"),
-                    value: (self: uPlot, rawValue: number) => {
-                        if (rawValue !== null) {
-                            if (this.props.legend_time_with_seconds) {
-                                return util.timestamp_sec_to_date(rawValue)
-                            }
-                            else {
-                                return util.timestamp_min_to_date((rawValue / 60), '???');
-                            }
-                        }
-
-                        return null;
-                    },
-                },
-                {
-                    show: true,
-                    pxAlign: 0,
-                    spanGaps: false,
-                    label: __("phase_switcher.status.available_charging_power"),
-                    scale: "power",
-                    value: (self: uPlot, rawValue: number) => util.hasValue(rawValue) ? util.toLocaleFixed(rawValue) + " W" : null,
-                    stroke: "rgb(0, 123, 0)",
-                    fill: "rgb(0, 123, 0, 0.1)",
-                    width: 2,
-                    points: {
-                        show: false,
-                    },
-                },
-                {
-                    show: true,
-                    pxAlign: 0,
-                    spanGaps: false,
-                    label: __("phase_switcher.content.actual_charging_power"),
-                    scale: "power",
-                    value: (self: uPlot, rawValue: number) => util.hasValue(rawValue) ? util.toLocaleFixed(rawValue) + " W" : null,
-                    stroke: "rgb(0, 123, 255)",
-                    fill: "rgb(0, 123, 255, 0.1)",
-                    width: 2,
-                    points: {
-                        show: false,
-                    },
-                },
-                {
-                    show: true,
-                    pxAlign: 0,
-                    spanGaps: false,
-                    label: __("phase_switcher.content.requested_phases"),
-                    scale: "phases",
-                    value: (self: uPlot, rawValue: number) => util.hasValue(rawValue) ? util.toLocaleFixed(rawValue) : null,
-                    stroke: "rgb(0, 0, 0)",
-                    fill: "rgb(0, 0, 0, 0.1)",
-                    width: 2,
-                    points: {
-                        show: false,
-                    },
-                },
-            ],
-            axes: [
-                {
-                    size: this.props.x_height,
-                    incrs: [
-                        60,
-                        60 * 2,
-                        3600,
-                        3600 * 2,
-                        3600 * 4,
-                        3600 * 6,
-                        3600 * 8,
-                        3600 * 12,
-                        3600 * 24,
-                    ],
-                    values: (self: uPlot, splits: number[], axisIdx: number, foundSpace: number, foundIncr: number) => {
-                        let values: string[] = new Array(splits.length);
-                        let last_year: string = null;
-                        let last_month_and_day: string = null;
-
-                        for (let i = 0; i < splits.length; ++i) {
-                            let date = new Date(splits[i] * 1000);
-                            let value = date.toLocaleString([], {hour: '2-digit', minute: '2-digit'});
-
-                            if (this.props.x_include_date && foundIncr >= 3600) {
-                                let year = date.toLocaleString([], {year: 'numeric'});
-                                let month_and_day = date.toLocaleString([], {month: '2-digit', day: '2-digit'});
-
-                                if (year != last_year) {
-                                    value += '\n' + date.toLocaleString([], {year: 'numeric', month: '2-digit', day: '2-digit'});
-                                    last_year = year;
-                                    last_month_and_day = month_and_day;
-                                }
-
-                                if (month_and_day != last_month_and_day) {
-                                    value += '\n' + date.toLocaleString([], {month: '2-digit', day: '2-digit'});
-                                    last_month_and_day = month_and_day;
-                                }
-                            }
-
-                            values[i] = value;
-                        }
-
-                        return values;
-                    },
-                },
-                {
-                    label: __("phase_switcher.script.power") + " [Watt]",
-                    labelSize: 20,
-                    labelGap: 2,
-                    labelFont: 'bold 14px system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"',
-                    scale: "power",
-                    size: (self: uPlot, values: string[], axisIdx: number, cycleNum: number): number => {
-                        let size = 0;
-
-                        if (values) {
-                            self.ctx.save();
-                            self.ctx.font = self.axes[axisIdx].font;
-
-                            for (let i = 0; i < values.length; ++i) {
-                                size = Math.max(size, self.ctx.measureText(values[i]).width);
-                            }
-
-                            self.ctx.restore();
-                        }
-
-                        return Math.ceil(size / devicePixelRatio) + 20;
-                    },
-// !!! FIXME                
-                    // values: (self: uPlot, splits: number[]) => {
-                    //     let values: string[] = new Array(splits.length);
-
-                    //     for (let digits = 0; digits <= 3; ++digits) {
-                    //         let last_value: string = null;
-                    //         let unique = true;
-
-                    //         for (let i = 0; i < splits.length; ++i) {
-                    //             values[i] = util.toLocaleFixed(splits[i], digits);
-
-                    //             if (last_value == values[i]) {
-                    //                 unique = false;
-                    //             }
-
-                    //             last_value = values[i];
-                    //         }
-
-                    //         if (unique) {
-                    //             break;
-                    //         }
-                    //     }
-
-                    //     return values;
-                    // },
-                },
-                {
-                    label: __("phase_switcher.script.phases"),
-                    labelSize: 20,
-                    labelGap: 2,
-                    labelFont: 'bold 14px system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"',
-                    side: 1,
-                    scale: "phases",
-                    size: (self: uPlot, values: string[], axisIdx: number, cycleNum: number): number => {
-                        let size = 0;
-
-                        if (values) {
-                            self.ctx.save();
-                            self.ctx.font = self.axes[axisIdx].font;
-
-                            for (let i = 0; i < values.length; ++i) {
-                                size = Math.max(size, self.ctx.measureText(values[i]).width);
-                            }
-
-                            self.ctx.restore();
-                        }
-
-                        return Math.ceil(size / devicePixelRatio) + 20;
-                    },
-                    incrs: [0, 1, 2, 3],
-                    grid: {
-                        show: false,
-                    },      
-                },
-            ],
-            scales: {
-                power: {
-                    range: (self: uPlot, initMin: number, initMax: number, scaleKey: string): uPlot.Range.MinMax => {
-                        console.log("y min: " + uPlot.rangeNum(this.y_min, this.y_max, {min: {}, max: {}})[0] + "; max: " + uPlot.rangeNum(this.y_min, this.y_max, {min: {}, max: {}})[1]);
-                        return uPlot.rangeNum(this.y_min, this.y_max, {min: {}, max: {}});
-                }   
-                },
-                phases: {
-                    range: (self: uPlot, initMin: number, initMax: number, scaleKey: string): uPlot.Range.MinMax => {
-                        let phases_min: number = uPlot.rangeNum(this.y_min, this.y_max, {min: {}, max: {}})[0] / 230 / 6;
-                        let phases_max: number = uPlot.rangeNum(this.y_min, this.y_max, {min: {}, max: {}})[1] / 230 / 6;
-                        return [phases_min, phases_max];
-                    }
-                },
-            },
-            padding: [null, 20, null, 5] as uPlot.Padding,
-            plugins: [
-                {
-                    hooks: {
-                        setSeries: (self: uPlot, seriesIdx: number, opts: uPlot.Series) => {
-                            this.update_internal_data();
-                        },
-                        drawAxes: [
-                            (self: uPlot) => {
-                                let ctx = self.ctx;
-
-                                ctx.save();
-
-                                let s  = self.series[0];
-                                let xd = self.data[0];
-                                let [i0, i1] = s.idxs;
-                                let x0 = self.valToPos(xd[i0], 'x', true) - self.axes[0].ticks.size;
-                                let y0 = self.valToPos(0, 'y', true);
-                                let x1 = self.valToPos(xd[i1], 'x', true);
-                                let y1 = self.valToPos(0, 'y', true);
-
-                                const lineWidth = 2;
-                                const offset = (lineWidth % 2) / 2;
-
-                                ctx.translate(offset, offset);
-
-                                ctx.beginPath();
-                                ctx.lineWidth = lineWidth;
-                                ctx.strokeStyle = 'rgb(0,0,0,0.2)';
-                                ctx.moveTo(x0, y0);
-                                ctx.lineTo(x1, y1);
-                                ctx.stroke();
-
-                                ctx.translate(-offset, -offset);
-
-                                ctx.restore();
-                            }
-                        ],
-                    },
-                },
-            ],
-        };
-
-        let div = this.div_ref.current;
-        this.uplot = new uPlot(options, [], div);
-
-        let resize = () => {
-            let size = get_size();
-
-            if (size.width == 0 || size.height == 0) {
-                return;
-            }
-
-            this.uplot.setSize(size);
-        };
-
-        try {
-            this.observer = new ResizeObserver(() => {
-                resize();
-            });
-
-            this.observer.observe(div);
-        } catch (e) {
-            setInterval(() => {
-                resize();
-            }, 500);
-
-            window.addEventListener("resize", e => {
-                resize();
-            });
-        }
-
-        if (this.pending_data !== undefined) {
-            this.set_data(this.pending_data);
         }
     }
 
-    render(props?: UplotWrapperProps, state?: Readonly<{}>, context?: any): ComponentChild {
-        // the pl ain div is neccessary to make the size calculation stable in safari. without this div the height continues to grow
-        return <div><div ref={this.div_ref} id={props.id} class={props.class} style={`display: ${props.show ? 'block' : 'none'};`} /></div>;
-    }
-
-    set_show(show: boolean) {
-        this.div_ref.current.style.display = show ? 'block' : 'none';
-    }
-
-    update_internal_data() {
-        let y_min: number = this.props.y_min;
-        let y_max: number = this.props.y_max;
-
-        for (let j = 0; j < this.data.samples.length - 1; ++j){
-
-            for (let i = 0; i < this.data.samples[j].length; ++i) {
-
-                let value = this.data.samples[j][i];
-
-                if (value !== null) {
-                    if (y_min === undefined || value < y_min) {
-                        y_min = value;
-                    }
-
-                    if (y_max === undefined || value > y_max) {
-                        y_max = value;
-                    }
-                }
-            }
-        }
-
-        if (y_min === undefined && y_max === undefined) {
-            y_min = 0;
-            y_max = 0;
-        }
-        else if (y_min === undefined) {
-            y_min = y_max;
-        }
-        else if (y_max === undefined) {
-            y_max = y_min;
-        }
-
-        let y_diff_min = this.props.y_diff_min;
-
-        if (y_diff_min !== undefined) {
-            let y_diff = y_max - y_min;
-
-            if (y_diff < y_diff_min) {
-                let y_center = y_min + y_diff / 2;
-
-                let new_y_min = Math.floor(y_center - y_diff_min / 2);
-                let new_y_max = Math.ceil(y_center + y_diff_min / 2);
-
-                if (new_y_min < 0 && y_min >= 0) {
-                    // avoid negative range, if actual minimum is positive
-                    y_min = 0;
-                    y_max = y_diff_min;
-                } else {
-                    y_min = new_y_min;
-                    y_max = new_y_max;
-                }
-            }
-        }
-
-        y_min = 0;
-        this.y_min = y_min;
-        this.y_max = y_max;
-        
-        this.uplot.setData([this.data.timestamps, ...this.data.samples]);
-    }
-
-    set_data(data: UplotData) {
-        if (!this.uplot || !this.visible) {
-            this.pending_data = data;
-            return;
-        }
-
-        this.data = data;
-        this.pending_data = undefined;
-
-        this.update_internal_data();
-    }
-}
-
-function calculate_live_data(offset: number, samples_per_second: number, samples: number[][]): UplotData {
-    let data: UplotData = {timestamps: new Array(samples[0].length), samples: samples};
+    let data: CachedData = {timestamps: new Array(timestamp_slot_count), samples: new Array(samples.length)};
     let now = Date.now();
-    let start;
-    let step;
-    
-    if (samples_per_second == 0) { // implies samples.length == 1
+    let start: number;
+    let step: number;
+
+    if (samples_per_second == 0) {
         start = now - offset;
         step = 0;
     } else {
-        // (samples.length - 1) because samples_per_second defines the gaps between
+        // (timestamp_slot_count - 1) because samples_per_second defines the gaps between
         // two samples. with N samples there are (N - 1) gaps, while the lastest/newest
         // sample is offset milliseconds old
-        start = now - (samples[0].length - 1) / samples_per_second * 1000 - offset;
+        start = now - (timestamp_slot_count - 1) / samples_per_second * 1000 - offset;
         step = 1 / samples_per_second * 1000;
     }
 
-    for(let i = 0; i < samples[0].length; ++i) {
-        data.timestamps[i] = (start + i * step) / 1000;
+    for (let timestamp_slot = 0; timestamp_slot < timestamp_slot_count; ++timestamp_slot) {
+        data.timestamps[timestamp_slot] = (start + timestamp_slot * step) / 1000;
+    }
+
+    for (let channel_index = 0; channel_index < samples.length; ++channel_index) {
+        if (samples[channel_index] === null) {
+            data.samples[channel_index] = [];
+        }
+        else {
+            data.samples[channel_index] = samples[channel_index];
+        }
     }
 
     return data;
 }
 
-function calculate_history_data(offset: number, samples: number[][]): UplotData {
-    const HISTORY_MINUTE_INTERVAL = 1;
+function calculate_history_data(offset: number, samples: number[/*channel_index*/][]): CachedData {
+    const HISTORY_MINUTE_INTERVAL = 4;
 
-    let data: UplotData = {timestamps: new Array(samples[0].length), samples: samples};
+    let timestamp_slot_count: number = 0;
+
+    for (let channel_index = 0; channel_index < samples.length; ++channel_index) {
+        if (samples[channel_index] !== null) {
+            timestamp_slot_count = Math.max(timestamp_slot_count, samples[channel_index].length);
+        }
+    }
+
+    let data: CachedData = {timestamps: new Array(timestamp_slot_count), samples: new Array(samples.length-1)};
     let now = Date.now();
     let step = HISTORY_MINUTE_INTERVAL * 60 * 1000;
-    // (samples[0].length - 1) because step defines the gaps between two samples.
+
+    // (timestamp_slot_count - 1) because step defines the gaps between two samples.
     // with N samples there are (N - 1) gaps, while the lastest/newest sample is
     // offset milliseconds old. there might be no data point on a full hour
     // interval. to get nice aligned ticks nudge the ticks by at most half of a
     // sampling interval
-    let start = Math.round((now - (samples[0].length - 1) * step - offset) / step) * step;
+    let start = Math.round((now - (timestamp_slot_count - 1) * step - offset) / step) * step;
 
-    for(let i = 0; i < samples[0].length; ++i) {
-        data.timestamps[i] = (start + i * step) / 1000;
+    for (let timestamp_slot = 0; timestamp_slot < timestamp_slot_count; ++timestamp_slot) {
+        data.timestamps[timestamp_slot] = (start + timestamp_slot * step) / 1000;
+    }
+
+    for (let channel_index = 0; channel_index < samples.length; ++channel_index) {
+        if (samples[channel_index] === null) {
+            data.samples[channel_index] = [];
+        }
+        else {
+            data.samples[channel_index] = samples[channel_index];
+        }
     }
 
     return data;
@@ -540,12 +147,15 @@ function array_append<T>(a: Array<T>, b: Array<T>, tail: number): Array<T> {
     return a.slice(-tail);
 }
 
-export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, PhaseSwitcherConfig & PhaseSwitcherState> {
+// export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, PhaseSwitcherConfig & PhaseSwitcherState> {
+export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {status_ref?: RefObject<PhaseSwitcherStatus>},PhaseSwitcherConfig & PhaseSwitcherState> {
     live_initialized = false;
-    live_data: UplotData;
-    pending_live_data: UplotData = {timestamps: [], samples: [[], [], []]};
+    live_data: CachedData = {timestamps: [], samples: []};
+    pending_live_data: CachedData;
     history_initialized = false;
-    history_data: UplotData;
+    history_data: CachedData = {timestamps: [], samples: []};
+    uplot_loader_live_ref = createRef();
+    uplot_loader_history_ref = createRef();
     uplot_wrapper_live_ref = createRef();
     uplot_wrapper_history_ref = createRef();
 
@@ -553,8 +163,8 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
         super('phase_switcher/config',
                 __("phase_switcher.script.save_failed"),
                 __("phase_switcher.script.reboot_content_changed"), {
-                    chart_selected: "history",
-              });
+                    chart_selected: "history_48",
+                });
 
         util.addApiEventListener('phase_switcher/state', () => {
             this.setState({state: API.get('phase_switcher/state')});
@@ -580,8 +190,9 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
                 this.pending_live_data.samples[i].push(...live_extra.samples[i]);
             }
 
-            if (this.pending_live_data.samples[0].length >= 5) {
+            if (this.pending_live_data.timestamps.length >= 5) {
                 this.live_data.timestamps = array_append(this.live_data.timestamps, this.pending_live_data.timestamps, 720);
+                
                 for(let i = 0; i < this.live_data.samples.length; ++i){
                     this.live_data.samples[i] = array_append(this.live_data.samples[i], this.pending_live_data.samples[i], 720);
                 }
@@ -590,7 +201,7 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
                 this.pending_live_data.samples = [[], [], []];
 
                 if (this.state.chart_selected == "live") {
-                    this.update_uplot();
+                    this.update_live_uplot();
                 }
             }
         });
@@ -603,18 +214,19 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
             }
 
             let history = API.get("phase_switcher/history_samples");
-            let samples: number[][] = [[], [], []];
+            let history_samples: number[][] = [[], [], []];
 
             for(let value_index = 0; value_index < history.samples.length; ++value_index){
-                samples[value_index] = array_append(this.history_data.samples[value_index], history.samples[value_index], 720);
+                if (history.samples[value_index] !== null) {
+                    history_samples[value_index] = array_append(this.history_data.samples[value_index], history.samples[value_index], 720);
+                }
             }
-            this.history_data = calculate_history_data(0, samples);
+            this.history_data = calculate_history_data(0, history_samples);
 
-            if (this.state.chart_selected == "history") {
-                this.update_uplot();
+            if (this.state.chart_selected.startsWith("history")) {
+                this.update_history_uplot();
             }
         });
-
     }
 
     update_live_cache() {
@@ -628,7 +240,7 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
                     return;
                 }
 
-                this.update_uplot();
+                this.update_live_uplot();
             });
     }
 
@@ -662,7 +274,7 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
                     return;
                 }
 
-                this.update_uplot();
+                this.update_history_uplot();
             });
     }
 
@@ -684,22 +296,65 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
         return true;
     }
 
-    update_uplot() {
-        if (this.state.chart_selected == 'live') {
-            if (this.uplot_wrapper_live_ref && this.uplot_wrapper_live_ref.current) {
-                this.uplot_wrapper_live_ref.current.set_data(this.live_data);
+    update_live_uplot() {
+        if (this.live_initialized && this.uplot_loader_live_ref.current && this.uplot_wrapper_live_ref.current) {
+            let live_data: UplotData = {
+                keys: [null],
+                names: [null],
+                values: [this.live_data.timestamps],
+            };
+
+            for(let channel_index = 0; channel_index < this.pending_live_data.samples.length; ++channel_index){
+                if (this.live_data.samples[channel_index].length > 0) {
+                    live_data.keys.push('phase_switcher_' + channel_index);
+                    live_data.names.push(get_chart_channel_name(channel_index));
+                    live_data.values.push(this.live_data.samples[channel_index]);
+                }
             }
+            this.uplot_loader_live_ref.current.set_data(live_data.keys.length > 1);
+            this.uplot_wrapper_live_ref.current.set_data(live_data);
         }
-        else {
-            if (this.uplot_wrapper_history_ref && this.uplot_wrapper_history_ref.current) {
-                this.uplot_wrapper_history_ref.current.set_data(this.history_data);
+    }
+
+    update_history_uplot() {
+        if (this.history_initialized && this.uplot_loader_history_ref.current && this.uplot_wrapper_history_ref.current) {
+            let history_tail = 720; // history_48
+
+            if (this.state.chart_selected == 'history_24') {
+                history_tail = 360;
             }
+            else if (this.state.chart_selected == 'history_12') {
+                history_tail = 180;
+            }
+            else if (this.state.chart_selected == 'history_6') {
+                history_tail = 90;
+            }
+            else if (this.state.chart_selected == 'history_3') {
+                history_tail = 45;
+            }
+
+            let history_data: UplotData = {
+                keys: [null],
+                names: [null],
+                values: [this.history_data.timestamps.slice(-history_tail)],
+            };
+
+            for(let channel_index = 0; channel_index < this.history_data.samples.length; ++channel_index){
+                if (this.history_data.samples[channel_index].length > 0) {
+                    history_data.keys.push('phase_switcher_' + channel_index);
+                    history_data.names.push(get_chart_channel_name(channel_index));
+                    history_data.values.push(this.history_data.samples[channel_index].slice(-history_tail));
+                }
+            }
+
+            this.uplot_loader_history_ref.current.set_data(history_data.keys.length > 1);
+            this.uplot_wrapper_history_ref.current.set_data(history_data);
         }
     }
 
     render(props: {}, api_data: Readonly<PhaseSwitcherConfig & PhaseSwitcherState>) {
         if (!util.render_allowed() || !API.hasFeature("phase_switcher") || !API.hasFeature("meters")) {
-            return <></>
+            return <SubPage name="phase_switcher" />;
         }
 
         let value_ids = API.get_unchecked(`meters/0/value_ids`);
@@ -715,7 +370,7 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
         }
     
         return (
-            <SubPage>
+            <SubPage name="phase_switcher">
                 <ConfigForm id="phase_switcher_config_form" 
                             title={__("phase_switcher.content.phase_switcher")} 
                             isModified={this.isModified()}
@@ -866,49 +521,86 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
                         </div>
                     </FormRow>
 
+                    {/* Chart */}                                
                     <FormSeparator heading={__("phase_switcher.content.meter")} first={true} colClasses={"justify-content-between align-items-center col"} extraClasses={"pr-0 pr-lg-3"} >
                         <div class="mb-2">
                             <InputSelect value={this.state.chart_selected} onValue={(v) => {
-                                    let chart_selected: "live"|"history" = v as any;
+                                let chart_selected: "history_48"|"history_24"|"history_12"|"history_6"|"history_3"|"live" = v as any;
 
-                                    this.setState({chart_selected: chart_selected}, () => {
-                                        if (chart_selected == 'live') {
-                                            this.uplot_wrapper_live_ref.current.set_show(true);
-                                            this.uplot_wrapper_history_ref.current.set_show(false);
-                                        }
-                                        else {
-                                            this.uplot_wrapper_history_ref.current.set_show(true);
-                                            this.uplot_wrapper_live_ref.current.set_show(false);
-                                        }
-
-                                        this.update_uplot();
-                                    });
-                                }}
-                                items={[
-                                    ["history", __("phase_switcher.content.history")],
-                                    ["live", __("phase_switcher.content.live")],
+                                this.setState({chart_selected: chart_selected}, () => {
+                                    if (chart_selected == 'live') {
+                                        this.uplot_loader_live_ref.current.set_show(true);
+                                        this.uplot_wrapper_live_ref.current.set_show(true);
+                                        this.uplot_loader_history_ref.current.set_show(false);
+                                        this.uplot_wrapper_history_ref.current.set_show(false);
+                                            this.update_live_uplot();
+                                    }
+                                    else {
+                                        this.uplot_loader_history_ref.current.set_show(true);
+                                        this.uplot_wrapper_history_ref.current.set_show(true);
+                                        this.uplot_loader_live_ref.current.set_show(false);
+                                        this.uplot_wrapper_live_ref.current.set_show(false);
+                                        this.update_history_uplot();
+                                    }
+                                });
+                            }}
+                            items={[
+                                ["history_48", __("phase_switcher.content.history_48")],
+                                ["history_24", __("phase_switcher.content.history_24")],
+                                ["history_12", __("phase_switcher.content.history_12")],
+                                ["history_6", __("phase_switcher.content.history_6")],
+                                ["history_3", __("phase_switcher.content.history_3")],
+                                ["live", __("phase_switcher.content.live")],
                             ]}/>
                         </div>
                     </FormSeparator>
-                    <UplotWrapper ref={this.uplot_wrapper_live_ref}
-                                    id="phase_switcher_chart_live"
-                                    class="phase_switcher-chart"
-                                    sidebar_id="phase_switcher"
-                                    show={false}
-                                    legend_time_with_seconds={true}
-                                    x_height={30}
-                                    x_include_date={false}
-                                    y_diff_min={100} />
-                    <UplotWrapper ref={this.uplot_wrapper_history_ref}
-                                    id="phase_switcher_chart_history"
-                                    class="phase_switcher-chart"
-                                    sidebar_id="phase_switcher"
-                                    show={true}
-                                    legend_time_with_seconds={false}
-                                    x_height={50}
-                                    x_include_date={true}
-                                    y_min={0}
-                                    y_max={1500} />
+                    <div style="position: relative;"> {/* this plain div is neccessary to make the size calculation stable in safari. without this div the height continues to grow */}
+                        <UplotLoader ref={this.uplot_loader_live_ref}
+                                        show={false}
+                                        marker_class={'h3'}
+                                        no_data={__("phase_switcher.content.no_data")}
+                                        loading={__("phase_switcher.content.loading")} >
+                            <UplotWrapper ref={this.uplot_wrapper_live_ref}
+                                            class="phase_switcher-chart pb-3"
+                                            sub_page="phase_switcher"
+                                            color_cache_group="phase_switcher.default"
+                                            show={false}
+                                            on_mount={() => this.update_live_uplot()}
+                                            legend_time_label={__("phase_switcher.script.time")}
+                                            legend_time_with_seconds={true}
+                                            aspect_ratio={3}
+                                            x_height={30}
+                                            x_padding_factor={0}
+                                            x_include_date={false}
+                                            y_diff_min={100}
+                                            y_unit="W"
+                                            y_label={__("phase_switcher.script.power") + " [Watt]"}
+                                            y_digits={0} />
+                        </UplotLoader>
+                        <UplotLoader ref={this.uplot_loader_history_ref}
+                                        show={true}
+                                        marker_class={'h3'}
+                                        no_data={__("phase_switcher.content.no_data")}
+                                        loading={__("phase_switcher.content.loading")} >
+                            <UplotWrapper ref={this.uplot_wrapper_history_ref}
+                                            class="phase_switcher-chart pb-3"
+                                            sub_page="phase_switcher"
+                                            color_cache_group="phase_switcher.default"
+                                            show={true}
+                                            on_mount={() => this.update_history_uplot()}
+                                            legend_time_label={__("phase_switcher.script.time")}
+                                            legend_time_with_seconds={false}
+                                            aspect_ratio={3}
+                                            x_height={50}
+                                            x_padding_factor={0}
+                                            x_include_date={true}
+                                            y_min={0}
+                                            y_max={1500}
+                                            y_unit="W"
+                                            y_label={__("phase_switcher.script.power") + " [Watt]"}
+                                            y_digits={0} />
+                        </UplotLoader>
+                    </div>
 
                     {/* Low Level State */}
                     <CollapsedSection label={__("phase_switcher.content.low_level_state")}>
@@ -972,8 +664,22 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, 
     }
 }
 
-render(<PhaseSwitcher/>, $('#phase_switcher')[0])
-
+function get_chart_channel_name(channel_index: number) {
+    switch(channel_index) { 
+        case 0: { 
+           return __("phase_switcher.status.available_charging_power"); 
+        } 
+        case 1: { 
+           return __("phase_switcher.content.actual_charging_power"); 
+        } 
+        case 2: { 
+            return __("phase_switcher.status.active_phases"); 
+        } 
+         default: { 
+           return "undefined"; 
+        }
+     } 
+}
 
 // ========= STATUS =========
 
@@ -998,6 +704,7 @@ export class PhaseSwitcherStatus extends Component<{}, PhaseSwitcherStatusState>
                 <FormRow label={__("phase_switcher.status.available_charging_power")} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4">
                     <OutputFloat value={state.state.available_charging_power} digits={0} scale={0} unit="W" maxFractionalDigitsOnPage={0} maxUnitLengthOnPage={1}/>
                 </FormRow>
+
                 <FormRow label={__("phase_switcher.status.quick_charging")} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4">
                     <Button variant="primary" className="form-control"
                         disabled={!(state.state.sequencer_state == 1 || state.state.sequencer_state == 50)}
@@ -1019,20 +726,11 @@ export class PhaseSwitcherStatus extends Component<{}, PhaseSwitcherStatusState>
                         ]}/>
                 </FormRow>
             </>;
-
-
     }
-
 }
 
-render(<PhaseSwitcherStatus />, $('#status-phase_switcher')[0]);
+// export function add_event_listeners(source: API.APIEventTarget) {}
 
-
-export function add_event_listeners(source: API.APIEventTarget) {}
-
-export function init() {}
-
-export function update_sidebar_state(module_init: any) {
-    $('#sidebar-phase_switcher').prop('hidden', !module_init.phase_switcher);
+export function init() {
 }
 

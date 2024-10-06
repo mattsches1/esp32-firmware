@@ -26,9 +26,6 @@
 #include "malloc_tools.h"
 #include "esp_heap_caps.h"
 
-#include "task_scheduler.h"
-#include "web_server.h"
-
 // How many hours to keep the coarse history for
 #define MULTI_VALUE_HISTORY_HOURS 12
 // How many minutes to keep the fine history for.
@@ -88,7 +85,7 @@ public:
     uint32_t begin_last_interval = 0;
     uint32_t end_last_interval = 0;
 
-    TF_Ringbuffer<MULTI_VALUE_HISTORY_VALUE_TYPE,
+    TF_PackedRingbuffer<MULTI_VALUE_HISTORY_VALUE_TYPE,
                   3 * 60 * MULTI_VALUE_HISTORY_MINUTE_INTERVAL,
                   uint32_t,
 #if defined(BOARD_HAS_PSRAM)
@@ -99,7 +96,7 @@ public:
                   heap_caps_free> live[MULTI_VALUE_HISTORY_NUMBER_OF_VALUES];
     uint32_t live_last_update = 0;
 
-    TF_Ringbuffer<MULTI_VALUE_HISTORY_VALUE_TYPE,
+    TF_PackedRingbuffer<MULTI_VALUE_HISTORY_VALUE_TYPE,
                   MULTI_VALUE_RING_BUF_SIZE,
                   uint32_t,
 #if defined(BOARD_HAS_PSRAM)
