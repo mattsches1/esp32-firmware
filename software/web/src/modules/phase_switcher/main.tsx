@@ -701,11 +701,11 @@ export class PhaseSwitcherStatus extends Component<{}, PhaseSwitcherStatusState>
             return <></>;
 
         return <>
-                <FormRow label={__("phase_switcher.status.available_charging_power")} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4">
+                <FormRow label={__("phase_switcher.status.available_charging_power")}>
                     <OutputFloat value={state.state.available_charging_power} digits={0} scale={0} unit="W" maxFractionalDigitsOnPage={0} maxUnitLengthOnPage={1}/>
                 </FormRow>
 
-                <FormRow label={__("phase_switcher.status.quick_charging")} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4">
+                <FormRow label={__("phase_switcher.status.quick_charging")}>
                     <Button variant="primary" className="form-control"
                         disabled={!(state.state.sequencer_state == 1 || state.state.sequencer_state == 50)}
                         onClick={() =>  API.call('phase_switcher/start_quick_charging', {}, __("phase_switcher.script.start_quick_charging_failed"))}>
@@ -713,7 +713,7 @@ export class PhaseSwitcherStatus extends Component<{}, PhaseSwitcherStatusState>
                     </Button>                            
                 </FormRow>
 
-                <FormRow label={__("phase_switcher.status.active_phases")} labelColClasses="col-lg-4" contentColClasses="col-lg-8 col-xl-4">
+                <FormRow label={__("phase_switcher.status.active_phases")}>
                     <IndicatorGroup
                         style="width: 100%"
                         class="flex-wrap"
@@ -729,7 +729,6 @@ export class PhaseSwitcherStatus extends Component<{}, PhaseSwitcherStatusState>
     }
 }
 
-// export function add_event_listeners(source: API.APIEventTarget) {}
 
 export function init() {
 }
