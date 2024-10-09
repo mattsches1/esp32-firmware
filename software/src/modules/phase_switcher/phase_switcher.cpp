@@ -115,10 +115,14 @@ void PhaseSwitcher::setup()
     api.addFeature("phase_switcher");
 
     task_scheduler.scheduleWithFixedDelay([this](){
-        this->handle_button();
         this->handle_evse();
-        this->sequencer();
         this->write_outputs();
+    }, 0, 125);
+
+    task_scheduler.scheduleWithFixedDelay([this](){
+        this->handle_button();
+        this->sequencer();
+        this->log_sequencer_state();
         this->contactor_check();
     }, 0, 250);
 
@@ -250,15 +254,15 @@ uint8_t PhaseSwitcher::get_phases_for_power(uint16_t available_charging_power)
     uint16_t max_power_two_phases = (max_current * 230 * 2 / 1000);
 
     // if (debug){
-    //     logger.printfln("  Phase switcher: get_phases_for_power w/ available_charging_power %d", available_charging_power);
-    //     logger.printfln("  Phase switcher: get_phases_for_power w/ MIN_POWER_ONE_PHASE %d, MIN_POWER_TWO_PHASES %d, MIN_POWER_THREE_PHASES %d", MIN_POWER_ONE_PHASE, MIN_POWER_TWO_PHASES, MIN_POWER_THREE_PHASES);
-    //     logger.printfln("  Phase switcher: get_phases_for_power w/ operating_mode %d", operating_mode);
-    //     logger.printfln("  Phase switcher: max. allowed current %d", max_current);
+    //     logger.printfln("  get_phases_for_power w/ available_charging_power %d", available_charging_power);
+    //     logger.printfln("  get_phases_for_power w/ MIN_POWER_ONE_PHASE %d, MIN_POWER_TWO_PHASES %d, MIN_POWER_THREE_PHASES %d", MIN_POWER_ONE_PHASE, MIN_POWER_TWO_PHASES, MIN_POWER_THREE_PHASES);
+    //     logger.printfln("  get_phases_for_power w/ operating_mode %d", operating_mode);
+    //     logger.printfln("  max. allowed current %d", max_current);
     // }    
 
     switch(operating_mode){
         case one_phase_static:
-            if (debug) logger.printfln("    Phase switcher: get_phases_for_power one phase static");
+            if (debug) logger.printfln("    get_phases_for_power one phase static");
             if (available_charging_power >= MIN_POWER_ONE_PHASE){
                 return 1;
             } else {
@@ -266,7 +270,7 @@ uint8_t PhaseSwitcher::get_phases_for_power(uint16_t available_charging_power)
             }
 
         case two_phases_static:
-            if (debug) logger.printfln("    Phase switcher: get_phases_for_power two phases static");
+            if (debug) logger.printfln("    get_phases_for_power two phases static");
             if (available_charging_power >= MIN_POWER_TWO_PHASES){
                 return 2;
             } else {
@@ -274,7 +278,7 @@ uint8_t PhaseSwitcher::get_phases_for_power(uint16_t available_charging_power)
             }
 
         case three_phases_static:
-            if (debug) logger.printfln("    Phase switcher: get_phases_for_power three phases static");
+            if (debug) logger.printfln("    get_phases_for_power three phases static");
             if (available_charging_power >= MIN_POWER_THREE_PHASES){
                 return 3;
             } else {
@@ -282,7 +286,7 @@ uint8_t PhaseSwitcher::get_phases_for_power(uint16_t available_charging_power)
             }
 
         case one_two_phases_dynamic:
-            if (debug) logger.printfln("    Phase switcher: get_phases_for_power one/two phases dynamic");
+            if (debug) logger.printfln("    get_phases_for_power one/two phases dynamic");
             if (available_charging_power >= MIN_POWER_TWO_PHASES && available_charging_power > max_power_one_phase){
                 return 2;
             } else if (available_charging_power >= MIN_POWER_ONE_PHASE){
@@ -292,7 +296,7 @@ uint8_t PhaseSwitcher::get_phases_for_power(uint16_t available_charging_power)
             }
 
         case one_three_phases_dynamic:
-            if (debug) logger.printfln("    Phase switcher: get_phases_for_power one/three phases dynamic");
+            if (debug) logger.printfln("    get_phases_for_power one/three phases dynamic");
             if (available_charging_power >= MIN_POWER_THREE_PHASES && available_charging_power > max_power_one_phase){
                 return 3;
             } else if (available_charging_power >= MIN_POWER_ONE_PHASE){
@@ -302,7 +306,7 @@ uint8_t PhaseSwitcher::get_phases_for_power(uint16_t available_charging_power)
             }
 
         case one_two_three_phases_dynamic:
-            if (debug) logger.printfln("    Phase switcher: get_phases_for_power one/two/three phases dynamic");
+            if (debug) logger.printfln("    get_phases_for_power one/two/three phases dynamic");
             if (available_charging_power >= MIN_POWER_THREE_PHASES && available_charging_power > max_power_two_phases){
                 return 3;
             } else if (available_charging_power >= MIN_POWER_TWO_PHASES && available_charging_power > max_power_one_phase){
@@ -314,7 +318,7 @@ uint8_t PhaseSwitcher::get_phases_for_power(uint16_t available_charging_power)
             }
         
         default:
-            if (debug) logger.printfln("    Phase switcher: get_phases_for_power default");
+            if (debug) logger.printfln("    get_phases_for_power default");
             return 0;
     }
 }
@@ -323,7 +327,7 @@ void PhaseSwitcher::set_available_charging_power(uint16_t available_charging_pow
 {
     PhaseSwitcher::available_charging_power = available_charging_power;
     requested_phases_pending = get_phases_for_power(available_charging_power);
-    if (debug) logger.printfln("  Phase switcher: set_available_charging_power w/ requested_phases_pending %d, requested_phases %d", requested_phases_pending, requested_phases);
+    if (debug) logger.printfln("  set_available_charging_power w/ requested_phases_pending %d, requested_phases %d", requested_phases_pending, requested_phases);
     set_current(available_charging_power, requested_phases);
 }
 
@@ -361,13 +365,13 @@ void PhaseSwitcher::handle_button()
         button_released_time = millis();
 
     if (deadline_elapsed(button_released_time + QUICK_CHARGE_DELAY_TIME) && quick_charging_requested){
-        if (debug) logger.printfln("    Phase switcher: Button released, initiating quick charging");
+        if (debug) logger.printfln("    Button released, initiating quick charging");
         start_quick_charging();
         quick_charging_requested = false;
     }
 
     if (deadline_elapsed(button_pressed_time + QUICK_CHARGE_BUTTON_PRESSED_TIME)){
-        if (debug) logger.printfln("    Phase switcher: Quick charging command received and stored");
+        if (debug) logger.printfln("    Quick charging command received and stored");
         quick_charging_requested = true;
     }
 }
@@ -422,7 +426,7 @@ void PhaseSwitcher::monitor_requested_phases()
     if (debug){
         static uint8_t sequencer_last_requested_phases_pending_delayed = requested_phases_pending_delayed;
         if (requested_phases_pending_delayed != sequencer_last_requested_phases_pending_delayed){
-            logger.printfln("  Phase switcher: requested_phases_pending_delayed changed from %d to %d; requested_phases_pending: %d", sequencer_last_requested_phases_pending_delayed, requested_phases_pending_delayed, requested_phases_pending);
+            logger.printfln("  requested_phases_pending_delayed changed from %d to %d; requested_phases_pending: %d", sequencer_last_requested_phases_pending_delayed, requested_phases_pending_delayed, requested_phases_pending);
             sequencer_last_requested_phases_pending_delayed = requested_phases_pending_delayed;
         }
     }    
@@ -430,7 +434,7 @@ void PhaseSwitcher::monitor_requested_phases()
 
 void PhaseSwitcher::sequencer()
 {
-    if (!enabled || charger_state == not_connected || charger_state == error){
+    if (!enabled || charger_state == not_connected){
         sequencer_state = inactive;
         quick_charging_active = false;
         requested_phases = 0;
@@ -448,13 +452,6 @@ void PhaseSwitcher::sequencer()
         case pausing_while_switching:   sequencer_state_pausing_while_switching(); break;
         case stopped_by_evse:           sequencer_state_stopped_by_evse(); break;
     }
-
-    static PhaseSwitcherState last_sequencer_state = inactive;
-    if (last_sequencer_state != sequencer_state){
-        if (debug) logger.printfln("  Phase switcher sequencer state changed to: %d", sequencer_state);
-        last_state_change = millis();
-        last_sequencer_state = sequencer_state;
-    } 
 }
 
 void PhaseSwitcher::sequencer_state_inactive()
@@ -618,11 +615,12 @@ void PhaseSwitcher::sequencer_state_stopped_by_evse()
     if (quick_charging_active){
         logger.printfln("Quick charging active, requesting EVSE to start charging.");
         sequencer_state = waiting_for_evse_start;
-    } else if (charger_state == ready_for_charging || charger_state == charging){
+    } else if (charger_state == charging){
         if (delayed_phase_request[0]){
-            if (debug) logger.printfln("  Phase switcher: charging started, requested_phases_pending_delayed %d", requested_phases_pending_delayed);
+            if (debug) logger.printfln("  charging started, requested_phases_pending_delayed %d", requested_phases_pending_delayed);
             requested_phases = requested_phases_pending_delayed;
             set_current(api_available_charging_power.get("power")->asUint(), requested_phases);
+            sequencer_state = active;
         } else {
             logger.printfln("Charging initiated by EVSE but requested power is not sufficient. Requesting EVSE to stop charging.");
             sequencer_state = cancelling_evse_start;
@@ -642,7 +640,7 @@ void PhaseSwitcher::write_outputs()
     if (debug) {
         static bool last_evse_relay_output = false;
         if (last_evse_relay_output != evse_relay_output){
-            logger.printfln("EVSE relay output changed to %d; contactor_error %d; requested_phases: %d ", evse_relay_output, contactor_error, requested_phases);
+            logger.printfln("  EVSE relay output changed to %d; contactor_error %d; requested_phases: %d ", evse_relay_output, contactor_error, requested_phases);
             last_evse_relay_output = evse_relay_output;
         }
     }
@@ -809,3 +807,12 @@ void PhaseSwitcher::update_all_data()
 
 }
 
+void PhaseSwitcher::log_sequencer_state()
+{
+    static PhaseSwitcherState last_sequencer_state = inactive;
+    if (last_sequencer_state != sequencer_state){
+        if (debug) logger.printfln("  Sequencer state changed to: %d", sequencer_state);
+        last_state_change = millis();
+        last_sequencer_state = sequencer_state;
+    } 
+}

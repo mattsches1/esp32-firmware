@@ -123,6 +123,7 @@ private:
     void contactor_check();
     void update_all_data();
     void update_history();
+    void log_sequencer_state();
     
     QuadRelayBricklet quad_relay_bricklet = QuadRelayBricklet(
             TF_INDUSTRIAL_QUAD_RELAY_V2_DEVICE_IDENTIFIER,
