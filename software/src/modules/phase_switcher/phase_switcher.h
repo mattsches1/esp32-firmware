@@ -99,7 +99,6 @@ private:
     void set_available_charging_power(uint16_t available_charging_power);
     void set_current(uint16_t available_charging_power, uint8_t phases);
     uint8_t get_phases_for_power(uint16_t available_charging_power);
-    uint8_t get_phases_from_delayed_phase_requests(bool delayed_phase_request[3]);
     void start_quick_charging();
 
     void handle_button();

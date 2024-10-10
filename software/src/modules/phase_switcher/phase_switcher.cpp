@@ -115,20 +115,17 @@ void PhaseSwitcher::setup()
     api.addFeature("phase_switcher");
 
     task_scheduler.scheduleWithFixedDelay([this](){
-        this->handle_evse();
-        this->write_outputs();
     }, 0, 125);
 
     task_scheduler.scheduleWithFixedDelay([this](){
+        this->monitor_requested_phases();
+        this->handle_evse();
         this->handle_button();
         this->sequencer();
         this->log_sequencer_state();
+        this->write_outputs();
         this->contactor_check();
     }, 0, 250);
-
-    task_scheduler.scheduleWithFixedDelay([this](){
-        this->monitor_requested_phases();
-    }, 100, 1000);
 
     task_scheduler.scheduleWithFixedDelay([this](){
         update_all_data();
@@ -416,17 +413,17 @@ void PhaseSwitcher::monitor_requested_phases()
         for (int i=0; i<=2; i++){
             if (delayed_phase_request[i]){
                 delayed_phase_request[i] = delay_timer[i].on_delay(delay_timer[i].off_delay((requested_phases_pending >= i+1), api_config_in_use.get("delay_time_less_phases")->asUint() * 1000), api_config_in_use.get("delay_time_more_phases")->asUint() * 1000);
-                requested_phases_pending_delayed = i+1;
             } else {
                 delayed_phase_request[i] = delay_timer[i].off_delay(delay_timer[i].on_delay((requested_phases_pending >= i+1), api_config_in_use.get("delay_time_more_phases")->asUint() * 1000), api_config_in_use.get("delay_time_less_phases")->asUint() * 1000);
             }
+            if (delayed_phase_request[i]) requested_phases_pending_delayed = i+1;
         }
     } 
 
     if (debug){
         static uint8_t sequencer_last_requested_phases_pending_delayed = requested_phases_pending_delayed;
         if (requested_phases_pending_delayed != sequencer_last_requested_phases_pending_delayed){
-            logger.printfln("  requested_phases_pending_delayed changed from %d to %d; requested_phases_pending: %d", sequencer_last_requested_phases_pending_delayed, requested_phases_pending_delayed, requested_phases_pending);
+            logger.printfln("  requested_phases_pending_delayed changed from %d to %d; requested_phases_pending: %d; delayed_phase_request[0]: %d", sequencer_last_requested_phases_pending_delayed, requested_phases_pending_delayed, requested_phases_pending, delayed_phase_request[0]);
             sequencer_last_requested_phases_pending_delayed = requested_phases_pending_delayed;
         }
     }    
@@ -476,8 +473,10 @@ void PhaseSwitcher::sequencer_state_inactive()
 
 void PhaseSwitcher::sequencer_state_standby()
 {
-    if (delayed_phase_request[0] || quick_charging_active){
+    if (requested_phases_pending_delayed > 0 || quick_charging_active){
         logger.printfln("Requesting EVSE to start charging.");
+
+        if (debug) logger.printfln("  requested_phases_pending_delayed: %d; requested_phases_pending: %d; delayed_phase_request[0]: %d", requested_phases_pending_delayed, requested_phases_pending, delayed_phase_request[0]);
         if (!quick_charging_active){
             requested_phases = requested_phases_pending_delayed;
             set_current(api_available_charging_power.get("power")->asUint(), requested_phases);
