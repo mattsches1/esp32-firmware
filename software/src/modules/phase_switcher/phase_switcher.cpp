@@ -115,9 +115,6 @@ void PhaseSwitcher::setup()
     api.addFeature("phase_switcher");
 
     task_scheduler.scheduleWithFixedDelay([this](){
-    }, 0, 125);
-
-    task_scheduler.scheduleWithFixedDelay([this](){
         this->monitor_requested_phases();
         this->handle_evse();
         this->handle_button();
