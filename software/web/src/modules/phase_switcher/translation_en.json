@@ -28,7 +28,7 @@
   
             "configuration": "Configuration",
             "phase_switcher_enabled": "Phase switcher enabled",
-            "phase_switcher_enabled_desc": "Activates the automatic switching between one or several phases and the charging current calculation via the available power.",
+            "phase_switcher_enabled_desc": "Automatically switch phases depending on the available power.",
 
             "operating_mode" : "Operating mode",
             "one_phase_static" : "single phase only",

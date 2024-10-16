@@ -28,7 +28,7 @@
 
             "configuration": "Konfiguration",
             "phase_switcher_enabled": "Phasenumschaltung aktiviert",
-            "phase_switcher_enabled_desc": "Aktiviert die automatische Phasenumschaltung und die Ladestromregelung über die zur Verfügung stehende Leistung.",
+            "phase_switcher_enabled_desc": "Schaltet Phasen in Abhängigkeit der zur Verfügung stehenden Leistung.",
 
             "operating_mode" : "Betriebsart",
             "one_phase_static" : "Nur einphasig",

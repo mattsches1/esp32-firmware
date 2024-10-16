@@ -256,7 +256,6 @@ uint8_t PhaseSwitcher::get_phases_for_power(uint16_t available_charging_power)
 
     switch(operating_mode){
         case one_phase_static:
-            if (debug) logger.printfln("    get_phases_for_power one phase static");
             if (available_charging_power >= MIN_POWER_ONE_PHASE){
                 return 1;
             } else {
@@ -264,7 +263,6 @@ uint8_t PhaseSwitcher::get_phases_for_power(uint16_t available_charging_power)
             }
 
         case two_phases_static:
-            if (debug) logger.printfln("    get_phases_for_power two phases static");
             if (available_charging_power >= MIN_POWER_TWO_PHASES){
                 return 2;
             } else {
@@ -272,7 +270,6 @@ uint8_t PhaseSwitcher::get_phases_for_power(uint16_t available_charging_power)
             }
 
         case three_phases_static:
-            if (debug) logger.printfln("    get_phases_for_power three phases static");
             if (available_charging_power >= MIN_POWER_THREE_PHASES){
                 return 3;
             } else {
@@ -280,7 +277,6 @@ uint8_t PhaseSwitcher::get_phases_for_power(uint16_t available_charging_power)
             }
 
         case one_two_phases_dynamic:
-            if (debug) logger.printfln("    get_phases_for_power one/two phases dynamic");
             if (available_charging_power >= MIN_POWER_TWO_PHASES && available_charging_power > max_power_one_phase){
                 return 2;
             } else if (available_charging_power >= MIN_POWER_ONE_PHASE){
@@ -290,7 +286,6 @@ uint8_t PhaseSwitcher::get_phases_for_power(uint16_t available_charging_power)
             }
 
         case one_three_phases_dynamic:
-            if (debug) logger.printfln("    get_phases_for_power one/three phases dynamic");
             if (available_charging_power >= MIN_POWER_THREE_PHASES && available_charging_power > max_power_one_phase){
                 return 3;
             } else if (available_charging_power >= MIN_POWER_ONE_PHASE){
@@ -300,7 +295,6 @@ uint8_t PhaseSwitcher::get_phases_for_power(uint16_t available_charging_power)
             }
 
         case one_two_three_phases_dynamic:
-            if (debug) logger.printfln("    get_phases_for_power one/two/three phases dynamic");
             if (available_charging_power >= MIN_POWER_THREE_PHASES && available_charging_power > max_power_two_phases){
                 return 3;
             } else if (available_charging_power >= MIN_POWER_TWO_PHASES && available_charging_power > max_power_one_phase){
@@ -312,7 +306,6 @@ uint8_t PhaseSwitcher::get_phases_for_power(uint16_t available_charging_power)
             }
         
         default:
-            if (debug) logger.printfln("    get_phases_for_power default");
             return 0;
     }
 }
@@ -631,42 +624,23 @@ void PhaseSwitcher::write_outputs()
     }
 
     bool evse_relay_output = api.getState("evse/low_level_state", false)->get("gpio")->get(3)->asBool();
-    bool channel_request[4] = {false, false, false, false};
+    static bool channel_request[4] = {false, false, false, false};
 
-    if (debug) {
-        static bool last_evse_relay_output = false;
-        if (last_evse_relay_output != evse_relay_output){
-            logger.printfln("  EVSE relay output changed to %d; contactor_error %d; requested_phases: %d ", evse_relay_output, contactor_error, requested_phases);
-            last_evse_relay_output = evse_relay_output;
-        }
-    }
+    static bool last_evse_relay_output = false;
+    if (evse_relay_output != last_evse_relay_output){
+        if (debug) logger.printfln("  EVSE relay output changed to %d; contactor_error %d; requested_phases: %d ", evse_relay_output, contactor_error, requested_phases);
+    
+        channel_request[1] = evse_relay_output;
 
-    if (evse_relay_output && !contactor_error){
         if (enabled){
-            switch (requested_phases)
-            {
-            case 0:
-                break;
-            case 1:
-                channel_request[1] = true;
-                break;
-            
-            case 2:
-                channel_request[1] = true;
-                channel_request[2] = true;
-                break;
-
-            default:
-                channel_request[1] = true;
-                channel_request[2] = true;
-                channel_request[3] = true;
-                break;
-            }
+            channel_request[2] = evse_relay_output && (requested_phases >= 2);
+            channel_request[3] = evse_relay_output && (requested_phases == 3);
         } else {
-            channel_request[1] = true;
-            channel_request[2] = true;
-            channel_request[3] = true;
-        } 
+            channel_request[2] = evse_relay_output;
+            channel_request[3] = evse_relay_output;
+        }
+
+        last_evse_relay_output = evse_relay_output;
     }
 
     int retval;
