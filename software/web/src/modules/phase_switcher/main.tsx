@@ -33,7 +33,7 @@ import { OutputFloat } from "../../ts/components/output_float";
 import { IndicatorGroup } from "../../ts/components/indicator_group";
 import { Button } from "react-bootstrap";
 import { UplotLoader } from "../../ts/components/uplot_loader";
-import { UplotWrapper, UplotData } from "../../ts/components/uplot_wrapper";
+import { UplotWrapper, UplotData } from "../../ts/components/uplot_wrapper_phase_switcher";
 import { FormSeparator } from "../../ts/components/form_separator";
 import { MeterValueID, METER_VALUE_IDS, METER_VALUE_INFOS, METER_VALUE_ORDER } from "../meters/meter_value_id";
 import { NavbarItem } from "../../ts/components/navbar_item";
@@ -147,7 +147,6 @@ function array_append<T>(a: Array<T>, b: Array<T>, tail: number): Array<T> {
     return a.slice(-tail);
 }
 
-// export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {}, PhaseSwitcherConfig & PhaseSwitcherState> {
 export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {status_ref?: RefObject<PhaseSwitcherStatus>},PhaseSwitcherConfig & PhaseSwitcherState> {
     live_initialized = false;
     live_data: CachedData = {timestamps: [], samples: []};
@@ -573,9 +572,15 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {sta
                                             x_padding_factor={0}
                                             x_include_date={false}
                                             y_diff_min={100}
-                                            y_unit="W"
-                                            y_label={__("phase_switcher.script.power") + " [Watt]"}
-                                            y_digits={0} />
+                                            y_left_unit="W"
+                                            y_left_label={__("phase_switcher.script.power") + " [Watt]"}
+                                            y_left_digits={0} 
+                                            y_right_unit=""
+                                            y_right_label={__("phase_switcher.script.phases")}
+                                            y_right_digits={0}
+                                            y_right_factor={1/230/6}
+                                            y_right_max={3}
+                                            use_right_y_axis={[3]}/>
                         </UplotLoader>
                         <UplotLoader ref={this.uplot_loader_history_ref}
                                         show={true}
@@ -596,9 +601,15 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {sta
                                             x_include_date={true}
                                             y_min={0}
                                             y_max={1500}
-                                            y_unit="W"
-                                            y_label={__("phase_switcher.script.power") + " [Watt]"}
-                                            y_digits={0} />
+                                            y_left_unit="W"
+                                            y_left_label={__("phase_switcher.script.power") + " [Watt]"}
+                                            y_left_digits={0}
+                                            y_right_unit=""
+                                            y_right_label={__("phase_switcher.script.phases")}
+                                            y_right_digits={0}
+                                            y_right_factor={1/230/6}
+                                            y_right_max={3}
+                                            use_right_y_axis={[3]}/>
                         </UplotLoader>
                     </div>
 
@@ -673,7 +684,7 @@ function get_chart_channel_name(channel_index: number) {
            return __("phase_switcher.content.actual_charging_power"); 
         } 
         case 2: { 
-            return __("phase_switcher.status.active_phases"); 
+            return __("phase_switcher.content.requested_phases"); 
         } 
          default: { 
            return "undefined"; 

@@ -51,14 +51,7 @@
                 "description": "Zeit, für die das Laden bei einer Umschaltung unterbrochen wird"
             },
 
-            "reboot_title": "Neu starten um Konfiguration anzuwenden",
-            "reboot_content": "Die geänderten Einstellungen werden nur nach einem Neustart angewendet. Jetzt neu starten?",
-            "abort": "Abbrechen",
-            "reboot": "Neu starten",
-            "save": "Speichern",
-
             "low_level_state": "Low-Level-Zustand",
-            "low_level_state_show": "Anzeigen / Verstecken",
             "channel_states": {
                 "title": "Kanalzustände",
                 "description": "Zustand der E/A-Kanäle (links=Ausgänge, rechts=Eingänge)"

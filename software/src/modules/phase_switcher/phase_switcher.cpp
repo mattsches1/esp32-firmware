@@ -723,7 +723,6 @@ void PhaseSwitcher::contactor_check()
 void PhaseSwitcher::update_all_data()
 {
     // state
-    // api_state.get("available_charging_power")->updateUint(api_available_charging_power.get("power")->asUint());
     api_state.get("available_charging_power")->updateUint(available_charging_power);
     api_state.get("requested_phases")->updateUint(requested_phases);
     api_state.get("requested_phases_pending")->updateUint(requested_phases_pending);

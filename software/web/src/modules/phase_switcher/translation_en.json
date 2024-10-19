@@ -51,14 +51,7 @@
                 "description": "Time for which the charging is interrupted when switching phases"
             },
 
-            "reboot_title": "Restart to apply configuration",
-            "reboot_content": "The modified configuration will only be applied after a restart. Reboot now?",
-            "abort": "Abort",
-            "reboot": "Reboot",
-            "save": "Save",
-
             "low_level_state": "Low Level State",
-            "low_level_state_show": "Show / Hide",
             "channel_states": {
                 "title": "Channel states",
                 "description": "States of I/O channels (left=output, right=input)"
