@@ -64,7 +64,7 @@ interface UplotWrapperProps {
     y_right_digits: number;
     y_right_factor: number;
     y_right_max: number;
-    use_right_y_axis: Array<number>;
+    use_right_y_axis: number[];
 }
 
 export class UplotWrapper extends Component<UplotWrapperProps, {}> {
@@ -422,7 +422,7 @@ export class UplotWrapper extends Component<UplotWrapperProps, {}> {
     }
 
     use_right_axis(i:number) {
-        return i === 3;
+        return this.props.use_right_y_axis.indexOf(i)>=0;
     }
 
     update_internal_data() {

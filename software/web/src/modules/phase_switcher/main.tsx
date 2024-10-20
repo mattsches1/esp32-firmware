@@ -33,7 +33,7 @@ import { OutputFloat } from "../../ts/components/output_float";
 import { IndicatorGroup } from "../../ts/components/indicator_group";
 import { Button } from "react-bootstrap";
 import { UplotLoader } from "../../ts/components/uplot_loader";
-import { UplotWrapper, UplotData } from "../../ts/components/uplot_wrapper_phase_switcher";
+import { UplotWrapper, UplotData } from "../../ts/components/uplot_wrapper_2y_axes";
 import { FormSeparator } from "../../ts/components/form_separator";
 import { MeterValueID, METER_VALUE_IDS, METER_VALUE_INFOS, METER_VALUE_ORDER } from "../meters/meter_value_id";
 import { NavbarItem } from "../../ts/components/navbar_item";
