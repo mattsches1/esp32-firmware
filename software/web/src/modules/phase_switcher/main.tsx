@@ -165,6 +165,12 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {sta
                     chart_selected: "history_48",
                 });
 
+        for (let channel_index = 0; channel_index < 3; ++channel_index) {
+        // for (let meter_slot = 0; meter_slot < METERS_SLOTS; ++meter_slot) {
+            this.live_data.samples.push([]);
+            this.history_data.samples.push([]);
+        }
+
         util.addApiEventListener('phase_switcher/state', () => {
             this.setState({state: API.get('phase_switcher/state')});
         });
