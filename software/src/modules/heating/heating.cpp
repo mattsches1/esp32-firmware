@@ -24,50 +24,55 @@
 #include "event_log_prefix.h"
 #include "module_dependencies.h"
 #include "build.h"
+#include "controlperiod.enum.h"
 
-#define HEATING_UPDATE_INTERVAL 1000*60
 
-#define extended_logging(...) \
-    if(extended_logging_active) { \
-        logger.printfln(__VA_ARGS__); \
-    }
+static constexpr auto HEATING_UPDATE_INTERVAL = 1_m;
+
+#define HEATING_SG_READY_ACTIVE_CLOSED 0
+#define HEATING_SG_READY_ACTIVE_OPEN   1
+
+#define extended_logging(fmt, ...) \
+    do { \
+        if (extended_logging_active) { \
+            logger.tracefln(this->trace_buffer_index, fmt __VA_OPT__(,) __VA_ARGS__); \
+        } \
+    } while (0)
 
 void Heating::pre_setup()
 {
+    this->trace_buffer_index = logger.alloc_trace_buffer("heating", 1 << 20);
+
     config = ConfigRoot{Config::Object({
-        {"minimum_control_holding_time", Config::Uint(15, 0, 60)},
+        {"sg_ready_blocking_active_type", Config::Uint(0, 0, 1)},
+        {"sg_ready_extended_active_type", Config::Uint(0, 0, 1)},
+        {"minimum_holding_time", Config::Uint(15, 10, 60)},
         {"meter_slot_grid_power", Config::Uint(POWER_MANAGER_DEFAULT_METER_SLOT, 0, METERS_SLOTS - 1)},
+        {"control_period", Config::Enum(ControlPeriod::Hours24, ControlPeriod::Hours24, ControlPeriod::Hours4)},
         {"extended_logging_active", Config::Bool(false)},
-        {"winter_start_day", Config::Uint(1, 1, 31)},
-        {"winter_start_month", Config::Uint(11, 1, 12)},
-        {"winter_end_day", Config::Uint(15, 1, 31)},
-        {"winter_end_month", Config::Uint(3, 1, 12)},
-        {"winter_dynamic_price_control_active", Config::Bool(false)},
-        {"winter_dynamic_price_control_threshold", Config::Uint(80, 0, 100)},
-        {"winter_pv_excess_control_active", Config::Bool(false)},
-        {"winter_pv_excess_control_threshold", Config::Uint(0)},
-        {"summer_block_time_active", Config::Bool(false)},
-        {"summer_block_time_morning", Config::Int(8*60)},  // localtime in minutes since 00:00
-        {"summer_block_time_evening", Config::Int(20*60)}, // localtime in minutes since 00:00
-        {"summer_yield_forecast_active", Config::Bool(false)},
-        {"summer_yield_forecast_threshold", Config::Uint(0)},
-        {"summer_dynamic_price_control_active", Config::Bool(false)},
-        {"summer_dynamic_price_control_threshold", Config::Uint(80, 0, 100)},
-        {"summer_pv_excess_control_active", Config::Bool(false)},
-        {"summer_pv_excess_control_threshold", Config::Uint(0)},
-        {"summer_pv_excess_control_holding_time", Config::Uint(15, 0, 12*60)},
+        {"yield_forecast_active", Config::Bool(false)},
+        {"yield_forecast_threshold", Config::Uint(0)},
+        {"extended_active", Config::Bool(false)},
+        {"extended_hours", Config::Uint(4, 0, 24)},
+        {"blocking_active", Config::Bool(false)},
+        {"blocking_hours", Config::Uint(0, 0, 24)},
+        {"pv_excess_control_active", Config::Bool(false)},
+        {"pv_excess_control_threshold", Config::Uint(0)},
         {"p14enwg_active", Config::Bool(false)},
         {"p14enwg_input", Config::Uint(0, 0, 3)},
         {"p14enwg_active_type", Config::Uint(0, 0, 1)}
     }), [this](Config &update, ConfigSource source) -> String {
         task_scheduler.scheduleOnce([this]() {
             this->update();
-        }, 0);
+        });
         return "";
     }};
 
     state = Config::Object({
-
+        {"sg_ready_blocking_active", Config::Bool(false)},
+        {"sg_ready_extended_active", Config::Bool(false)},
+        {"p14enwg_active", Config::Bool(false)},
+        {"remaining_holding_time", Config::Int(-1, -1, 60)}
     });
 }
 
@@ -82,36 +87,56 @@ void Heating::register_urls()
 {
     api.addPersistentConfig("heating/config", &config);
     api.addState("heating/state",             &state);
+    api.addCommand("heating/reset_holding_time", Config::Null(), {}, [this](String &/*errmsg*/) {
+        this->last_sg_ready_change = 0;
+        this->update();
+    }, true);
 
-    task_scheduler.scheduleWhenClockSynced([this]() {
-        task_scheduler.scheduleWithFixedDelay([this]() {
-            this->update();
-        }, 0, HEATING_UPDATE_INTERVAL);
-    });
+    task_scheduler.scheduleWallClock([this]() {
+        this->update();
+    }, HEATING_UPDATE_INTERVAL, 0_ms, true);
 }
 
 bool Heating::is_active()
 {
-    const bool winter_dynamic_price_control_active = config.get("winter_dynamic_price_control_active")->asBool();
-    const bool winter_pv_excess_control_active     = config.get("winter_pv_excess_control_active")->asBool();
-    const bool summer_block_time_active            = config.get("summer_block_time_active")->asBool();
-    const bool summer_yield_forecast_active        = config.get("summer_yield_forecast_active")->asBool();
-    const bool summer_dynamic_price_control_active = config.get("summer_dynamic_price_control_active")->asBool();
-    const bool summer_pv_excess_control_active     = config.get("summer_pv_excess_control_active")->asBool();
+    const bool extended_active          = config.get("extended_active")->asBool();
+    const bool blocking_active          = config.get("blocking_active")->asBool();
+    const bool pv_excess_control_active = config.get("pv_excess_control_active")->asBool();
+    const bool yield_forecast_active    = config.get("yield_forecast_active")->asBool();
 
-    if(!winter_dynamic_price_control_active && !winter_pv_excess_control_active && !summer_block_time_active && !summer_yield_forecast_active && !summer_dynamic_price_control_active && !summer_pv_excess_control_active) {
+    if(!yield_forecast_active && !extended_active && !blocking_active && !pv_excess_control_active) {
         return false;
     }
 
     return true;
 }
 
-bool Heating::is_sg_ready_output0_closed() {
-    return em_v2.get_sg_ready_output(0);
+bool Heating::is_p14enwg_active()
+{
+    return config.get("p14enwg_active")->asBool();
 }
 
-bool Heating::is_sg_ready_output1_closed() {
-    return em_v2.get_sg_ready_output(1);
+Heating::Status Heating::get_status()
+{
+    const bool p14enwg_active          = config.get("p14enwg_active")->asBool();
+    const uint32_t p14enwg_active_type = config.get("p14enwg_active_type")->asUint();
+    const uint32_t sg_ready0_type      = config.get("sg_ready_blocking_active_type")->asUint();
+    const uint32_t sg_ready1_type      = config.get("sg_ready_extended_active_type")->asUint();
+    const bool sg_ready_output_0       = em_v2.get_sg_ready_output(0);
+    const bool sg_ready_output_1       = em_v2.get_sg_ready_output(1);
+    const bool sg_ready0_on            = sg_ready_output_0 == (sg_ready0_type == HEATING_SG_READY_ACTIVE_CLOSED);
+    const bool sg_ready1_on            = sg_ready_output_1 == (sg_ready1_type == HEATING_SG_READY_ACTIVE_CLOSED);
+    const bool p14_enwg_on             = p14enwg_active && (sg_ready_output_0 == (p14enwg_active_type == HEATING_SG_READY_ACTIVE_CLOSED));
+
+    if(p14_enwg_on) {
+        return Status::BlockingP14;
+    } else if(sg_ready0_on) {
+        return Status::Blocking;
+    } else if(sg_ready1_on) {
+        return Status::Extended;
+    }
+
+    return Status::Idle;
 }
 
 void Heating::update()
@@ -119,7 +144,8 @@ void Heating::update()
     const bool extended_logging_active = config.get("extended_logging_active")->asBool();
     // Only update if clock is synced. Heating control depends on time of day.
     struct timeval tv_now;
-    if (!clock_synced(&tv_now)) {
+    if (!rtc.clock_synced(&tv_now)) {
+        state.get("remaining_holding_time")->updateInt(-1);
         extended_logging("Clock not synced. Skipping update.");
         return;
     }
@@ -128,8 +154,12 @@ void Heating::update()
     const bool     p14enwg_active      = config.get("p14enwg_active")->asBool();
     const uint32_t p14enwg_input       = config.get("p14enwg_input")->asUint();
     const uint32_t p14enwg_active_type = config.get("p14enwg_active_type")->asUint();
+    const uint32_t sg_ready0_type      = config.get("sg_ready_blocking_active_type")->asUint();
+    const uint32_t sg_ready1_type      = config.get("sg_ready_extended_active_type")->asUint();
+
+    // Check if §14 EnWG should be turned on
+    bool p14enwg_on = false;
     if(p14enwg_active) {
-        bool p14enwg_on;
         bool input_value = em_v2.get_input(p14enwg_input);
 
         if (p14enwg_active_type == 0) {
@@ -137,179 +167,238 @@ void Heating::update()
         } else {
             p14enwg_on = !input_value;
         }
+    }
 
-        if(p14enwg_on) {
-            extended_logging("§14 EnWG blocks heating. Turning on SG ready output 0.");
-            em_v2.set_sg_ready_output(0, true);
-        } else {
-            extended_logging("§14 EnWG does not block heating. Turning off SG ready output 0.");
-            em_v2.set_sg_ready_output(0, false);
-        }
+    // If p14enwg is triggered, we immediately set output 0 accordingly.
+    // If it is not triggered it depends on the heating controller if it should be on or off.
+    if (p14enwg_on) {
+        state.get("p14enwg_active")->updateBool(true);
+        extended_logging("§14 EnWG blocks heating. Turning on SG ready output 0 (%s).", sg_ready0_type == HEATING_SG_READY_ACTIVE_CLOSED ? "active closed" : "active open");
+        em_v2.set_sg_ready_output(0, sg_ready0_type == HEATING_SG_READY_ACTIVE_CLOSED);
+    } else {
+        state.get("p14enwg_active")->updateBool(false);
     }
 
     // Get values from config
-    const uint8_t minimum_control_holding_time = config.get("minimum_control_holding_time")->asUint();
-    const uint32_t minutes = timestamp_minutes();
-    if(minutes < (last_sg_ready_change + minimum_control_holding_time)) {
-        extended_logging("Minimum control holding time not reached. Current time: %dmin, last change: %dmin, minimum holding time: %dmin.", minutes, last_sg_ready_change, minimum_control_holding_time);
+    const uint8_t minimum_holding_time = config.get("minimum_holding_time")->asUint();
+    const uint32_t minutes = rtc.timestamp_minutes();
+    uint32_t remaining_holding_time = 0;
+    if (minutes >= last_sg_ready_change) {
+        uint32_t time_since_last_change = minutes - last_sg_ready_change;
+        if(time_since_last_change < minimum_holding_time) {
+            remaining_holding_time = minimum_holding_time - time_since_last_change;
+        }
+    }
+    state.get("remaining_holding_time")->updateInt(remaining_holding_time);
+
+    if (remaining_holding_time > 0) {
+        extended_logging("Minimum control holding time not reached. Current time: %dmin, last change: %dmin, minimum holding time: %dmin.", minutes, last_sg_ready_change, minimum_holding_time);
         return;
     }
 
-    const uint32_t meter_slot_grid_power                  = config.get("meter_slot_grid_power")->asUint();
-    const uint32_t winter_start_day                       = config.get("winter_start_day")->asUint();
-    const uint32_t winter_start_month                     = config.get("winter_start_month")->asUint();
-    const uint32_t winter_end_day                         = config.get("winter_end_day")->asUint();
-    const uint32_t winter_end_month                       = config.get("winter_end_month")->asUint();
-    const bool     winter_dynamic_price_control_active    = config.get("winter_dynamic_price_control_active")->asBool();
-    const uint32_t winter_dynamic_price_control_threshold = config.get("winter_dynamic_price_control_threshold")->asUint();
-    const bool     winter_pv_excess_control_active        = config.get("winter_pv_excess_control_active")->asBool();
-    const uint32_t winter_pv_excess_control_threshold     = config.get("winter_pv_excess_control_threshold")->asUint();
-    const bool     summer_block_time_active               = config.get("summer_block_time_active")->asBool();
-    const int32_t  summer_block_time_morning              = config.get("summer_block_time_morning")->asInt();
-    const int32_t  summer_block_time_evening              = config.get("summer_block_time_evening")->asInt();
-    const bool     summer_yield_forecast_active           = config.get("summer_yield_forecast_active")->asBool();
-    const uint32_t summer_yield_forecast_threshold        = config.get("summer_yield_forecast_threshold")->asUint();
-    const bool     summer_dynamic_price_control_active    = config.get("summer_dynamic_price_control_active")->asBool();
-    const uint32_t summer_dynamic_price_control_threshold = config.get("summer_dynamic_price_control_threshold")->asUint();
-    const bool     summer_pv_excess_control_active        = config.get("summer_pv_excess_control_active")->asBool();
-    const uint32_t summer_pv_excess_control_threshold     = config.get("summer_pv_excess_control_threshold")->asUint();
+    const uint32_t meter_slot_grid_power       = config.get("meter_slot_grid_power")->asUint();
+    const bool     yield_forecast_active       = config.get("yield_forecast_active")->asBool();
+    const uint32_t yield_forecast_threshold    = config.get("yield_forecast_threshold")->asUint();
+    const bool     extended_active             = config.get("extended_active")->asBool();
+    const uint32_t extended_hours              = config.get("extended_hours")->asUint();
+    const bool     blocking_active             = config.get("blocking_active")->asBool();
+    const uint32_t blocking_hours              = config.get("blocking_hours")->asUint();
+    const bool     pv_excess_control_active    = config.get("pv_excess_control_active")->asBool();
+    const uint32_t pv_excess_control_threshold = config.get("pv_excess_control_threshold")->asUint();
+    const ControlPeriod control_period         = config.get("control_period")->asEnum<ControlPeriod>();
 
-    if(!winter_dynamic_price_control_active && !winter_pv_excess_control_active && !summer_block_time_active && !summer_yield_forecast_active && !summer_dynamic_price_control_active && !summer_pv_excess_control_active) {
+    bool sg_ready0_on = false;
+    bool sg_ready1_on = false;
+
+    if(!yield_forecast_active && !extended_active && !blocking_active && !pv_excess_control_active) {
         extended_logging("No control active.");
-        return;
-    }
-
-    const time_t now              = time(NULL);
-    const struct tm *current_time = localtime(&now);
-    const int current_month       = current_time->tm_mon + 1;
-    const int current_day         = current_time->tm_mday;
-    const int current_minutes     = current_time->tm_hour * 60 + current_time->tm_min;
-
-    const bool is_winter = ((current_month == winter_start_month) && (current_day >= winter_start_day )) ||
-                           ((current_month == winter_end_month  ) && (current_day <= winter_end_day   )) ||
-                           ((current_month > winter_start_month ) && (current_month < winter_end_month));
-
-    bool sg_ready_on = false;
-
-    // PV excess handling for winter and summer
-    auto handle_pv_excess = [&] (const uint32_t threshold) {
-        float watt_current = 0;
-        MeterValueAvailability meter_availability = meters.get_power_real(meter_slot_grid_power, &watt_current);
-        if (meter_availability != MeterValueAvailability::Fresh) {
-            extended_logging("Meter value not available (meter %d has availability %d). Ignoring PV excess control.", meter_slot_grid_power, static_cast<std::underlying_type<MeterValueAvailability>::type>(meter_availability));
-        } else if (watt_current > threshold) {
-            extended_logging("Current PV excess is above threshold. Current PV excess: %dW, threshold: %dW.", (int)watt_current, threshold);
-            sg_ready_on = sg_ready_on || true;
-        }
-    };
-
-    // Dynamic price handling for winter and summer
-    auto handle_dynamic_price = [&] (const uint32_t threshold) {
-        const auto price_average = day_ahead_prices.get_average_price_today();
-        const auto price_current = day_ahead_prices.get_current_price();
-
-        if (!price_average.data_available) {
-            extended_logging("Average price for today not available. Ignoring dynamic price control.");
-        } else if (!price_current.data_available) {
-            extended_logging("Current price not available. Ignoring dynamic price control.");
-        } else {
-            if (price_current.data < price_average.data * threshold / 100.0) {
-                extended_logging("Price is below threshold. Average price: %dmct, current price: %dmct, threshold: %d%%.", price_average.data, price_current.data, threshold);
-                sg_ready_on = true;
-            } else {
-                extended_logging("Price is above threshold. Average price: %dmct, current price: %dmct, threshold: %d%%.", price_average.data, price_current.data, threshold);
-                sg_ready_on = false;
-            }
-        }
-    };
-
-    if (is_winter) { // Winter
-        extended_logging("It is winter. Current month: %d, winter start month: %d, winter end month: %d, current day: %d, winter start day: %d, winter end day: %d.", current_month, winter_start_month, winter_end_month, current_day, winter_start_day, winter_end_day);
-        if (!winter_dynamic_price_control_active && !winter_pv_excess_control_active) {
-            extended_logging("It is winter but no winter control active.");
-        } else {
-            if (winter_dynamic_price_control_active) {
-                handle_dynamic_price(winter_dynamic_price_control_threshold);
-            }
-
-            if (winter_pv_excess_control_active) {
-                handle_pv_excess(winter_pv_excess_control_threshold);
-            }
-        }
-    } else { // Summer
-        extended_logging("It is summer. Current month: %d, winter start month: %d, winter end month: %d, current day: %d, winter start day: %d, winter end day: %d.", current_month, winter_start_month, winter_end_month, current_day, winter_start_day, winter_end_day);
-        bool blocked = false;
-        bool is_morning = false;
-        bool is_evening = false;
-        if (summer_block_time_active) {
-            if (current_minutes <= summer_block_time_morning) {       // if is between 00:00 and summer_block_time_morning
-                extended_logging("We are in morning block time. Current time: %d, block time morning: %d.", current_minutes, summer_block_time_morning);
-                blocked    = true;
-                is_morning = true;
-            } else if(summer_block_time_evening <= current_minutes) { // if is between summer_block_time_evening and 23:59
-                extended_logging("We are in evening block time. Current time: %d, block time evening: %d.", current_minutes, summer_block_time_evening);
-                blocked    = true;
-                is_evening = true;
-            } else {
-                extended_logging("We are not in block time. Current time: %d, block time morning: %d, block time evening: %d.", current_minutes, summer_block_time_morning, summer_block_time_evening);
-            }
+    } else {
+        const time_t now                      = time(NULL);
+        const struct tm *current_time         = localtime(&now);
+        const uint16_t minutes_since_midnight = current_time->tm_hour * 60 + current_time->tm_min;
+        if (minutes_since_midnight >= 24*60) {
+            extended_logging("Too many minutes since midnight: %d.", minutes_since_midnight);
+            return;
         }
 
-        // If we are in block time and px excess control is active,
-        // we check the expected px excess and unblock if it is below the threshold.
-        if (blocked && summer_yield_forecast_active) {
-            extended_logging("We are in block time and yield forecast is active.");
-            DataReturn<uint32_t> kwh_expected = {false, 0};
-            if (is_morning) {
-                kwh_expected = solar_forecast.get_kwh_today();
-            } else if (is_evening) {
-                kwh_expected = solar_forecast.get_kwh_tomorrow();
-            } else {
-                extended_logging("We are in block time but not in morning or evening. Ignoring yield forecast.");
+        // PV excess handling for winter and summer
+        auto handle_pv_excess = [&] () {
+            if (!pv_excess_control_active) {
+                return;
+            }
+            float watt_current = 0;
+            MeterValueAvailability meter_availability = meters.get_power(meter_slot_grid_power, &watt_current);
+            if (meter_availability != MeterValueAvailability::Fresh) {
+                extended_logging("Meter value not available (meter %d has availability %d). Ignoring PV excess control.", meter_slot_grid_power, static_cast<std::underlying_type<MeterValueAvailability>::type>(meter_availability));
+            } else if ((-watt_current) > pv_excess_control_threshold) {
+                extended_logging("Current PV excess is above threshold. Current PV excess: %dW, threshold: %dW.", (int)watt_current, pv_excess_control_threshold);
+                sg_ready1_on |= true;
+            }
+        };
+
+        // Dynamic price handling for winter and summer
+        auto handle_dynamic_price = [&] (const bool handle_extended, const bool handle_blocking) {
+            if (!extended_active && !blocking_active) {
+                return;
             }
 
-            if(!kwh_expected.data_available) {
+            auto print_hours_today = [&] (const char *name, const bool *hours, const uint8_t duration) {
+                char buffer[duration*4 + 1] = {'\0'};
+                for (int i = 0; i < duration*4; i++) {
+                    buffer[i] = hours[i] ? '1' : '0';
+                }
+                extended_logging("%s: %s", name, buffer);
+            };
+
+            uint8_t duration = 0;
+            switch(control_period) {
+                case ControlPeriod::Hours24:
+                    duration = 24;
+                    break;
+                case ControlPeriod::Hours12:
+                    duration = 12;
+                    break;
+                case ControlPeriod::Hours8:
+                    duration = 8;
+                    break;
+                case ControlPeriod::Hours6:
+                    duration = 6;
+                    break;
+                case ControlPeriod::Hours4:
+                    duration = 4;
+                    break;
+                default:
+                    logger.printfln("Unknown control period %d", static_cast<std::underlying_type<ControlPeriod>::type>(control_period));
+                    return;
+            }
+            bool data[duration*4] = {false};
+
+            // start_time is the nearest time block with length duration and index for current time within the block
+            const uint32_t duration_block = (minutes_since_midnight / (duration*60)) * (duration*60);
+            time_t midnight;
+            if (!get_localtime_today_midnight_in_utc().try_unwrap(&midnight))
+                return;
+
+            const uint32_t start_time     = midnight/60 + duration_block;
+            const uint8_t current_index   = (minutes_since_midnight - duration_block)/15;
+
+            if (handle_extended) {
+                const bool data_available = day_ahead_prices.get_cheap_hours(start_time, duration, extended_hours, data);
+                if (!data_available) {
+                    extended_logging("Cheap hours not available. Ignoring extended control.");
+                } else {
+                    print_hours_today("Cheap hours", data, duration);
+                    if (data[current_index]) {
+                        extended_logging("Current time is in cheap hours.");
+                        sg_ready1_on |= true;
+                    } else {
+                        extended_logging("Current time is not in cheap hours.");
+                        sg_ready1_on |= false;
+                    }
+                }
+            }
+            if (handle_blocking) {
+                const bool data_available = day_ahead_prices.get_expensive_hours(start_time, duration, blocking_hours, data);
+                if (!data_available) {
+                    extended_logging("Expensive hours not available. Ignoring blocking control.");
+                } else {
+                    print_hours_today("Expensive hours", data, duration);
+                    if (data[current_index]) {
+                        extended_logging("Current time is in expensive hours.");
+                        sg_ready0_on |= true;
+                    } else {
+                        extended_logging("Current time is not in expensive hours.");
+                        sg_ready0_on |= false;
+                    }
+                }
+            }
+        };
+
+        auto is_expected_yield_high = [&] () {
+            // we check the expected pv excess and unblock if it is below the threshold.
+            if (!yield_forecast_active) {
+                extended_logging("Yield forecast is inactive.");
+                return false;
+            }
+
+            extended_logging("Yield forecast is active.");
+            uint32_t wh_expected;
+
+            if(!solar_forecast.get_wh_today().try_unwrap(&wh_expected)) {
                 extended_logging("Expected PV yield not available. Ignoring yield forecast.");
             } else {
-                if (kwh_expected.data < summer_yield_forecast_threshold) {
-                    extended_logging("Expected PV yield %dkWh is below threshold of %dkWh.", kwh_expected.data, summer_yield_forecast_threshold);
-                    blocked = false;
+                if (wh_expected/1000 < yield_forecast_threshold) {
+                    extended_logging("Expected PV yield %dkWh is below threshold of %dkWh.", wh_expected/1000, yield_forecast_threshold);
                 } else {
-                    extended_logging("Expected PV yield %dkWh is above or equal to threshold of %dkWh.", kwh_expected.data, summer_yield_forecast_threshold);
+                    extended_logging("Expected PV yield %dkWh is above or equal to threshold of %dkWh.", wh_expected/1000, yield_forecast_threshold);
+                    return true;
                 }
             }
-        }
 
-        if (blocked) {
-            extended_logging("We are in a block time.");
-            sg_ready_on = false;
+            return false;
+        };
+
+        const bool pv_yield_high = is_expected_yield_high();
+        if (pv_yield_high) {
+            extended_logging("Day ahead prices are ignored for cheap hours because of expected PV yield.");
+            handle_dynamic_price(false, blocking_active);
         } else {
-            if (!summer_dynamic_price_control_active && !summer_pv_excess_control_active) {
-                extended_logging("It is summer but no summer control active.");
-            } else {
-                if (summer_dynamic_price_control_active) {
-                    handle_dynamic_price(summer_dynamic_price_control_threshold);
-                }
+            handle_dynamic_price(extended_active, blocking_active);
+        }
+        handle_pv_excess();
+    }
 
-                if (summer_pv_excess_control_active) {
-                    handle_pv_excess(summer_pv_excess_control_threshold);
-                }
-            }
+    // If p14enwg is triggered, we never turn output 1 (extended operation) on.
+    if (p14enwg_on) {
+        sg_ready1_on = false;
+    // If sg_ready0 and sg_ready1 are both to be turned on (e.g. high price but enough sun for heating with pv excess),
+    // we turn off sg_ready0. E.g. we prefer extended operation instead of blocking operation in this case.
+    } else if (sg_ready0_on && sg_ready1_on) {
+        sg_ready0_on = false;
+    }
+
+    const bool sg_ready_output_1 = em_v2.get_sg_ready_output(1);
+    if (sg_ready1_on) {
+        state.get("sg_ready_extended_active")->updateBool(true);
+        extended_logging("Heating decision: Turning on SG Ready output 1 (%s).", sg_ready1_type == HEATING_SG_READY_ACTIVE_CLOSED ? "active closed" : "active open");
+        const bool new_value = sg_ready1_type == HEATING_SG_READY_ACTIVE_CLOSED;
+        if (sg_ready_output_1 != new_value) {
+            em_v2.set_sg_ready_output(1, new_value);
+            last_sg_ready_change = rtc.timestamp_minutes();
+            state.get("remaining_holding_time")->updateInt(config.get("minimum_holding_time")->asUint());
+        }
+    } else {
+        state.get("sg_ready_extended_active")->updateBool(false);
+        extended_logging("Heating decision: Turning off SG Ready output 1 (%s).", sg_ready1_type == HEATING_SG_READY_ACTIVE_CLOSED ? "active closed" : "active open");
+        const bool new_value = sg_ready1_type != HEATING_SG_READY_ACTIVE_CLOSED;
+        if (sg_ready_output_1 != new_value) {
+            em_v2.set_sg_ready_output(1, new_value);
+            last_sg_ready_change = rtc.timestamp_minutes();
+            state.get("remaining_holding_time")->updateInt(config.get("minimum_holding_time")->asUint());
         }
     }
 
-    bool sg_ready_output_1 = em_v2.get_sg_ready_output(1);
-    if (sg_ready_on) {
-        extended_logging("Heating decision: Turning on SG Ready output 1.");
-        if (!sg_ready_output_1) {
-            em_v2.set_sg_ready_output(1, true);
-            last_sg_ready_change = timestamp_minutes();
-        }
-    } else {
-        extended_logging("Heating decision: Turning off SG Ready output 1.");
-        if (sg_ready_output_1) {
-            em_v2.set_sg_ready_output(1, false);
-            last_sg_ready_change = timestamp_minutes();
+    // If §14 EnWG is triggerend, we don't override it.
+    if (!p14enwg_on) {
+        const bool sg_ready_output_0 = em_v2.get_sg_ready_output(0);
+        if (sg_ready0_on) {
+            state.get("sg_ready_blocking_active")->updateBool(true);
+            extended_logging("Heating decision: Turning on SG Ready output 0 (%s).", sg_ready0_type == HEATING_SG_READY_ACTIVE_CLOSED ? "active closed" : "active open");
+            const bool new_value = sg_ready0_type == HEATING_SG_READY_ACTIVE_CLOSED;
+            if (sg_ready_output_0 != new_value) {
+                em_v2.set_sg_ready_output(0, new_value);
+                last_sg_ready_change = rtc.timestamp_minutes();
+                state.get("remaining_holding_time")->updateInt(config.get("minimum_holding_time")->asUint());
+            }
+        } else {
+            state.get("sg_ready_blocking_active")->updateBool(false);
+            extended_logging("Heating decision: Turning off SG Ready output 0 (%s).", sg_ready0_type == HEATING_SG_READY_ACTIVE_CLOSED ? "active closed" : "active open");
+            const bool new_value = sg_ready0_type != HEATING_SG_READY_ACTIVE_CLOSED;
+            if (sg_ready_output_0 != new_value) {
+                em_v2.set_sg_ready_output(0, new_value);
+                last_sg_ready_change = rtc.timestamp_minutes();
+                state.get("remaining_holding_time")->updateInt(config.get("minimum_holding_time")->asUint());
+            }
         }
     }
 }

@@ -11,11 +11,11 @@ let x = {
             "available_current": "Available current"
         },
         "navbar": {
-            "charge_manager_settings": "Charge management",
+            "charge_manager_settings": "Charge Management",
             "charge_manager_chargers": "Chargers"
         },
         "content": {
-            "charge_manager_settings": "Charge management",
+            "charge_manager_settings": "Charge Management",
             "charge_manager_chargers": "Chargers",
             "enable_charge_manager": "Charge management mode",
             "enable_charge_manager_muted": <><a href="{{{manual_url}}}">see manual for details</a></>,
@@ -34,8 +34,6 @@ let x = {
             "minimum_current_vehicle_type": "Vehicle model",
             "minimum_current_vehicle_type_other": "Default",
             "minimum_current_vehicle_type_zoe": "Renault ZOE R135, ZOE R110 or Twingo Z.E.",
-            "minimum_current": "Minimum charge current",
-            "minimum_current_muted": "lowest charge current supported by your vehicle",
             "minimum_current_1p": "Minimum single-phase charge current",
             "minimum_current_1p_muted": "lowest charge current supported by your vehicle when charging in single-phase mode",
             "minimum_current_3p": "Minimum three-phase charge current",
@@ -59,7 +57,11 @@ let x = {
             "add_charger_found": "Discovered chargers",
             "add_charger_count": /*SFN*/(x: number, max: number) => x + " of " + max + " chargers configured"/*NF*/,
             "add_charger_rotation": "Phase rotation",
-            "charger_rotation_help": <>The chargers connection from the perspective of the grid or PV meter or the other chargers. Usually only positive sequence rotations are used.<br/><br/>A charger that only uses the grid phase L2 is then connected with the phase rotation L231.<br/><br/>If the rotation of some or all chargers is known, more vehicles can be charged in parallel and PV and grid limits can be maxed out: A charger with unknown phase rotation is assumed to be active on all three phases even if it is only charging on one phase.</>,
+            "charger_rotation_help": <>
+                <p>The chargers connection from the perspective of the grid or PV meter or the other chargers. Usually only positive sequence rotations are used.</p>
+                <p>A charger that only uses the grid phase L2 is then connected with the phase rotation L231.</p>
+                <p>If the rotation of some or all chargers is known, more vehicles can be charged in parallel and PV and grid limits can be maxed out: A charger with unknown phase rotation is assumed to be active on all three phases even if it is only charging on one phase.</p>
+            </>,
             "rotation_0": "Unknown",
             "rotation_1": "L123",
             "rotation_2": "L132",
@@ -67,8 +69,8 @@ let x = {
             "rotation_4": "L213",
             "rotation_5": "L321",
             "rotation_6": "L312",
-            "rotation_right": "positive sequence",
-            "rotation_left": "negative sequence",
+            "rotation_right": "Positive sequence",
+            "rotation_left": "Negative sequence",
             "add_charger_rotation_select": "Select...",
 
             "edit_charger_title": "Edit charger",
@@ -87,7 +89,9 @@ let x = {
 
             "mode_disabled": "Disabled",
             "mode_manager": "Charge manager / PV excess charging",
+            "mode_manager_em_with_ps": "Charge manager / PV excess charging / Phase switching / Externally controlled by EVCC",
             "mode_managed": "Externally controlled",
+            "mode_managed_em_with_ps": "Externally controlled by WARP Charger or Energy Manager / Phase switching only",
 
             "managed_boxes": "Managed chargers",
 
@@ -102,7 +106,9 @@ let x = {
             "dlm_meter_slot_grid_currents": "Energy meter",
             "dlm_meter_slot_grid_currents_select": "Select...",
             "dlm_meter_slot_grid_currents_none": "No power meter configured",
-            "dlm_meter_slot_grid_currents_missing_values": "directional phase currents are missing",
+            "dlm_meter_slot_grid_currents_missing_values": "phase currents are missing; draw minus feed required",
+            "dlm_meter_slot_grid_currents_single_phase": "single-phase only, L1",
+            "dlm_meter_slot_grid_currents_two_phase": "two-phase only, L1 + L2",
             "dlm_current_limit": "Grid current limit",
             "dlm_current_limit_muted": "connection's fuse rating",
             "dlm_largest_consumer_current": "Largest consumer current",
@@ -115,7 +121,6 @@ let x = {
             "managed_disabled": "Charge management settings will be ignored: Charger only controls itself or is controlled externally.",
 
             "charge_manager_debug": "Debug",
-            "protocol": "Energy Manager Protocol",
             "debug_description": "Create protocol",
             "debug_description_muted": "for diagnosing issues",
             "debug_start": "Start",
@@ -130,20 +135,20 @@ let x = {
             "expected_peak_current_muted": "Short-term expected peak current including the additional safety margin.",
 
             "target_constant_current": "Target constant current",
-            "target_constant_current_muted": "Chargers will be throttled if this current is exceeded to make sure the largest consumer will not exceed the expected peak current."
+            "target_constant_current_muted": "Chargers will be throttled if this current is exceeded to make sure the largest consumer will not exceed the expected peak current.",
+
+            "em_controlled_charger": "Charger for phase switching",
+            "em_controlled_charger_muted": "The charger connected to this Energy Manager's contactor.",
+            "em_no_ps_charger": "None",
+            "em_proxy_warning_not_enough": "The single charger, for which this Energy Manager performs phase switching, must be configured here.",
+            "em_proxy_warning_too_many": "The Energy Manager can perform phase switching only for a single charger and there must not be any other chargers connected to the Energy Manager's contactor."
         },
         "automation": {
-          "charge_manager_wd": "Charge manager watchdog triggered",
-          "automation_trigger_text": <>When the <b>charge manager watchdog</b> gets triggered, </>,
-          "set_charge_manager": "Set available current for charge manager",
-          "automation_action_text": /*FFN*/(current: string) => {
-            return (
-              <>
-                set the current that is available for the <b>charge manager</b> to <b>{current} A</b>.
-              </>
-            );
-          }/*NF*/,
-          "max_current": "Maximum current"
+            "charge_manager_wd": "Charge manager watchdog triggered",
+            "automation_trigger_text": <>When the <b>charge manager watchdog</b> gets triggered, </>,
+            "set_charge_manager": "Set available current for charge manager",
+            "automation_action_text": /*FFN*/(current: string) => <>set the current that is available for the <b>charge manager</b> to <b>{current} A</b>.</>/*NF*/,
+            "max_current": "Maximum current"
         },
         "script": {
             "charge_state_0": "No vehicle connected",
@@ -188,7 +193,14 @@ let x = {
 
             "mode_explainer_0": "This WARP Charger is not part of a charge management group. PV excess charging is disabled.",
             "mode_explainer_1": "This WARP Charger is part of a charge management group with other WARP Chargers and/or a WARP Energy Manager. Another device controls this group to make sure the configured current is never exceeded.",
-            "mode_explainer_2": "This WARP Charger either uses the PV excess charging or controls a charge management group with other WARP Chargers to make sure the configured current is never exceeded."
+            "mode_explainer_2": "This WARP Charger either uses the PV excess charging or controls a charge management group with other WARP Chargers to make sure the configured current is never exceeded.",
+
+            "mode_explainer_0_em": "This Energy Manager does not control any chargers.",
+            "mode_explainer_2_em": "This Energy Manager controls one or more WARP chargers.",
+
+            "mode_explainer_0_em_with_ps": "This Energy Manager does not control any chargers. Phase switching is disabled.",
+            "mode_explainer_1_em_with_ps": "This Energy Manager is controlled by another Energy Manager or WARP Charger and performs phase switching for a single controlled charger that is connected to its contactor.",
+            "mode_explainer_2_em_with_ps": "This Energy Manager controls one or more WARP chargers and can perform phase switching for a single controlled charger that is connected to its contactor."
         }
     }
 }

@@ -131,6 +131,15 @@ bool read_user_slot_info(UserSlotInfo *result)
 
 void Users::pre_setup()
 {
+    config_users_prototype = Config::Object({
+        {"id", Config::Uint8(0)},
+        {"roles", Config::Uint32(0)},
+        {"current", Config::Uint16(32000)},
+        {"display_name", Config::Str("", 0, USERNAME_LENGTH)},
+        {"username", Config::Str("", 0, USERNAME_LENGTH)},
+        {"digest_hash", Config::Str("", 0, 32)},
+    });
+
     config = Config::Object({
         {"users", Config::Array(
             {
@@ -143,14 +152,7 @@ void Users::pre_setup()
                     {"digest_hash", Config::Str("", 0, 32)}
                 })
             },
-            new Config(Config::Object({
-                {"id", Config::Uint8(0)},
-                {"roles", Config::Uint32(0)},
-                {"current", Config::Uint16(32000)},
-                {"display_name", Config::Str("", 0, USERNAME_LENGTH)},
-                {"username", Config::Str("", 0, USERNAME_LENGTH)},
-                {"digest_hash", Config::Str("", 0, 32)},
-            })),
+            &config_users_prototype,
             1, MAX_ACTIVE_USERS,
             Config::type_id<Config::ConfObject>()
         )},
@@ -175,14 +177,14 @@ void Users::pre_setup()
         if (config.get("users")->count() == MAX_ACTIVE_USERS)
             return "Can't add user. Already have the maximum number of active users.";
 
-        for(int i = 0; i < config.get("users")->count(); ++i)
+        for (size_t i = 0; i < config.get("users")->count(); ++i)
             if (config.get("users")->get(i)->get("username")->asString() == add.get("username")->asString())
                 return "Can't add user. A user with this username already exists.";
 
         {
             char username[33] = {0};
             File f = LittleFS.open(USERNAME_FILE, "r");
-            for(size_t i = 0; i < f.size(); i += USERNAME_ENTRY_LENGTH) {
+            for (size_t i = 0; i < f.size(); i += USERNAME_ENTRY_LENGTH) {
                 f.seek(i);
                 f.read((uint8_t *) username, USERNAME_LENGTH);
                 if (add.get("username")->asString() == username)
@@ -233,7 +235,7 @@ void Users::pre_setup()
         }
 
         Config *user = nullptr;
-        for(int i = 0; i < config.get("users")->count(); ++i) {
+        for (size_t i = 0; i < config.get("users")->count(); ++i) {
             if (config.get("users")->get(i)->get("id")->asUint() == id) {
                 user = (Config *)config.get("users")->get(i);
                 break;
@@ -251,7 +253,7 @@ void Users::pre_setup()
             return "Changing the username without updating the digest hash is not allowed!";
         }
 
-        for(int i = 0; i < config.get("users")->count(); ++i) {
+        for (size_t i = 0; i < config.get("users")->count(); ++i) {
             if (config.get("users")->get(i)->get("id")->asUint() == id)
                 continue;
 
@@ -294,7 +296,7 @@ void Users::pre_setup()
         if (remove.get("id")->asUint() == 0)
             return "The anonymous user can't be removed.";
 
-        for (int i = 0; i < config.get("users")->count(); ++i) {
+        for (size_t i = 0; i < config.get("users")->count(); ++i) {
             if (config.get("users")->get(i)->get("id")->asUint() == remove.get("id")->asUint()) {
                 return "";
             }
@@ -309,7 +311,7 @@ void Users::pre_setup()
         if (!update.get("enabled")->asBool())
             return "";
 
-        for (int i = 0; i < config.get("users")->count(); ++i) {
+        for (size_t i = 0; i < config.get("users")->count(); ++i) {
             if (!config.get("users")->get(i)->get("digest_hash")->asString().isEmpty())
                 return "";
         }
@@ -333,9 +335,9 @@ void Users::setup()
     api.restorePersistentConfig("users/config", &config);
 
     if (!LittleFS.exists(USERNAME_FILE)) {
-        logger.printfln("Username list does not exist! Recreating now.");
+        logger.printfln("Username list for tracked charges does not exist! Recreating now.");
         create_username_file();
-        for (int i = 0; i < config.get("users")->count(); ++i) {
+        for (size_t i = 0; i < config.get("users")->count(); ++i) {
             Config *user = (Config *)config.get("users")->get(i);
             this->rename_user(user->get("id")->asUint(), user->get("username")->asString(), user->get("display_name")->asString());
         }
@@ -405,13 +407,13 @@ void Users::setup()
             case CHARGER_STATE_ERROR:
                 break;
         }
-    }, 1000, 1000);
+    }, 1_s, 1_s);
 
     initialized = true;
 
     if (config.get("http_auth_enabled")->asBool()) {
         bool user_with_password_found = false;
-        for (int i = 0; i < config.get("users")->count(); ++i) {
+        for (size_t i = 0; i < config.get("users")->count(); ++i) {
             if (!config.get("users")->get(i)->get("digest_hash")->asString().isEmpty()) {
                 user_with_password_found = true;
                 break;
@@ -440,7 +442,7 @@ void Users::setup()
 
             // If this times out, result stays false.
             task_scheduler.await([this, &req, &fields, &result]() {
-                for (int i = 0; i < config.get("users")->count(); ++i) {
+                for (size_t i = 0; i < config.get("users")->count(); ++i) {
                     if (config.get("users")->get(i)->get("username")->asString().equals(fields.username)) {
                         result = checkDigestAuthentication(fields, req.methodString(), fields.username.c_str(), config.get("users")->get(i)->get("digest_hash")->asEphemeralCStr(), nullptr, true, nullptr, nullptr, nullptr); // use of emphemeral C string ok
                         break;
@@ -532,11 +534,11 @@ void Users::register_urls()
         }});
     }
 
-    api.addCommand("users/modify", &modify, {"digest_hash"}, [this](String &result){
+    api.addCommand("users/modify", &modify, {"digest_hash"}, [this](String &errmsg) {
         auto id = modify.get("id")->asUint();
 
         Config *user = nullptr;
-        for(int i = 0; i < config.get("users")->count(); ++i) {
+        for (size_t i = 0; i < config.get("users")->count(); ++i) {
             if (config.get("users")->get(i)->get("id")->asUint() == id) {
                 user = (Config *)config.get("users")->get(i);
                 break;
@@ -545,7 +547,8 @@ void Users::register_urls()
 
         // Validity was already checked, but we have to search the user config anyway.
         if (user == nullptr) {
-            result = "Can't modify user. User with this ID not found.";
+            errmsg = "Can't modify user. User with this ID not found.";
+            return;
         }
 
         user->get("roles")->updateUint(modify.get("roles")->asUint());
@@ -555,8 +558,10 @@ void Users::register_urls()
         user->get("digest_hash")->updateString(modify.get("digest_hash")->asString());
 
         String err = this->config.validate(ConfigSource::API);
-        if (!err.isEmpty())
-            result = err;
+        if (!err.isEmpty()) {
+            errmsg = err;
+            return;
+        }
 
         API::writeConfig("users/config", &config);
 
@@ -572,9 +577,8 @@ void Users::register_urls()
     }, true);
 
     api.addState("users/config", &config, {"digest_hash"});
-    api.addCommand("users/add", &add, {"digest_hash"}, [this](){
-        config.get("users")->add();
-        Config *user = (Config *)config.get("users")->get(config.get("users")->count() - 1);
+    api.addCommand("users/add", &add, {"digest_hash"}, [this](String &/*errmsg*/) {
+        auto user = config.get("users")->add();
 
         user->get("id")->updateUint(add.get("id")->asUint());
         user->get("roles")->updateUint(add.get("roles")->asUint());
@@ -589,16 +593,18 @@ void Users::register_urls()
         this->rename_user(user->get("id")->asUint(), user->get("username")->asString(), user->get("display_name")->asString());
     }, true);
 
-    api.addCommand("users/remove", &remove, {}, [this](){
-        int idx = -1;
-        for(int i = 0; i < config.get("users")->count(); ++i) {
+    api.addCommand("users/remove", &remove, {}, [this](String &/*errmsg*/) {
+        size_t idx = std::numeric_limits<size_t>::max();
+        for (size_t i = 0; i < config.get("users")->count(); ++i) {
             if (config.get("users")->get(i)->get("id")->asUint() == remove.get("id")->asUint()) {
                 idx = i;
                 break;
             }
         }
 
-        if (idx < 0) {
+        if (idx == std::numeric_limits<size_t>::max()) {
+            // Defense in depth: the validator has already checked this
+            // condition. This if should never be true
             logger.printfln("Can't remove user. User with this ID not found.");
             return;
         }
@@ -623,13 +629,13 @@ void Users::register_urls()
         }
     }, true);
 
-
-    api.addCommand("users/http_auth_update", &http_auth_update, {}, [this](){
+    api.addCommand("users/http_auth_update", &http_auth_update, {}, [this](String &/*errmsg*/) {
         bool enable = http_auth_update.get("enabled")->asBool();
-        if (!enable)
+        if (!enable) {
             server.runInHTTPThread([](void *arg) {
                 server.onAuthenticate_HTTPThread([](WebServerRequest req){return true;});
             }, nullptr);
+        }
 
         config.get("http_auth_enabled")->updateBool(enable);
         API::writeConfig("users/config", &config);
@@ -654,7 +660,7 @@ void Users::register_urls()
     });
 
 #if MODULE_EVSE_LED_AVAILABLE()
-    task_scheduler.scheduleWithFixedDelay([](){check_waiting_for_start();}, 1000, 1000);
+    task_scheduler.scheduleWithFixedDelay([](){check_waiting_for_start();}, 1_s, 1_s);
 #endif
 }
 
@@ -677,7 +683,7 @@ void Users::rename_user(uint8_t user_id, const String &username, const String &d
 void Users::remove_from_username_file(uint8_t user_id)
 {
     Config *users = (Config *)config.get("users");
-    for (int i = 0; i < users->count(); ++i) {
+    for (size_t i = 0; i < users->count(); ++i) {
         if (users->get(i)->get("id")->asUint() == user_id) {
             return;
         }
@@ -701,7 +707,7 @@ bool Users::trigger_charge_action(uint8_t user_id, uint8_t auth_type, Config::Co
 
     uint16_t current_limit = 0;
     Config *users = (Config *)config.get("users");
-    for (int i = 0; i < users->count(); ++i) {
+    for (size_t i = 0; i < users->count(); ++i) {
         if (users->get(i)->get("id")->asUint() != user_id)
             continue;
 
@@ -752,7 +758,7 @@ bool Users::start_charging(uint8_t user_id, uint16_t current_limit, uint8_t auth
 
     uint32_t evse_uptime = evse_common.get_low_level_state().get("uptime")->asUint();
     float meter_start = get_energy();
-    uint32_t timestamp = timestamp_minutes();
+    uint32_t timestamp = rtc.timestamp_minutes();
 
     if (!charge_tracker.startCharge(timestamp, meter_start, user_id, evse_uptime, auth_type, auth_info))
         return false;

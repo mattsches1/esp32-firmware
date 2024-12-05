@@ -36,9 +36,9 @@ interface UplotFlagsWrapperProps {
     legend_time_label: string;
     legend_time_with_minutes: boolean;
     legend_div_ref?: RefObject<HTMLDivElement>;
-    x_format: Intl.DateTimeFormatOptions;
     x_padding_factor: number;
     y_sync_ref?: RefObject<UplotWrapper>;
+    y2_enable?: boolean;
 }
 
 export class UplotFlagsWrapper extends Component<UplotFlagsWrapperProps, {}> {
@@ -53,7 +53,11 @@ export class UplotFlagsWrapper extends Component<UplotFlagsWrapperProps, {}> {
     bar_height: number = 20;
     bar_spacing: number = 5;
     y_size: number = 0;
+    y_size_offset: number = 22;
     y_other_size: number = 0;
+    y2_size: number = 0;
+    y2_size_offset: number = 22;
+    y2_other_size: number = 0;
 
     shouldComponentUpdate() {
         return false;
@@ -72,7 +76,7 @@ export class UplotFlagsWrapper extends Component<UplotFlagsWrapperProps, {}> {
             }
         });
 
-        let options = {
+        let options: uPlot.Options = {
             ...this.get_size(),
             pxAlign: 0,
             cursor: {
@@ -102,6 +106,7 @@ export class UplotFlagsWrapper extends Component<UplotFlagsWrapperProps, {}> {
             ],
             axes: [
                 {
+                    font: '12px system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"',
                     size: 1,// with size = 0 the width of the whole plot changes relative to the power plot
                     ticks: {
                         size: 0
@@ -121,23 +126,26 @@ export class UplotFlagsWrapper extends Component<UplotFlagsWrapperProps, {}> {
                         3600 * 168,
                     ],
                     values: (self: uPlot, splits: number[]) => {
-                        let values: string[] = new Array(splits.length);
-
-                        for (let i = 0; i < splits.length; ++i) {
-                            values[i] = (new Date(splits[i] * 1000)).toLocaleString([], this.props.x_format);
-                        }
-
-                        return values;
+                        return new Array(splits.length);
                     },
-                    side: 0,
+                    side: 0, // top
                 },
                 {
+                    font: '12px system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"',
                     size: (self: uPlot, values: string[], axisIdx: number, cycleNum: number): number => {
                         let size = 0;
+                        let size_correction_factor = 1;
 
                         if (values) {
                             self.ctx.save();
                             self.ctx.font = self.axes[axisIdx].font;
+
+                            if (self.ctx.font == '10px sans-serif') {
+                                // FIXME: For some unknown reason sometimes changing the canvas font doesn't work and the
+                                //        canvas font stays "10px sans-serif", work around this using a rought correction
+                                //        factor. This is not the best because the result of this correction is not exact
+                                size_correction_factor = 12 * devicePixelRatio / 10;
+                            }
 
                             for (let i = 0; i < values.length; ++i) {
                                 size = Math.max(size, self.ctx.measureText(values[i]).width);
@@ -146,7 +154,9 @@ export class UplotFlagsWrapper extends Component<UplotFlagsWrapperProps, {}> {
                             self.ctx.restore();
                         }
 
-                        this.y_size = Math.ceil(size / devicePixelRatio) + 20;
+                        size *= size_correction_factor;
+
+                        this.y_size = Math.ceil(size / devicePixelRatio) + this.y_size_offset;
                         size = Math.max(this.y_size, this.y_other_size);
 
                         if (this.props.y_sync_ref && this.props.y_sync_ref.current) {
@@ -165,14 +175,15 @@ export class UplotFlagsWrapper extends Component<UplotFlagsWrapperProps, {}> {
                     },
                 },
             },
-            padding: [null, 5, 0, null] as uPlot.Padding,
             legend: {
+                live: !util.is_native_median_app(),
                 mount: (self: uPlot, legend: HTMLElement) => {
                     if (this.props.legend_div_ref && this.props.legend_div_ref.current) {
                         this.props.legend_div_ref.current.appendChild(legend);
                     }
                 },
             },
+            padding: [null, 5, 0, null],
             plugins: [
                 uPlotTimelinePlugin({
                     fill: (seriesIdx: number, dataIdx: number, value: any) => this.data.value_fills && this.data.value_fills[seriesIdx] ? this.data.value_fills[seriesIdx][value] : 'rgb(0, 0, 0, 0.1)',
@@ -205,6 +216,59 @@ export class UplotFlagsWrapper extends Component<UplotFlagsWrapperProps, {}> {
                 },
             ],
         };
+
+        if (this.props.y2_enable === true) {
+            options.axes.push({
+                side: 1, // right
+                font: '12px system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"',
+                size: (self: uPlot, values: string[], axisIdx: number, cycleNum: number): number => {
+                    let size = 0;
+                    let size_correction_factor = 1;
+
+                    if (values) {
+                        self.ctx.save();
+                        self.ctx.font = self.axes[axisIdx].font;
+
+                        if (self.ctx.font == '10px sans-serif') {
+                            // FIXME: For some unknown reason sometimes changing the canvas font doesn't work and the
+                            //        canvas font stays "10px sans-serif", work around this using a rought correction
+                            //        factor. This is not the best because the result of this correction is not exact
+                            size_correction_factor = 12 * devicePixelRatio / 10;
+                        }
+
+                        for (let i = 0; i < values.length; ++i) {
+                            size = Math.max(size, self.ctx.measureText(values[i]).width);
+                        }
+
+                        self.ctx.restore();
+                    }
+
+                    size *= size_correction_factor;
+
+                    this.y2_size = Math.ceil(size / devicePixelRatio) + this.y2_size_offset;
+                    size = Math.max(this.y2_size, this.y2_other_size);
+
+                    if (this.props.y_sync_ref && this.props.y_sync_ref.current) {
+                        this.props.y_sync_ref.current.set_y2_other_size(this.y2_size);
+                    }
+
+                    return size;
+                },
+                values: (self: uPlot, splits: number[]) => {
+                    let values: string[] = new Array(splits.length);
+
+                    values.fill('');
+
+                    return values;
+                },
+                grid: {
+                    show: false, // FIXME: y and y2 grid are misaligned, hide y2 grid for now
+                },
+                ticks: {
+                    show: false,
+                },
+            });
+        }
 
         let div = this.div_ref.current;
         this.uplot = new uPlot(options, [], div);
@@ -281,6 +345,18 @@ export class UplotFlagsWrapper extends Component<UplotFlagsWrapperProps, {}> {
         this.y_other_size = size;
 
         if (this.y_other_size != this.y_size) {
+            this.resize();
+        }
+    }
+
+    set_y2_other_size(size: number) {
+        if (this.y2_other_size == size) {
+            return;
+        }
+
+        this.y2_other_size = size;
+
+        if (this.y2_other_size != this.y2_size) {
             this.resize();
         }
     }

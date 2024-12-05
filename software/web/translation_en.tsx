@@ -54,6 +54,7 @@ let x = {
             "wireguard": "the WireGuard connection"
         },
         "collapsed_section": {
+            "heading": "Details",
             "show": "Show",
             "hide": "Hide"
         },
@@ -78,7 +79,7 @@ let x = {
             "apply": "Apply"
         },
         "remote_close_button": {
-            "close": "Close remote-access"
+            "close": "Close remote access"
         }
     },
     "util": {
@@ -92,7 +93,8 @@ let x = {
         "upload_timeout": "Upload timed out",
         "download_abort": "Download aborted",
         "download_error": "Download error",
-        "download_timeout": "Download timed out"
+        "download_timeout": "Download timed out",
+        "not_yet_known": "Not yet known"
     },
     "reset": {
         "reset_modal": "Reset Config",
@@ -103,5 +105,7 @@ let x = {
         "reset_modal_confirm": "Reset"
     },
     "days": "days",
-    "day": "day"
+    "day": "day",
+    "today": "Today",
+    "tomorrow": "Tomorrow"
 }

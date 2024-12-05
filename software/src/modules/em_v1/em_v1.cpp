@@ -27,17 +27,19 @@
 
 #include "gcc_warnings.h"
 
+static constexpr auto EM_TASK_DELAY = 250_ms;
+
 #if defined(__GNUC__)
     #pragma GCC diagnostic push
     #pragma GCC diagnostic ignored "-Weffc++"
 #endif
 
 EMV1::EMV1() : DeviceModule(warp_energy_manager_bricklet_firmware_bin_data,
-                                              warp_energy_manager_bricklet_firmware_bin_length,
-                                              "energy_manager",
-                                              "WARP Energy Manager",
-                                              "Energy Manager",
-                                              [this](){this->setup_energy_manager();}) {}
+                            warp_energy_manager_bricklet_firmware_bin_length,
+                            "energy_manager",
+                            "WARP Energy Manager",
+                            "Energy Manager",
+                            [this](){this->setup_energy_manager();}) {}
 
 #if defined(__GNUC__)
     #pragma GCC diagnostic pop
@@ -69,7 +71,7 @@ void EMV1::pre_setup()
         {"contactor", Config::Bool(false)},
         {"contactor_check_state", Config::Uint8(0)},
         {"led_rgb", Config::Array({Config::Uint8(0), Config::Uint8(0), Config::Uint8(0)},
-            new Config{Config::Uint8(0)}, 3, 3, Config::type_id<Config::ConfUint>())
+            Config::get_prototype_uint8_0(), 3, 3, Config::type_id<Config::ConfUint>())
         },
     });
 
@@ -156,12 +158,7 @@ bool EMV1::has_triggered(const Config *conf, void *data)
 
 void EMV1::setup_energy_manager()
 {
-    if (!this->DeviceModule::setup_device()) {
-        logger.printfln("setup_device error. Reboot in 5 Minutes.");
-
-        task_scheduler.scheduleOnce([]() {
-            trigger_reboot("Energy Manager");
-        }, 5 * 60 * 1000);
+    if (!setup_device()) {
         return;
     }
 
@@ -193,7 +190,7 @@ void EMV1::setup()
     // Start this task even if a config error is set below: If only MeterEM::update_all_values runs, there will be 2.5 sec gaps in the meters data.
     task_scheduler.scheduleWithFixedDelay([this]() {
         this->update_all_data();
-    }, 0, EM_TASK_DELAY_MS);
+    }, EM_TASK_DELAY);
 
     power_manager.register_phase_switcher_backend(this);
 
@@ -213,7 +210,7 @@ void EMV1::setup()
             bool contactor_okay = all_data.contactor_check_state & 1;
             automation.trigger(AutomationTriggerID::EMContactorMonitoring, &contactor_okay, this);
         }
-    }, 0);
+    });
 #endif
 }
 
@@ -287,9 +284,13 @@ int EMV1::wem_get_sd_information(uint32_t *ret_sd_status, uint32_t *ret_lfs_stat
     return tf_warp_energy_manager_get_sd_information(&device, ret_sd_status, ret_lfs_status, ret_sector_size, ret_sector_count, ret_card_type, ret_product_rev, ret_product_name, ret_manufacturer_id);
 }
 
-int EMV1::wem_set_sd_wallbox_data_point(uint32_t wallbox_id, uint8_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute, uint8_t flags, uint16_t power, uint8_t *ret_status)
+int EMV1::wem_set_sd_wallbox_data_point(uint32_t wallbox_id, uint8_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute, uint16_t flags, uint16_t power, uint8_t *ret_status)
 {
-    return tf_warp_energy_manager_set_sd_wallbox_data_point(&device, wallbox_id, year, month, day, hour, minute, flags, power, ret_status);
+    if ((flags & 0xFF00) != 0) {
+        logger.printfln("Losing the upper 8 flags while storing wallbox 5min data point");
+    }
+
+    return tf_warp_energy_manager_set_sd_wallbox_data_point(&device, wallbox_id, year, month, day, hour, minute, static_cast<uint8_t>(flags & 0xFF), power, ret_status);
 }
 
 int EMV1::wem_get_sd_wallbox_data_points(uint32_t wallbox_id, uint8_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute, uint16_t amount, uint8_t *ret_status)
@@ -307,9 +308,13 @@ int EMV1::wem_get_sd_wallbox_daily_data_points(uint32_t wallbox_id, uint8_t year
     return tf_warp_energy_manager_get_sd_wallbox_daily_data_points(&device, wallbox_id, year, month, day, amount, ret_status);
 }
 
-int EMV1::wem_set_sd_energy_manager_data_point(uint8_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute, uint8_t flags, int32_t power_grid, const int32_t power_general[6], uint32_t price, uint8_t *ret_status)
+int EMV1::wem_set_sd_energy_manager_data_point(uint8_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute, uint16_t flags, int32_t power_grid, const int32_t power_general[6], uint32_t price, uint8_t *ret_status)
 {
-    return tf_warp_energy_manager_set_sd_energy_manager_data_point(&device, year, month, day, hour, minute, flags, power_grid, power_general, price, ret_status);
+    if ((flags & 0xFF00) != 0) {
+        logger.printfln("Losing the upper 8 flags while storing Energy Manager 5min data point");
+    }
+
+    return tf_warp_energy_manager_set_sd_energy_manager_data_point(&device, year, month, day, hour, minute, static_cast<uint8_t>(flags & 0xFF), power_grid, power_general, price, ret_status);
 }
 
 int EMV1::wem_get_sd_energy_manager_data_points(uint8_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute, uint16_t amount, uint8_t *ret_status)
@@ -347,9 +352,9 @@ int EMV1::wem_set_data_storage(uint8_t page, const uint8_t data[63])
     return tf_warp_energy_manager_set_data_storage(&device, page, data);
 }
 
-int EMV1::wem_get_data_storage(uint8_t page, uint8_t ret_data[63])
+int EMV1::wem_get_data_storage(uint8_t page, uint8_t *status, uint8_t ret_data[63])
 {
-    return tf_warp_energy_manager_get_data_storage(&device, page, ret_data);
+    return tf_warp_energy_manager_get_data_storage(&device, page, status, ret_data);
 }
 
 int EMV1::wem_reset_energy_meter_relative_energy()
@@ -369,7 +374,7 @@ bool EMV1::phase_switching_capable()
     return contactor_installed;
 }
 
-bool EMV1::can_switch_phases_now(bool /*wants_3phase*/)
+bool EMV1::can_switch_phases_now(uint32_t /*phases_wanted*/)
 {
     if (!contactor_installed) {
         return false;
@@ -382,9 +387,9 @@ bool EMV1::can_switch_phases_now(bool /*wants_3phase*/)
     return true;
 }
 
-bool EMV1::get_is_3phase()
+uint32_t EMV1::get_phases()
 {
-    return all_data.contactor_value;
+    return all_data.contactor_value ? 3 : 1;
 }
 
 PhaseSwitcherBackend::SwitchingState EMV1::get_phase_switching_state()
@@ -411,7 +416,7 @@ PhaseSwitcherBackend::SwitchingState EMV1::get_phase_switching_state()
     return PhaseSwitcherBackend::SwitchingState::Ready;
 }
 
-bool EMV1::switch_phases_3phase(bool wants_3phase)
+bool EMV1::switch_phases(uint32_t phases_wanted)
 {
     if (!contactor_installed) {
         logger.printfln("Requested phase switch without contactor installed.");
@@ -423,7 +428,7 @@ bool EMV1::switch_phases_3phase(bool wants_3phase)
         return false;
     }
 
-    tf_warp_energy_manager_set_contactor(&device, wants_3phase);
+    tf_warp_energy_manager_set_contactor(&device, phases_wanted == 3);
     phase_switch_deadtime_us = now_us() + micros_t{2000000}; // 2s
 
     return true;
@@ -441,7 +446,7 @@ void EMV1::update_all_data_triggers(T id, void *data_)
 }
 #define AUTOMATION_TRIGGER(TRIGGER_ID, DATA) update_all_data_triggers(AutomationTriggerID::TRIGGER_ID, DATA)
 #else
-#define AUTOMATION_TRIGGER(TRIGGER_ID, DATA) do {} while (0)
+#define AUTOMATION_TRIGGER(TRIGGER_ID, DATA) do {(void)DATA;} while (0)
 #endif
 
 void EMV1::update_all_data()

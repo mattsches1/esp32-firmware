@@ -31,6 +31,7 @@
 #include "module.h"
 #include "config.h"
 #include "cm_networking_defs.h"
+#include "TFTools/Micros.h"
 
 struct cm_state_v1;
 struct cm_state_v2;
@@ -42,17 +43,18 @@ public:
     CMNetworking(){}
     void setup() override;
     void register_urls() override;
+    void register_events() override;
 
     int create_socket(uint16_t port, bool blocking);
 
     void register_manager(const char *const *const hosts,
                           int charger_count,
-                          std::function<void(uint8_t /* client_id */, cm_state_v1 *, cm_state_v2 *, cm_state_v3 *)> manager_callback,
-                          std::function<void(uint8_t, uint8_t)> manager_error_callback);
+                          const std::function<void(uint8_t /* client_id */, cm_state_v1 *, cm_state_v2 *, cm_state_v3 *)> &manager_callback,
+                          const std::function<void(uint8_t, uint8_t)> &manager_error_callback);
 
     bool send_manager_update(uint8_t client_id, uint16_t allocated_current, bool cp_disconnect_requested, int8_t allocated_phases);
 
-    void register_client(std::function<void(uint16_t, bool, int8_t)> client_callback);
+    void register_client(const std::function<void(uint16_t, bool, int8_t)> &client_callback);
     bool send_client_update(uint32_t esp32_uid,
                             uint8_t iec61851_state,
                             uint8_t charger_state,
@@ -85,6 +87,9 @@ public:
     mdns_result_t *scan_results = nullptr;
 
 private:
+    bool send_command_packet(uint8_t charger_idx, cm_command_packet *command_pkt);
+    bool send_state_packet(const cm_state_packet *state_pkt);
+
     int manager_sock;
 
     #define RESOLVE_STATE_UNKNOWN 0
@@ -96,15 +101,16 @@ private:
     const char *const *hosts = nullptr;
     int charger_count = 0;
     // one bit per charger
-    uint32_t needs_mdns = 0;
-    static_assert(MAX_CONTROLLED_CHARGERS <= 32);
+    uint64_t needs_mdns = 0;
+    static_assert(MAX_CONTROLLED_CHARGERS <= 64);
 
+    micros_t last_manager_addr_change = -1_m;
     int client_sock;
     bool manager_addr_valid = false;
     struct sockaddr_storage manager_addr;
 
     void start_scan();
-    bool mdns_result_is_charger(mdns_result_t *entry, const char **ret_version, const char **ret_enabled, const char **ret_display_name);
+    bool mdns_result_is_charger(mdns_result_t *entry, const char **ret_version, const char **ret_enabled, const char **ret_display_name, const char **ret_proxy_of);
     void resolve_via_mdns(mdns_result_t *entry);
 
     #define SCAN_RESULT_ERROR_OK 0

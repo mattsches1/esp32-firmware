@@ -46,10 +46,7 @@
 
 #define PHASE_SWITCHING_MIN                 0
 #define PHASE_SWITCHING_AUTOMATIC           0
-#define PHASE_SWITCHING_ALWAYS_1PHASE       1
-#define PHASE_SWITCHING_ALWAYS_3PHASE       2
 #define PHASE_SWITCHING_EXTERNAL_CONTROL    3
-#define PHASE_SWITCHING_PV1P_FAST3P         4
 #define PHASE_SWITCHING_MAX                 4
 
 #define EXTERNAL_CONTROL_STATE_AVAILABLE    0
@@ -57,6 +54,8 @@
 #define EXTERNAL_CONTROL_STATE_UNAVAILABLE  2
 #define EXTERNAL_CONTROL_STATE_SWITCHING    3
 
+#define PM_CONFIG_ERROR_FLAGS_DLM_NO_METER_BIT_POS      4
+#define PM_CONFIG_ERROR_FLAGS_DLM_NO_METER_MASK         (1 << PM_CONFIG_ERROR_FLAGS_DLM_NO_METER_BIT_POS)
 #define PM_CONFIG_ERROR_FLAGS_EXCESS_NO_METER_BIT_POS   3
 #define PM_CONFIG_ERROR_FLAGS_EXCESS_NO_METER_MASK      (1 << PM_CONFIG_ERROR_FLAGS_EXCESS_NO_METER_BIT_POS)
 #define PM_CONFIG_ERROR_FLAGS_NO_CHARGERS_BIT_POS       2
@@ -72,8 +71,6 @@ class PowerManager final : public IModule,
                          , public IAutomationBackend
 #endif
 {
-    friend class EnergyManager;
-
 public:
     PowerManager() {}
     void pre_setup() override;
@@ -83,7 +80,7 @@ public:
     void register_phase_switcher_backend(PhaseSwitcherBackend *backend);
 
     bool get_enabled() const;
-    bool get_is_3phase() const;
+    uint32_t get_phases() const;
 
     [[gnu::const]] size_t get_debug_header_length() const override;
     void get_debug_header(StringBuilder *sb) override;
@@ -118,14 +115,20 @@ public:
 private:
     class PhaseSwitcherBackendDummy final : public PhaseSwitcherBackend
     {
-        uint32_t get_phase_switcher_priority()       override {return 0;}
-        bool phase_switching_capable()               override {return false;}
-        bool can_switch_phases_now(bool wants_3phase) override {return false;}
-        bool requires_cp_disconnect()                override {return true;}
-        bool get_is_3phase()                         override {return false;}
-        SwitchingState get_phase_switching_state()   override {return SwitchingState::Ready;} // Don't report an error when phase_switching_capable() is false.
-        bool switch_phases_3phase(bool wants_3phase) override {return false;}
-        bool is_external_control_allowed()           override {return false;}
+        uint32_t get_phase_switcher_priority()             override {return 0;}
+        bool phase_switching_capable()                     override {return false;}
+        bool can_switch_phases_now(uint32_t phases_wanted) override {return false;}
+        bool requires_cp_disconnect()                      override {return true;}
+        uint32_t get_phases()                              override {return 0;}
+        SwitchingState get_phase_switching_state()         override {return SwitchingState::Ready;} // Don't report an error when phase_switching_capable() is false.
+        bool switch_phases(uint32_t phases_wanted)         override {return false;}
+        bool is_external_control_allowed()                 override {return false;}
+    };
+
+    enum class BatteryMode : uint8_t {
+        PreferChargers = 0,
+        PreferBattery = 1,
+        BatteryModeMax = 1,
     };
 
     enum class TristateBool : uint8_t {
@@ -147,9 +150,6 @@ private:
     bool has_triggered(const Config *conf, void *data) override;
 #endif
 
-    // Prototype used in low_level_state
-    Config config_int32_zero_prototype;
-
     ConfigRoot state;
     ConfigRoot low_level_state;
     ConfigRoot config;
@@ -168,7 +168,7 @@ private:
     bool     printed_skipping_currents_update    = false;
 
     uint32_t mode                                = 0;
-    bool     is_3phase                           = false;
+    uint32_t current_phases                      = 0;
     bool     just_switched_mode                  = false;
     int32_t max_current_limited_ma               = 0;
 
@@ -182,6 +182,7 @@ private:
     size_t current_long_min_iterations = 0;
 
     float    power_at_meter_raw_w = NAN;
+    float    power_at_battery_raw_w = NAN;
     int32_t  current_pv_floating_min_ma = INT32_MAX;
     minmax_filter current_pv_minmax_ma;
     minmax_filter current_pv_long_min_ma;
@@ -211,6 +212,10 @@ private:
     uint32_t default_mode             = 0;
     bool     excess_charging_enabled  = false;
     uint32_t meter_slot_power         = UINT32_MAX;
+    uint32_t meter_slot_battery_power = UINT32_MAX;
+    BatteryMode battery_mode          = BatteryMode::PreferChargers;
+    bool     battery_inverted         = false;
+    uint16_t battery_deadzone_w       = 0;
     int32_t  target_power_from_grid_w = 0;
     int32_t  guaranteed_power_w       = 0;
     uint32_t phase_switching_mode     = 0;
@@ -224,8 +229,11 @@ private:
     int32_t  overall_min_power_w = 0;
     int32_t  target_phase_current_ma = 0;
     int32_t  phase_current_max_increase_ma = 0;
+    bool     have_battery = false;
 
     // Automation
     TristateBool automation_drawing_power_last   = TristateBool::Undefined;
     TristateBool automation_power_available_last = TristateBool::Undefined;
 };
+
+#include "module_available_end.h"

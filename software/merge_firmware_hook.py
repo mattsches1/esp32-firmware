@@ -15,17 +15,20 @@ import subprocess
 with open(os.path.join(env.subst('$BUILD_DIR'), 'firmware_basename'), 'r', encoding='utf-8') as f:
     firmware_basename = f.read().strip()
 
-partitions = env.GetProjectOption('board_build.partitions')
-m = re.match('^default_([1-9][0-9]*MB)_coredump.csv$', partitions)
-flash_size = m.group(1)
+custom_name = env.GetProjectOption('custom_name')
 
 env.AddPostAction(
     "$BUILD_DIR/${PROGNAME}.elf",
-    env.VerboseAction(lambda **kwargs: os.makedirs("build", exist_ok=True), "Ensuring build dir exists")
+    env.VerboseAction(lambda **kwargs: os.makedirs("build", exist_ok=True), "Ensuring build directory exists")
+)
+
+env.AddPostAction(
+    "$BUILD_DIR/${PROGNAME}.elf",
+    env.VerboseAction(lambda **kwargs: os.makedirs("build_latest", exist_ok=True), "Ensuring build_latest directory exists")
 )
 
 if env.GetProjectOption("custom_autoclean_build_dir", default="false") == "true": # Option is a string, not a Python boolean.
-    firmware_name = env.GetProjectOption("custom_name") + "_firmware"
+    firmware_name = custom_name + "_firmware"
 
     def delete_old(fwname):
         fileList = glob.glob('build/{}*'.format(fwname))
@@ -39,7 +42,7 @@ if env.GetProjectOption("custom_autoclean_build_dir", default="false") == "true"
     env.AddPostAction(
         "$BUILD_DIR/${PROGNAME}.elf",
         env.VerboseAction(lambda **kwargs: delete_old(firmware_name),
-                          "Cleaning old {}_*".format(firmware_name))
+                          "Cleaning old {}*".format(firmware_name))
     )
 
 def copy2(src, dst): # hide shutil.copy2 return value
@@ -58,18 +61,35 @@ if sys.platform == 'win32':
 else:
     symlink = os.symlink
 
+def remove_and_symlink(remove_pattern, src_path, dst_path):
+    for path in glob.glob(remove_pattern):
+        try:
+            os.remove(path)
+        except:
+            pass
+
+    return symlink(src_path, dst_path)
+
+env.AddPostAction(
+    "$BUILD_DIR/${PROGNAME}.elf",
+    env.VerboseAction(lambda env, **kwargs: remove_and_symlink(f"build_latest/{custom_name}_firmware*.elf",
+                                                               f"../build/{firmware_basename}.elf",
+                                                               f"build_latest/{firmware_basename}.elf"),
+                      f"Symlinking build{os.sep}{firmware_basename}.elf -> build_latest{os.sep}{firmware_basename}.elf")
+)
+
 env.AddPostAction(
     "$BUILD_DIR/${PROGNAME}.elf",
     env.VerboseAction(lambda env, **kwargs: symlink(f"{firmware_basename}.elf",
-                                                    f"build/{env.GetProjectOption('custom_name')}_firmware_latest.elf"),
-                    f"Symlinking build/{firmware_basename}.elf -> build{os.sep}{env.GetProjectOption('custom_name')}_firmware_latest.elf")
+                                                    f"build/{custom_name}_firmware_latest.elf"),
+                      f"Symlinking build{os.sep}{firmware_basename}.elf -> build{os.sep}{custom_name}_firmware_latest.elf")
 )
 
 env.AddPostAction(
     "$BUILD_DIR/${PROGNAME}.elf",
     env.VerboseAction(lambda env, **kwargs: symlink(f"{firmware_basename}.elf",
                                                     f"build/firmware_latest.elf"),
-                    f"Symlinking build/{firmware_basename}.elf -> build{os.sep}firmware_latest.elf")
+                      f"Symlinking build{os.sep}{firmware_basename}.elf -> build{os.sep}firmware_latest.elf")
 )
 
 def check_call(*args): # hide subprocess.check_call return value
@@ -101,10 +121,10 @@ if env.GetProjectOption('custom_signed') == 'true':
             env.subst('$PYTHONEXE'),
             "-u",
             env.subst("$PROJECT_DIR/signature/sign.py"),
-            env.GetProjectOption("custom_name"),
+            custom_name,
             env.subst("$BUILD_DIR/${PROGNAME}_merged.bin"),
-            "build/{}_merged.bin".format(firmware_basename)
-        ), f"Signing $BUILD_DIR{os.sep}${{PROGNAME}}_merged.bin -> build{os.sep}{{os.sep}}_merged.bin")
+            f"build/{firmware_basename}_merged.bin"
+        ), f"Signing $BUILD_DIR{os.sep}${{PROGNAME}}_merged.bin -> build{os.sep}{firmware_basename}_merged.bin")
     )
 else:
     env.AddPostAction(
@@ -116,14 +136,22 @@ else:
 
 env.AddPostAction(
     "$BUILD_DIR/${PROGNAME}.bin",
+    env.VerboseAction(lambda env, **kwargs: remove_and_symlink(f"build_latest/{custom_name}_firmware*_merged.bin",
+                                                               f"../build/{firmware_basename}_merged.bin",
+                                                               f"build_latest/{firmware_basename}_merged.bin"),
+                      f"Symlinking build{os.sep}{firmware_basename}_merged.bin -> build_latest{os.sep}{firmware_basename}_merged.bin")
+)
+
+env.AddPostAction(
+    "$BUILD_DIR/${PROGNAME}.bin",
     env.VerboseAction(lambda env, **kwargs: symlink(f"{firmware_basename}_merged.bin",
-                                                    f"build/{env.GetProjectOption('custom_name')}_firmware_latest_merged.bin"),
-                        f"Symlinking build{os.sep}{firmware_basename}_merged.bin -> build{os.sep}{env.GetProjectOption('custom_name')}_firmware_latest_merged.bin")
+                                                    f"build/{custom_name}_firmware_latest_merged.bin"),
+                      f"Symlinking build{os.sep}{firmware_basename}_merged.bin -> build{os.sep}{custom_name}_firmware_latest_merged.bin")
 )
 
 env.AddPostAction(
     "$BUILD_DIR/${PROGNAME}.bin",
     env.VerboseAction(lambda env, **kwargs: symlink(f"{firmware_basename}_merged.bin",
                                                     f"build/firmware_latest_merged.bin"),
-                        f"Symlinking build{os.sep}{firmware_basename}_merged.bin -> build{os.sep}firmware_latest_merged.bin")
+                      f"Symlinking build{os.sep}{firmware_basename}_merged.bin -> build{os.sep}firmware_latest_merged.bin")
 )

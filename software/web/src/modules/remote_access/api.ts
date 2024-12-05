@@ -37,3 +37,7 @@ export interface register {
     mgmt_psk: string,
     keys: KeyObject[],
 }
+
+export type get_login_salt = config;
+export type get_secret_salt = config;
+export type login = register;

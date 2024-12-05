@@ -17,11 +17,13 @@
  * Boston, MA 02111-1307, USA.
  */
 
+//#include "module_available.inc"
+
 import * as API from "../../ts/api";
 import * as util from "../../ts/util";
 import { METERS_SLOTS } from "../../build";
 import { h, createRef, Fragment, Component, RefObject } from "preact";
-import { __ } from "../../ts/translation";
+import { __, translate_unchecked } from "../../ts/translation";
 import { PageHeader } from "../../ts/components/page_header";
 import { InputDate } from "../../ts/components/input_date";
 import { InputMonth } from "../../ts/components/input_month";
@@ -31,11 +33,13 @@ import { OutputFloat } from "../../ts/components/output_float";
 import { SubPage } from "../../ts/components/sub_page";
 import { FormSeparator } from "../../ts/components/form_separator";
 import { UplotLoader } from "../../ts/components/uplot_loader";
-import { UplotWrapper, UplotData, CachedData, UplotPath } from "../../ts/components/uplot_wrapper_2nd";
+import { UplotWrapper, UplotData, UplotPath } from "../../ts/components/uplot_wrapper_2nd";
 import { UplotFlagsWrapper } from "../../ts/components/uplot_wrapper_3rd";
+//#if MODULE_DAY_AHEAD_PRICES_AVAILABLE
+import { get_price_from_index } from "../day_ahead_prices/main";
+//#endif
 import uPlot from "uplot";
 import { MeterConfig } from "../meters/types";
-import { get_meter_power_index } from "../meters/main";
 import { NavbarItem } from "../../ts/components/navbar_item";
 import { StatusSection } from "../../ts/components/status_section";
 import { PieChart } from "react-feather";
@@ -46,11 +50,19 @@ export function EMEnergyAnalysisNavbar() {
 
 const UPDATE_RETRY_DELAY = 500; // ms
 
+interface CachedData {
+    update_timestamp: number;
+    use_timestamp: number;
+}
+
+type CachedUplotData = CachedData & UplotData;
+
 interface Wallbox5minData extends CachedData {
     empty: boolean;
     complete: boolean;
-    flags: number[/*timestamp_slot*/]; // bit 0-2 = charger state, bit 7 = no data
-    power: number[/*timestamp_slot*/];
+    flags: number[/*timestamp_slot*/]; // v1: bit 0-2 = charger state
+                                       // v2: bit 0-2 = charger state, bit 3-4 = phases
+    power: number[/*timestamp_slot*/]; // W
 }
 
 interface WallboxDailyData extends CachedData {
@@ -62,9 +74,12 @@ interface WallboxDailyData extends CachedData {
 interface EnergyManager5minData extends CachedData {
     empty: boolean;
     complete: boolean;
-    flags: number[/*timestamp_slot*/]; // bit 0 = 1p/3p, bit 1-2 = input, bit 3 = output, bit 7 = no data
+    flags: number[/*timestamp_slot*/]; // v1: bit 0 = 1p/3p, bit 1-2 = inputs, bit 3 = output
+                                       // v2: bit 0-3 = inputs, bit 4-5 = SG ready, bit 6-7 = relays
     power: number[/*meter_slot*/][/*timestamp_slot*/]; // W
     power_empty: boolean[/*meter_slot*/];
+    price: number[/*timestamp_slot*/]; // mct/kWh
+    price_empty: boolean;
 }
 
 interface EnergyManagerDailyData extends CachedData {
@@ -72,14 +87,19 @@ interface EnergyManagerDailyData extends CachedData {
     complete: boolean;
     energy_import: number[/*meter_slot*/][/*timestamp_slot*/]; // kWh
     energy_export: number[/*meter_slot*/][/*timestamp_slot*/]; // kWh
+    price_min: number[/*timestamp_slot*/]; // ct/kWh
+    price_avg: number[/*timestamp_slot*/]; // ct/kWh
+    price_max: number[/*timestamp_slot*/]; // ct/kWh
 }
 
-const wb_state_names: {[id: number]: string} = {
-    0: __("em_energy_analysis.content.state_not_connected"),
-    1: __("em_energy_analysis.content.state_waiting_for_charge_release"),
-    2: __("em_energy_analysis.content.state_ready_to_charge"),
-    3: __("em_energy_analysis.content.state_charging"),
-    4: __("em_energy_analysis.content.state_error"),
+const wb_state_names: {[id: number]: () => string} = {
+    0: () => __("em_energy_analysis.content.state_not_connected"),
+    1: () => __("em_energy_analysis.content.state_waiting_for_charge_release"),
+    2: () => __("em_energy_analysis.content.state_ready_to_charge"),
+    3: () => __("em_energy_analysis.content.state_charging"),
+    4: () => __("em_energy_analysis.content.state_error"),
+    5: () => __("em_energy_analysis.content.state_charging_single_phase"),
+    6: () => __("em_energy_analysis.content.state_charging_three_phase"),
 };
 
 const wb_state_strokes: {[id: number]: string} = {
@@ -88,6 +108,8 @@ const wb_state_strokes: {[id: number]: string} = {
     2: 'rgb( 13, 202, 240)',
     3: 'rgb( 40, 167,  69)',
     4: 'rgb(220,  53,  69)',
+    5: 'rgb( 40, 167,  69)', // FIXME
+    6: 'rgb( 40, 167,  69)', // FIXME
 };
 
 const wb_state_fills: {[id: number]: string} = {
@@ -96,11 +118,13 @@ const wb_state_fills: {[id: number]: string} = {
     2: 'rgb( 13, 202, 240, 0.66)',
     3: 'rgb( 40, 167,  69, 0.66)',
     4: 'rgb(220,  53,  69, 0.66)',
+    5: 'rgb( 40, 167,  69, 0.66)', // FIXME
+    6: 'rgb( 40, 167,  69, 0.66)', // FIXME
 };
 
-const em_phase_names: {[id: number]: string} = {
-    0: __("em_energy_analysis.content.state_single_phase"),
-    1: __("em_energy_analysis.content.state_three_phase"),
+const em_phase_names: {[id: number]: () => string} = {
+    0: () => __("em_energy_analysis.content.state_single_phase"),
+    1: () => __("em_energy_analysis.content.state_three_phase"),
 };
 
 const em_phase_strokes: {[id: number]: string} = {
@@ -113,9 +137,9 @@ const em_phase_fills: {[id: number]: string} = {
     1: 'rgb( 40, 167,  69, 0.66)',
 };
 
-const em_input_names: {[id: number]: string} = {
-    0: __("em_energy_analysis.content.state_input_low"),
-    1: __("em_energy_analysis.content.state_input_high"),
+const em_input_names: {[id: number]: () => string} = {
+    0: () => __("em_energy_analysis.content.state_input_low"),
+    1: () => __("em_energy_analysis.content.state_input_high"),
 };
 
 const em_input_strokes: {[id: number]: string} = {
@@ -128,9 +152,49 @@ const em_input_fills: {[id: number]: string} = {
     1: 'rgb( 40, 167,  69, 0.66)',
 };
 
-const em_relay_names: {[id: number]: string} = {
-    0: __("em_energy_analysis.content.state_relay_open"),
-    1: __("em_energy_analysis.content.state_relay_closed"),
+const em_sg_ready1_strokes_active_closed: {[id: number]: string} = {
+    0: 'rgb(108, 117, 125)',
+    1: 'rgb(220,  53,  69)',
+};
+
+const em_sg_ready1_fills_active_closed: {[id: number]: string} = {
+    0: 'rgb(108, 117, 125, 0.66)',
+    1: 'rgb(220,  53,  69, 0.66)',
+};
+
+const em_sg_ready1_strokes_active_open: {[id: number]: string} = {
+    0: 'rgb(220,  53,  69)',
+    1: 'rgb(108, 117, 125)',
+};
+
+const em_sg_ready1_fills_active_open: {[id: number]: string} = {
+    0: 'rgb(220,  53,  69, 0.66)',
+    1: 'rgb(108, 117, 125, 0.66)',
+};
+
+const em_sg_ready2_strokes_active_closed: {[id: number]: string} = {
+    0: 'rgb(108, 117, 125)',
+    1: 'rgb( 40, 167,  69)',
+};
+
+const em_sg_ready2_fills_active_closed: {[id: number]: string} = {
+    0: 'rgb(108, 117, 125, 0.66)',
+    1: 'rgb( 40, 167,  69, 0.66)',
+};
+
+const em_sg_ready2_strokes_active_open: {[id: number]: string} = {
+    0: 'rgb( 40, 167,  69)',
+    1: 'rgb(108, 117, 125)',
+};
+
+const em_sg_ready2_fills_active_open: {[id: number]: string} = {
+    0: 'rgb( 40, 167,  69, 0.66)',
+    1: 'rgb(108, 117, 125, 0.66)',
+};
+
+const em_relay_names: {[id: number]: () => string} = {
+    0: () => __("em_energy_analysis.content.state_relay_open"),
+    1: () => __("em_energy_analysis.content.state_relay_closed"),
 };
 
 const em_relay_strokes: {[id: number]: string} = {
@@ -143,10 +207,18 @@ const em_relay_fills: {[id: number]: string} = {
     1: 'rgb( 40, 167,  69, 0.66)',
 };
 
+function resolve_translation(names: {[id: number]: () => string}) {
+    let result: {[id: number]: string} = {};
+
+    for (let key in names) {
+        result[key] = names[key]();
+    }
+
+    return result;
+}
+
 interface EMEnergyAnalysisStatusState {
     force_render: number,
-    meter_slot: number,
-    meter_configs: {[meter_slot: number]: MeterConfig},
 }
 
 function get_meter_name(meter_configs: {[meter_slot: number]: MeterConfig}, meter_slot: number) {
@@ -157,6 +229,23 @@ function get_meter_name(meter_configs: {[meter_slot: number]: MeterConfig}, mete
     }
 
     return meter_name;
+}
+
+function get_wallbox_state(flags: number) {
+    let state = flags & 0b111;
+
+    if (state == 3) { // charging
+        let phases = (flags >> 3) & 0b11;
+
+        if (phases == 1) {
+            state = 5; // charging single-phase
+        }
+        else if (phases == 3) {
+            state = 6; // charging three-phase
+        }
+    }
+
+    return state;
 }
 
 export class EMEnergyAnalysisStatus extends Component<{}, EMEnergyAnalysisStatusState> {
@@ -170,7 +259,6 @@ export class EMEnergyAnalysisStatus extends Component<{}, EMEnergyAnalysisStatus
 
         this.state = {
             force_render: 0,
-            meter_slot: 0,
         } as any;
 
         util.addApiEventListener('info/modules', () => {
@@ -180,25 +268,6 @@ export class EMEnergyAnalysisStatus extends Component<{}, EMEnergyAnalysisStatus
             }
 
             this.setState({force_render: Date.now()});
-        });
-
-        for (let meter_slot = 0; meter_slot < METERS_SLOTS; ++meter_slot) {
-            util.addApiEventListener_unchecked(`meters/${meter_slot}/config`, () => {
-                let config = API.get_unchecked(`meters/${meter_slot}/config`);
-
-                this.setState((prevState) => ({
-                    meter_configs: {
-                        ...prevState.meter_configs,
-                        [meter_slot]: config
-                    }
-                }));
-            });
-        }
-
-        util.addApiEventListener("power_manager/config", () => {
-            let config = API.get("power_manager/config");
-
-            this.setState({meter_slot: config.meter_slot_grid_power});
         });
     }
 
@@ -215,15 +284,6 @@ export class EMEnergyAnalysisStatus extends Component<{}, EMEnergyAnalysisStatus
     render() {
         if (!util.render_allowed() || !API.hasFeature("energy_manager"))
             return <StatusSection name="em_energy_analysis" />;
-
-        let value_ids = API.get_unchecked(`meters/${this.state.meter_slot}/value_ids`);
-        let values = API.get_unchecked(`meters/${this.state.meter_slot}/values`);
-        let power: number = undefined;
-        let power_idx = get_meter_power_index(value_ids);
-
-        if (power_idx >= 0 && values && values.length > 0) {
-            power = values[power_idx];
-        }
 
         return <StatusSection name="em_energy_analysis">
             <FormRow label={__("em_energy_analysis.status.power_history")}>
@@ -250,22 +310,19 @@ export class EMEnergyAnalysisStatus extends Component<{}, EMEnergyAnalysisStatus
                                             legend_time_label={__("em_energy_analysis.script.time_5min")}
                                             legend_time_with_minutes={true}
                                             aspect_ratio={3}
-                                            x_height={30}
+                                            x_height={35}
                                             x_format={{hour: '2-digit', minute: '2-digit'}}
                                             x_padding_factor={0}
+                                            x_include_date={false}
                                             y_min={0}
                                             y_max={1500}
                                             y_unit={"W"}
-                                            y_label={__("em_energy_analysis.script.power") + " [Watt]"}
+                                            y_label={__("em_energy_analysis.script.power") + " [W]"}
                                             y_digits={0}
-                                            default_fill={true}
-                                            padding={[null, 15, null, 5] as uPlot.Padding} />
+                                            padding={[null, 15, null, 5]} />
                         </UplotLoader>
                     </div>
                 </div>
-            </FormRow>
-            <FormRow label={__("em_energy_analysis.status.current_power")} label_muted={get_meter_name(this.state.meter_configs, this.state.meter_slot)}>
-                <OutputFloat value={power} digits={0} scale={0} unit="W" maxFractionalDigitsOnPage={0} maxUnitLengthOnPage={1}/>
             </FormRow>
         </StatusSection>;
     }
@@ -286,6 +343,8 @@ interface EMEnergyAnalysisState {
     wallbox_daily_cache_energy_total: {[id: number]: {[id: string]: number}};
     energy_manager_5min_cache_energy_total: {[id: string]: {import: number[/*meter_slot*/][/*timestamp_slot*/], export: number[/*meter_slot*/][/*timestamp_slot*/]}};
     energy_manager_daily_cache_energy_total: {[id: string]: {import: number[/*meter_slot*/], export: number[/*meter_slot*/]}};
+    sg_ready1_active_type: number; // 0 = closed, 1 = open
+    sg_ready2_active_type: number; // 0 = closed, 1 = open
 }
 
 interface Charger {
@@ -307,11 +366,11 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
     uplot_loader_daily_ref = createRef();
     uplot_wrapper_daily_ref = createRef();
     uplot_update_timeout: number = null;
-    uplot_5min_flags_cache: {[id: string]: UplotData} = {};
-    uplot_5min_power_cache: {[id: string]: UplotData} = {};
-    uplot_5min_status_cache: {[id: string]: UplotData} = {};
+    uplot_5min_flags_cache: {[id: string]: CachedUplotData} = {};
+    uplot_5min_power_cache: {[id: string]: CachedUplotData} = {};
+    uplot_5min_status_cache: {[id: string]: CachedUplotData} = {};
     uplot_5min_cache_initalized: boolean = false;
-    uplot_daily_cache: {[id: string]: UplotData} = {};
+    uplot_daily_cache: {[id: string]: CachedUplotData} = {};
     uplot_daily_cache_initalized: boolean = false;
     wallbox_5min_cache: {[id: number]: { [id: string]: Wallbox5minData}} = {};
     wallbox_daily_cache: {[id: string]: { [id: string]: WallboxDailyData}} = {};
@@ -319,6 +378,11 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
     energy_manager_daily_cache: {[id: string]: EnergyManagerDailyData} = {};
     cache_limit = 100;
     chargers: Charger[] = [];
+//#if MODULE_DAY_AHEAD_PRICES_AVAILABLE
+    day_ahead_prices_update_timestamp = 0;
+    day_ahead_prices_first_timestamp: number = null;
+    day_ahead_prices_last_timestamp: number = null;
+//#endif
 
     constructor() {
         super();
@@ -347,7 +411,9 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
             wallbox_5min_cache_energy_total: {},
             wallbox_daily_cache_energy_total: {},
             energy_manager_5min_cache_energy_total: {},
-            energy_manager_daily_cache_energy_total: {}
+            energy_manager_daily_cache_energy_total: {},
+            sg_ready1_active_type: null,
+            sg_ready2_active_type: null,
         } as any;
 
         util.addApiEventListener('info/modules', () => {
@@ -480,6 +546,12 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
                         }
                     }
 
+                    data.price[timestamp_slot] = changed.price;
+
+                    if (data.price[timestamp_slot] !== null) {
+                        data.price_empty = false;
+                    }
+
                     this.schedule_uplot_update();
                 }
             }
@@ -560,6 +632,10 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
                     data.energy_export[meter_slot][timestamp_slot] = changed.energy_export[meter_slot];
                 }
 
+                data.price_min[timestamp_slot] = changed.price_min;
+                data.price_avg[timestamp_slot] = changed.price_avg;
+                data.price_max[timestamp_slot] = changed.price_max;
+
                 this.schedule_uplot_update();
             }
 
@@ -573,10 +649,33 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
             }
         });
 
+//#if MODULE_DAY_AHEAD_PRICES_AVAILABLE
+        util.addApiEventListener('day_ahead_prices/prices', () => {
+            this.update_day_ahead_prices_cache();
+        });
+
+        util.addApiEventListener('day_ahead_prices/config', () => {
+            this.update_day_ahead_prices_cache();
+        });
+//#endif
+
         util.addApiEventListener("power_manager/config", () => {
             let config = API.get("power_manager/config");
 
             this.setState({meter_slot_status: config.meter_slot_grid_power});
+        });
+
+        util.addApiEventListener_unchecked('heating/config', () => {
+            let config = API.get_unchecked("heating/config");
+
+            this.update_current_5min_cache();
+            this.update_current_daily_cache();
+
+            this.setState({
+                sg_ready1_active_type: config.sg_ready_blocking_active_type,
+                sg_ready2_active_type: config.sg_ready_extended_active_type
+
+            });
         });
     }
 
@@ -643,8 +742,16 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
         }
         else {
             let energy_manager_data = this.energy_manager_5min_cache[key];
+            let date_timestamp = date.getTime() / 1000;
 
-            if (energy_manager_data && uplot_data.update_timestamp < energy_manager_data.update_timestamp) {
+            if ((energy_manager_data && uplot_data.update_timestamp < energy_manager_data.update_timestamp)
+//#if MODULE_DAY_AHEAD_PRICES_AVAILABLE
+             || (this.day_ahead_prices_first_timestamp !== null
+              && date_timestamp >= this.day_ahead_prices_first_timestamp
+              && date_timestamp < this.day_ahead_prices_last_timestamp
+              && uplot_data.update_timestamp < this.day_ahead_prices_update_timestamp)
+//#endif
+            ) {
                 needs_update = true;
             }
 
@@ -675,13 +782,16 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
             names: [null],
             values: [null],
             extras: [null],
-            stacked: [false],
+            stacked: [null],
             paths: [null],
             extra_names: [null],
+            y_axes: [null],
         };
 
         let timestamp_slot_count: number = 0;
         let energy_manager_data = this.energy_manager_5min_cache[key];
+        let price = undefined;
+        let price_empty = true;
 
         if (energy_manager_data) {
             for (let meter_slot = 0; meter_slot < METERS_SLOTS; ++meter_slot) {
@@ -695,8 +805,68 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
                     uplot_data.stacked.push(false);
                     uplot_data.paths.push(UplotPath.Line);
                     uplot_data.extra_names.push(null);
+                    uplot_data.y_axes.push('y');
                 }
             }
+
+            price = energy_manager_data.price.concat(); // copy before adding future prices
+            price_empty = energy_manager_data.price_empty;
+
+            if (!price_empty) {
+                timestamp_slot_count = Math.max(timestamp_slot_count, energy_manager_data.price.length);
+            }
+        }
+
+//#if MODULE_DAY_AHEAD_PRICES_AVAILABLE
+        let dap_prices = API.get("day_ahead_prices/prices");
+
+        if (dap_prices.prices.length > 0) {
+            let dap_config = API.get("day_ahead_prices/config");
+            let resolution_multiplier = dap_prices.resolution == 0 ? 15 : 60;
+            let grid_costs_and_taxes_and_supplier_markup = dap_config.grid_costs_and_taxes / 1000.0 + dap_config.supplier_markup / 1000.0;
+            let first_timestamp = dap_prices.first_date * 60;
+            let last_timestamp = first_timestamp + dap_prices.prices.length * 60 * resolution_multiplier; // exclusive range
+            let timestamp_base = date.getTime() / 1000;
+
+            timestamp_slot_count = Math.max(timestamp_slot_count, 24 * 12);
+
+            if (price === undefined) {
+                price = new Array(timestamp_slot_count);
+                price.fill(null);
+            }
+
+            while (price.length < timestamp_slot_count) {
+                price.push(null);
+            }
+
+            for (let timestamp_slot = timestamp_slot_count - 1; timestamp_slot >= 0; --timestamp_slot) {
+                let timestamp = timestamp_base + timestamp_slot * 300; // seconds
+
+                if (timestamp < first_timestamp || timestamp >= last_timestamp) {
+                    continue; // no future price data available
+                }
+
+                if (price[timestamp_slot] !== null) {
+                    break; // history price data available
+                }
+
+                let index = Math.floor((timestamp - first_timestamp) / (60 * resolution_multiplier));
+
+                price[timestamp_slot] = get_price_from_index(index) / 1000.0 + grid_costs_and_taxes_and_supplier_markup;
+                price_empty = false;
+            }
+        }
+//#endif
+
+        if (!price_empty) {
+            uplot_data.keys.push('em_price');
+            uplot_data.names.push(__("em_energy_analysis.script.price"));
+            uplot_data.values.push(price);
+            uplot_data.extras.push(null);
+            uplot_data.stacked.push(false);
+            uplot_data.paths.push(UplotPath.Step);
+            uplot_data.extra_names.push(null);
+            uplot_data.y_axes.push('y2');
         }
 
         for (let charger of this.chargers) {
@@ -713,7 +883,7 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
                             state[i] = null;
                         }
                         else {
-                            state[i] = wallbox_data.flags[i] & 0b111;
+                            state[i] = get_wallbox_state(wallbox_data.flags[i]);
                         }
                     }
 
@@ -723,7 +893,8 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
                     uplot_data.extras.push(state);
                     uplot_data.stacked.push(true);
                     uplot_data.paths.push(UplotPath.Line);
-                    uplot_data.extra_names.push(wb_state_names);
+                    uplot_data.extra_names.push(resolve_translation(wb_state_names));
+                    uplot_data.y_axes.push('y');
                 }
             }
         }
@@ -788,7 +959,6 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
             keys: [null],
             names: [null],
             values: [null],
-            stacked: [false],
             paths: [null],
             value_names: [null],
             value_strokes: [null],
@@ -802,88 +972,189 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
         if (energy_manager_data && !energy_manager_data.empty) {
             timestamp_slot_count = Math.max(timestamp_slot_count, energy_manager_data.flags.length);
 
-            let phase = new Array(energy_manager_data.flags.length);
-            let input3 = new Array(energy_manager_data.flags.length);
-            let input4 = new Array(energy_manager_data.flags.length);
-            let relay = new Array(energy_manager_data.flags.length);
+            if (API.hasModule("em_v1")) {
+                let phase = new Array(energy_manager_data.flags.length);
+                let input3 = new Array(energy_manager_data.flags.length);
+                let input4 = new Array(energy_manager_data.flags.length);
+                let relay = new Array(energy_manager_data.flags.length);
 
-            for (let i = 0; i < energy_manager_data.flags.length; ++i) {
-                if (energy_manager_data.flags[i] === null) {
-                    phase[i] = null;
-                    input3[i] = null;
-                    input4[i] = null;
-                    relay[i] = null;
+                for (let i = 0; i < energy_manager_data.flags.length; ++i) {
+                    if (energy_manager_data.flags[i] === null) {
+                        phase[i] = null;
+                        input3[i] = null;
+                        input4[i] = null;
+                        relay[i] = null;
+                    }
+                    else {
+                        if (i > 0 && energy_manager_data.flags[i - 1] !== null && (energy_manager_data.flags[i] & 0b0001) == (energy_manager_data.flags[i - 1] & 0b0001)) {
+                            phase[i] = undefined;
+                        }
+                        else {
+                            phase[i] = energy_manager_data.flags[i] & 0b0001;
+                        }
+
+                        if (i > 0 && energy_manager_data.flags[i - 1] !== null && (energy_manager_data.flags[i] & 0b0010) == (energy_manager_data.flags[i - 1] & 0b0010)) {
+                            input3[i] = undefined;
+                        }
+                        else {
+                            input3[i] = (energy_manager_data.flags[i] & 0b0010) >> 1;
+                        }
+
+                        if (i > 0 && energy_manager_data.flags[i - 1] !== null && (energy_manager_data.flags[i] & 0b0100) == (energy_manager_data.flags[i - 1] & 0b0100)) {
+                            input4[i] = undefined;
+                        }
+                        else {
+                            input4[i] = (energy_manager_data.flags[i] & 0b0100) >> 2;
+                        }
+
+                        if (i > 0 && energy_manager_data.flags[i - 1] !== null && (energy_manager_data.flags[i] & 0b1000) == (energy_manager_data.flags[i - 1] & 0b1000)) {
+                            relay[i] = undefined;
+                        }
+                        else {
+                            relay[i] = (energy_manager_data.flags[i] & 0b1000) >> 3;
+                        }
+                    }
                 }
-                else {
-                    if (i > 0 && energy_manager_data.flags[i - 1] !== null && (energy_manager_data.flags[i] & 0b0001) == (energy_manager_data.flags[i - 1] & 0b0001)) {
-                        phase[i] = undefined;
-                    }
-                    else {
-                        phase[i] = energy_manager_data.flags[i] & 0b0001;
-                    }
 
-                    if (i > 0 && energy_manager_data.flags[i - 1] !== null && (energy_manager_data.flags[i] & 0b0010) == (energy_manager_data.flags[i - 1] & 0b0010)) {
-                        input3[i] = undefined;
-                    }
-                    else {
-                        input3[i] = (energy_manager_data.flags[i] & 0b0010) >> 1;
-                    }
+                uplot_data.keys.push('em_phase');
+                uplot_data.names.push(__("em_energy_analysis.content.state_phase"));
+                uplot_data.values.push(phase);
+                uplot_data.paths.push(UplotPath.Line);
+                uplot_data.value_names.push(resolve_translation(em_phase_names));
+                uplot_data.value_strokes.push(em_phase_strokes);
+                uplot_data.value_fills.push(em_phase_fills);
+                uplot_data.default_visibilty.push(true);
 
-                    if (i > 0 && energy_manager_data.flags[i - 1] !== null && (energy_manager_data.flags[i] & 0b0100) == (energy_manager_data.flags[i - 1] & 0b0100)) {
-                        input4[i] = undefined;
-                    }
-                    else {
-                        input4[i] = (energy_manager_data.flags[i] & 0b0100) >> 2;
-                    }
+                uplot_data.keys.push('em_input3');
+                uplot_data.names.push(__("em_energy_analysis.content.state_input3"));
+                uplot_data.values.push(input3);
+                uplot_data.paths.push(UplotPath.Line);
+                uplot_data.value_names.push(resolve_translation(em_input_names));
+                uplot_data.value_strokes.push(em_input_strokes);
+                uplot_data.value_fills.push(em_input_fills);
+                uplot_data.default_visibilty.push(false);
 
-                    if (i > 0 && energy_manager_data.flags[i - 1] !== null && (energy_manager_data.flags[i] & 0b1000) == (energy_manager_data.flags[i - 1] & 0b1000)) {
-                        relay[i] = undefined;
+                uplot_data.keys.push('em_input4');
+                uplot_data.names.push(__("em_energy_analysis.content.state_input4"));
+                uplot_data.values.push(input4);
+                uplot_data.paths.push(UplotPath.Line);
+                uplot_data.value_names.push(resolve_translation(em_input_names));
+                uplot_data.value_strokes.push(em_input_strokes);
+                uplot_data.value_fills.push(em_input_fills);
+                uplot_data.default_visibilty.push(false);
+
+                uplot_data.keys.push('em_relay');
+                uplot_data.names.push(__("em_energy_analysis.content.state_relay"));
+                uplot_data.values.push(relay);
+                uplot_data.paths.push(UplotPath.Line);
+                uplot_data.value_names.push(resolve_translation(em_relay_names));
+                uplot_data.value_strokes.push(em_relay_strokes);
+                uplot_data.value_fills.push(em_relay_fills);
+                uplot_data.default_visibilty.push(false);
+            }
+            else if (API.hasModule("em_v2")) {
+                let ios = [];
+
+                for (let k = 0; k < 8; ++k) {
+                    ios.push(new Array(energy_manager_data.flags.length));
+                }
+
+                for (let i = 0; i < energy_manager_data.flags.length; ++i) {
+                    if (energy_manager_data.flags[i] === null) {
+                        for (let k = 0; k < 8; ++k) {
+                            ios[k][i] = null;
+                        }
                     }
                     else {
-                        relay[i] = (energy_manager_data.flags[i] & 0b1000) >> 3;
+                        for (let k = 0; k < 8; ++k) {
+                            if (i > 0 && energy_manager_data.flags[i - 1] !== null && (energy_manager_data.flags[i] & (1 << k)) == (energy_manager_data.flags[i - 1] & (1 << k))) {
+                                ios[k][i] = undefined;
+                            }
+                            else {
+                                ios[k][i] = (energy_manager_data.flags[i] & (1 << k)) != 0 ? 1 : 0;
+                            }
+                        }
                     }
+                }
+
+                for (let k = 0; k < 4; ++k) {
+                    uplot_data.keys.push(`em_input${k + 1}`);
+                    uplot_data.names.push(translate_unchecked(`em_energy_analysis.content.state_input${k + 1}`));
+                    uplot_data.values.push(ios[k]);
+                    uplot_data.paths.push(UplotPath.Line);
+                    uplot_data.value_names.push(resolve_translation(em_input_names));
+                    uplot_data.value_strokes.push(em_input_strokes);
+                    uplot_data.value_fills.push(em_input_fills);
+                    uplot_data.default_visibilty.push(false);
+                }
+
+                let em_sg_ready1_names: {[id: number]: string} = {
+                    0: __("em_energy_analysis.content.state_sg_ready_open"),
+                    1: __("em_energy_analysis.content.state_sg_ready_closed"),
+                };
+
+                let em_sg_ready1_strokes = em_sg_ready1_strokes_active_closed;
+                let em_sg_ready1_fills = em_sg_ready1_fills_active_closed;
+
+                if (this.state.sg_ready1_active_type === 0 /* closed */) {
+                    em_sg_ready1_names[0] += " / " + __("em_energy_analysis.content.state_sg_ready_inactive");
+                    em_sg_ready1_names[1] += " / " + __("em_energy_analysis.content.state_sg_ready_active");
+                }
+                else if (this.state.sg_ready1_active_type === 1 /* open */) {
+                    em_sg_ready1_names[0] += " / " + __("em_energy_analysis.content.state_sg_ready_active");
+                    em_sg_ready1_names[1] += " / " + __("em_energy_analysis.content.state_sg_ready_inactive");
+                    em_sg_ready1_strokes = em_sg_ready1_strokes_active_open;
+                    em_sg_ready1_fills = em_sg_ready1_fills_active_open;
+                }
+
+                uplot_data.keys.push(`em_sg_ready1`);
+                uplot_data.names.push(translate_unchecked(`em_energy_analysis.content.state_sg_ready1`));
+                uplot_data.values.push(ios[4]);
+                uplot_data.paths.push(UplotPath.Line);
+                uplot_data.value_names.push(em_sg_ready1_names);
+                uplot_data.value_strokes.push(em_sg_ready1_strokes);
+                uplot_data.value_fills.push(em_sg_ready1_fills);
+                uplot_data.default_visibilty.push(true);
+
+                let em_sg_ready2_names: {[id: number]: string} = {
+                    0: __("em_energy_analysis.content.state_sg_ready_open"),
+                    1: __("em_energy_analysis.content.state_sg_ready_closed"),
+                };
+
+                let em_sg_ready2_strokes = em_sg_ready2_strokes_active_closed;
+                let em_sg_ready2_fills = em_sg_ready2_fills_active_closed;
+
+                if (this.state.sg_ready2_active_type === 0 /* closed */) {
+                    em_sg_ready2_names[0] += " / " + __("em_energy_analysis.content.state_sg_ready_inactive");
+                    em_sg_ready2_names[1] += " / " + __("em_energy_analysis.content.state_sg_ready_active");
+                }
+                else if (this.state.sg_ready2_active_type === 1 /* open */) {
+                    em_sg_ready2_names[0] += " / " + __("em_energy_analysis.content.state_sg_ready_active");
+                    em_sg_ready2_names[1] += " / " + __("em_energy_analysis.content.state_sg_ready_inactive");
+                    em_sg_ready2_strokes = em_sg_ready2_strokes_active_open;
+                    em_sg_ready2_fills = em_sg_ready2_fills_active_open;
+                }
+
+                uplot_data.keys.push(`em_sg_ready2`);
+                uplot_data.names.push(translate_unchecked(`em_energy_analysis.content.state_sg_ready2`));
+                uplot_data.values.push(ios[5]);
+                uplot_data.paths.push(UplotPath.Line);
+                uplot_data.value_names.push(em_sg_ready2_names);
+                uplot_data.value_strokes.push(em_sg_ready2_strokes);
+                uplot_data.value_fills.push(em_sg_ready2_fills);
+                uplot_data.default_visibilty.push(true);
+
+                for (let k = 0; k < 2; ++k) {
+                    uplot_data.keys.push(`em_relay${k + 1}`);
+                    uplot_data.names.push(translate_unchecked(`em_energy_analysis.content.state_relay${k + 1}`));
+                    uplot_data.values.push(ios[6 + k]);
+                    uplot_data.paths.push(UplotPath.Line);
+                    uplot_data.value_names.push(resolve_translation(em_relay_names));
+                    uplot_data.value_strokes.push(em_relay_strokes);
+                    uplot_data.value_fills.push(em_relay_fills);
+                    uplot_data.default_visibilty.push(false);
                 }
             }
-
-            uplot_data.keys.push('em_phase');
-            uplot_data.names.push(__("em_energy_analysis.content.state_phase"));
-            uplot_data.values.push(phase);
-            uplot_data.stacked.push(false);
-            uplot_data.paths.push(UplotPath.Line);
-            uplot_data.value_names.push(em_phase_names);
-            uplot_data.value_strokes.push(em_phase_strokes);
-            uplot_data.value_fills.push(em_phase_fills);
-            uplot_data.default_visibilty.push(true);
-
-            uplot_data.keys.push('em_input3');
-            uplot_data.names.push(__("em_energy_analysis.content.state_input3"));
-            uplot_data.values.push(input3);
-            uplot_data.stacked.push(false);
-            uplot_data.paths.push(UplotPath.Line);
-            uplot_data.value_names.push(em_input_names);
-            uplot_data.value_strokes.push(em_input_strokes);
-            uplot_data.value_fills.push(em_input_fills);
-            uplot_data.default_visibilty.push(false);
-
-            uplot_data.keys.push('em_input4');
-            uplot_data.names.push(__("em_energy_analysis.content.state_input4"));
-            uplot_data.values.push(input4);
-            uplot_data.stacked.push(false);
-            uplot_data.paths.push(UplotPath.Line);
-            uplot_data.value_names.push(em_input_names);
-            uplot_data.value_strokes.push(em_input_strokes);
-            uplot_data.value_fills.push(em_input_fills);
-            uplot_data.default_visibilty.push(false);
-
-            uplot_data.keys.push('em_relay');
-            uplot_data.names.push(__("em_energy_analysis.content.state_relay"));
-            uplot_data.values.push(relay);
-            uplot_data.stacked.push(false);
-            uplot_data.paths.push(UplotPath.Line);
-            uplot_data.value_names.push(em_relay_names);
-            uplot_data.value_strokes.push(em_relay_strokes);
-            uplot_data.value_fills.push(em_relay_fills);
-            uplot_data.default_visibilty.push(false);
         }
 
         for (let charger of this.chargers) {
@@ -899,20 +1170,19 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
                         if (wallbox_data.flags[i] === null) {
                             state[i] = null;
                         }
-                        else if (i > 0 && wallbox_data.flags[i - 1] !== null && (wallbox_data.flags[i] & 0b111) == (wallbox_data.flags[i - 1] & 0b111)) {
-                            state[i] = undefined;
+                        else if (i > 0 && wallbox_data.flags[i - 1] !== null && (wallbox_data.flags[i] & 0b11111) == (wallbox_data.flags[i - 1] & 0b11111)) {
+                            state[i] = undefined; // charger state (bit 0-2) and phases (bit 3-4) didn't change
                         }
                         else {
-                            state[i] = wallbox_data.flags[i] & 0b111;
+                            state[i] = get_wallbox_state(wallbox_data.flags[i]);
                         }
                     }
 
                     uplot_data.keys.push('wb_state_' + charger.uid);
                     uplot_data.names.push(charger.name);
                     uplot_data.values.push(state);
-                    uplot_data.stacked.push(true);
                     uplot_data.paths.push(UplotPath.Line);
-                    uplot_data.value_names.push(wb_state_names);
+                    uplot_data.value_names.push(resolve_translation(wb_state_names));
                     uplot_data.value_strokes.push(wb_state_strokes);
                     uplot_data.value_fills.push(wb_state_fills);
                     uplot_data.default_visibilty.push(true);
@@ -967,21 +1237,25 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
             keys: [null],
             names: [null],
             values: [null],
-            stacked: [false],
+            stacked: [null],
             paths: [null],
         };
 
         let timestamp_slot_count: number = 0;
         let energy_manager_data = this.energy_manager_5min_cache[key];
 
-        if (energy_manager_data && !energy_manager_data.power_empty[this.state.meter_slot_status]) {
-            timestamp_slot_count = Math.max(timestamp_slot_count, energy_manager_data.power[this.state.meter_slot_status].length)
+        if (energy_manager_data) {
+            for (let meter_slot = 0; meter_slot < METERS_SLOTS; ++meter_slot) {
+                if (!energy_manager_data.power_empty[meter_slot]) {
+                    timestamp_slot_count = Math.max(timestamp_slot_count, energy_manager_data.power[this.state.meter_slot_status].length)
 
-            uplot_data.keys.push('em_power_' + this.state.meter_slot_status);
-            uplot_data.names.push(get_meter_name(this.state.meter_configs, this.state.meter_slot_status));
-            uplot_data.values.push(energy_manager_data.power[this.state.meter_slot_status]);
-            uplot_data.stacked.push(false);
-            uplot_data.paths.push(UplotPath.Line);
+                    uplot_data.keys.push('em_power_' + meter_slot);
+                    uplot_data.names.push(get_meter_name(this.state.meter_configs, meter_slot));
+                    uplot_data.values.push(energy_manager_data.power[meter_slot]);
+                    uplot_data.stacked.push(false);
+                    uplot_data.paths.push(UplotPath.Line);
+                }
+            }
         }
 
         let timestamps: number[] = new Array(timestamp_slot_count);
@@ -1060,8 +1334,10 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
             keys: [null],
             names: [null],
             values: [null],
-            stacked: [false],
+            stacked: [null],
+            filled: [null],
             paths: [null],
+            y_axes: [null],
         };
 
         let timestamp_slot_count: number = 0;
@@ -1113,7 +1389,9 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
                     uplot_data.names.push(`${get_meter_name(this.state.meter_configs, meter_slot)} (${__("em_energy_analysis.content.import")})`);
                     uplot_data.values.push(energy_import);
                     uplot_data.stacked.push(false);
+                    uplot_data.filled.push(true);
                     uplot_data.paths.push(UplotPath.Bar);
+                    uplot_data.y_axes.push('y');
                 }
 
                 let energy_export = new Array(energy_manager_data.energy_export[meter_slot].length);
@@ -1156,9 +1434,36 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
                     uplot_data.names.push(`${get_meter_name(this.state.meter_configs, meter_slot)} (${__("em_energy_analysis.content.export")})`);
                     uplot_data.values.push(energy_export);
                     uplot_data.stacked.push(false);
+                    uplot_data.filled.push(true);
                     uplot_data.paths.push(UplotPath.Bar);
+                    uplot_data.y_axes.push('y');
                 }
             }
+
+            // FIXME: combine min/avg/max into a band instead of three single line plots
+            uplot_data.keys.push('em_price_min');
+            uplot_data.names.push(__("em_energy_analysis.script.price_min"));
+            uplot_data.values.push(energy_manager_data.price_min);
+            uplot_data.stacked.push(false);
+            uplot_data.filled.push(false);
+            uplot_data.paths.push(UplotPath.Line);
+            uplot_data.y_axes.push('y2');
+
+            uplot_data.keys.push('em_price_avg');
+            uplot_data.names.push(__("em_energy_analysis.script.price_avg"));
+            uplot_data.values.push(energy_manager_data.price_avg);
+            uplot_data.stacked.push(false);
+            uplot_data.filled.push(false);
+            uplot_data.paths.push(UplotPath.Line);
+            uplot_data.y_axes.push('y2');
+
+            uplot_data.keys.push('em_price_max');
+            uplot_data.names.push(__("em_energy_analysis.script.price_max"));
+            uplot_data.values.push(energy_manager_data.price_max);
+            uplot_data.stacked.push(false);
+            uplot_data.filled.push(false);
+            uplot_data.paths.push(UplotPath.Line);
+            uplot_data.y_axes.push('y2');
 
             this.setState((prevState) => ({
                 energy_manager_5min_cache_energy_total: {
@@ -1218,7 +1523,9 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
                     uplot_data.names.push(charger.name);
                     uplot_data.values.push(energy);
                     uplot_data.stacked.push(true);
+                    uplot_data.filled.push(true);
                     uplot_data.paths.push(UplotPath.Bar);
+                    uplot_data.y_axes.push('y');
 
                     this.setState((prevState) => ({
                         wallbox_5min_cache_energy_total: {
@@ -1399,21 +1706,23 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
         now = Date.now();
 
         let payload = JSON.parse(response);
-        let timestamp_slot_count = payload.length / 8;
+        let timestamp_slot_count = payload.length / 9;
         let data: EnergyManager5minData = {
             update_timestamp: now,
             use_timestamp: now,
             empty: true,
             complete: key < this.date_to_5min_key(new Date(now)),
-            flags: new Array(METERS_SLOTS),
+            flags: new Array(timestamp_slot_count),
             power: new Array(METERS_SLOTS),
             power_empty: new Array(METERS_SLOTS),
+            price: new Array(timestamp_slot_count),
+            price_empty: true,
         };
 
         data.power_empty.fill(true);
 
         for (let timestamp_slot = 0; timestamp_slot < timestamp_slot_count; ++timestamp_slot) {
-            data.flags[timestamp_slot] = payload[timestamp_slot * 8];
+            data.flags[timestamp_slot] = payload[timestamp_slot * 9];
 
             if (data.flags[timestamp_slot] !== null) {
                 data.empty = false;
@@ -1424,11 +1733,19 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
             data.power[meter_slot] = new Array(timestamp_slot_count);
 
             for (let timestamp_slot = 0; timestamp_slot < timestamp_slot_count; ++timestamp_slot) {
-                data.power[meter_slot][timestamp_slot] = payload[timestamp_slot * 8 + 1 + meter_slot];
+                data.power[meter_slot][timestamp_slot] = payload[timestamp_slot * 9 + 1 + meter_slot];
 
                 if (data.power[meter_slot][timestamp_slot] !== null) {
                     data.power_empty[meter_slot] = false;
                 }
+            }
+        }
+
+        for (let timestamp_slot = 0; timestamp_slot < timestamp_slot_count; ++timestamp_slot) {
+            data.price[timestamp_slot] = payload[timestamp_slot * 9 + 8];
+
+            if (data.price[timestamp_slot] !== null) {
+                data.price_empty = false;
             }
         }
 
@@ -1437,6 +1754,26 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
 
         return true;
     }
+
+//#if MODULE_DAY_AHEAD_PRICES_AVAILABLE
+    update_day_ahead_prices_cache() {
+        let dap_prices = API.get("day_ahead_prices/prices");
+
+        if (dap_prices.prices.length > 0) {
+            let dap_config = API.get("day_ahead_prices/config");
+            let resolution_multiplier = dap_prices.resolution == 0 ? 15 : 60;
+            this.day_ahead_prices_first_timestamp = dap_prices.first_date * 60;
+            this.day_ahead_prices_last_timestamp = this.day_ahead_prices_first_timestamp + dap_prices.prices.length * 60 * resolution_multiplier; // exclusive range
+        }
+        else {
+            this.day_ahead_prices_first_timestamp = null;
+            this.day_ahead_prices_last_timestamp = null;
+        }
+
+        this.day_ahead_prices_update_timestamp = Date.now();
+        this.schedule_uplot_update();
+    }
+//#endif
 
     async update_wallbox_daily_cache_all(date: Date) {
         let all: Promise<boolean>[] = [];
@@ -1590,7 +1927,7 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
         now = Date.now();
 
         let payload = JSON.parse(response);
-        let timestamp_slot_count = payload.length / 14;
+        let timestamp_slot_count = payload.length / 17;
         let data: EnergyManagerDailyData = {
             update_timestamp: now,
             use_timestamp: now,
@@ -1598,6 +1935,9 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
             complete: key < this.date_to_daily_key(new Date(now)),
             energy_import: new Array(METERS_SLOTS),
             energy_export: new Array(METERS_SLOTS),
+            price_min: new Array(timestamp_slot_count),
+            price_avg: new Array(timestamp_slot_count),
+            price_max: new Array(timestamp_slot_count),
         };
 
         for (let meter_slot = 0; meter_slot < METERS_SLOTS; ++meter_slot) {
@@ -1605,17 +1945,37 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
             data.energy_export[meter_slot] = new Array(timestamp_slot_count);
 
             for (let timestamp_slot = 0; timestamp_slot < timestamp_slot_count; ++timestamp_slot) {
-                data.energy_import[meter_slot][timestamp_slot] = payload[timestamp_slot * 14 + meter_slot];
+                data.energy_import[meter_slot][timestamp_slot] = payload[timestamp_slot * 17 + meter_slot];
 
                 if (data.energy_import[meter_slot][timestamp_slot] !== null) {
                     data.empty = false;
                 }
 
-                data.energy_export[meter_slot][timestamp_slot] = payload[timestamp_slot * 14 + 7 + meter_slot];
+                data.energy_export[meter_slot][timestamp_slot] = payload[timestamp_slot * 17 + 7 + meter_slot];
 
                 if (data.energy_export[meter_slot][timestamp_slot] !== null) {
                     data.empty = false;
                 }
+            }
+        }
+
+        for (let timestamp_slot = 0; timestamp_slot < timestamp_slot_count; ++timestamp_slot) {
+            data.price_min[timestamp_slot] = payload[timestamp_slot * 17 + 14];
+
+            if (data.price_min[timestamp_slot] !== null) {
+                data.empty = false;
+            }
+
+            data.price_avg[timestamp_slot] = payload[timestamp_slot * 17 + 15];
+
+            if (data.price_avg[timestamp_slot] !== null) {
+                data.empty = false;
+            }
+
+            data.price_max[timestamp_slot] = payload[timestamp_slot * 17 + 16];
+
+            if (data.price_max[timestamp_slot] !== null) {
+                data.empty = false;
             }
         }
 
@@ -1787,10 +2147,6 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
                     keys: [null],
                     names: [null],
                     values: [data_flags.values[0]],
-                    extras: [null],
-                    stacked: [false],
-                    paths: [null],
-                    extra_names: [null],
                 };
             }
 
@@ -1801,10 +2157,6 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
                     keys: [null],
                     names: [null],
                     values: [data_power.values[0]],
-                    extras: [null],
-                    stacked: [false],
-                    paths: [null],
-                    extra_names: [null],
                 };
             }
 
@@ -1999,7 +2351,7 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
                 <div style="position: relative;"> {/* this plain div is neccessary to make the size calculation stable in safari. without this div the height continues to grow */}
                     <UplotLoader ref={this.uplot_loader_5min_ref}
                                     show={true}
-                                    marker_class={'h3'}
+                                    marker_class="h3"
                                     no_data={__("em_energy_analysis.content.no_data")}
                                     loading={__("em_energy_analysis.content.loading")} >
                         <UplotFlagsWrapper ref={this.uplot_wrapper_5min_flags_ref}
@@ -2010,11 +2362,11 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
                                             legend_time_label={__("em_energy_analysis.script.time_5min")}
                                             legend_time_with_minutes={true}
                                             legend_div_ref={this.uplot_legend_div_5min_flags_ref}
-                                            x_format={{hour: '2-digit', minute: '2-digit'}}
                                             x_padding_factor={0}
-                                            y_sync_ref={this.uplot_wrapper_5min_power_ref} />
+                                            y_sync_ref={this.uplot_wrapper_5min_power_ref}
+                                            y2_enable={true} />
                         <UplotWrapper ref={this.uplot_wrapper_5min_power_ref}
-                                        class="em-energy-analysis-chart pb-4"
+                                        class="em-energy-analysis-chart"
                                         sub_page="em_energy_analysis"
                                         color_cache_group="em_energy_analysis.analysis_5min"
                                         show={true}
@@ -2024,23 +2376,33 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
                                         legend_time_with_minutes={true}
                                         legend_div_ref={this.uplot_legend_div_5min_power_ref}
                                         aspect_ratio={3}
-                                        x_height={30}
+                                        x_height={35}
                                         x_format={{hour: '2-digit', minute: '2-digit'}}
                                         x_padding_factor={0}
+                                        x_include_date={false}
                                         y_min={0}
                                         y_max={100}
                                         y_unit={"W"}
-                                        y_label={__("em_energy_analysis.script.power") + " [Watt]"}
+                                        y_label={__("em_energy_analysis.script.power") + " [W]"}
                                         y_digits={0}
                                         y_skip_upper={true}
                                         y_sync_ref={this.uplot_wrapper_5min_flags_ref}
-                                        padding={[0, 5, null, null] as uPlot.Padding}/>
-                        <div class="uplot u-hz u-time-in-legend-alone" ref={this.uplot_legend_div_5min_flags_ref} style="width: 100%; visibility: hidden;" />
-                        <div class="uplot u-hz u-hide-first-series-in-legend" ref={this.uplot_legend_div_5min_power_ref} style="width: 100%; visibility: hidden;" />
+                                        y2_enable={true}
+                                        y2_min={-2}
+                                        y2_max={8}
+                                        y2_unit={"ct/kWh"}
+                                        y2_label={__("em_energy_analysis.script.price") + " [ct/kWh]"}
+                                        y2_digits={3}
+                                        y2_skip_upper={true}
+                                        padding={[0, 5, null, null]}/>
+                        <div class="pb-4">
+                            <div class={"uplot u-hz" + (util.is_native_median_app() ? "" : " u-time-in-legend-alone") + " u-hide-marker-in-legend u-hide-empty-legend"} ref={this.uplot_legend_div_5min_flags_ref} style="width: 100%; visibility: hidden;" />
+                            <div class={"uplot u-hz" + (util.is_native_median_app() ? "" : " u-hide-first-series-in-legend")} ref={this.uplot_legend_div_5min_power_ref} style="width: 100%; visibility: hidden;" />
+                        </div>
                     </UplotLoader>
                     <UplotLoader ref={this.uplot_loader_daily_ref}
                                     show={false}
-                                    marker_class={'h3'}
+                                    marker_class="h3"
                                     no_data={__("em_energy_analysis.content.no_data")}
                                     loading={__("em_energy_analysis.content.loading")} >
                         <UplotWrapper ref={this.uplot_wrapper_daily_ref}
@@ -2052,16 +2414,22 @@ export class EMEnergyAnalysis extends Component<EMEnergyAnalysisProps, EMEnergyA
                                         legend_time_label={__("em_energy_analysis.script.time_daily")}
                                         legend_time_with_minutes={false}
                                         aspect_ratio={3}
-                                        x_height={30}
+                                        x_height={35}
                                         x_format={{month: '2-digit', day: '2-digit'}}
                                         x_padding_factor={0.015}
+                                        x_include_date={false}
                                         y_min={0}
                                         y_max={10}
                                         y_unit={"kWh"}
                                         y_label={__("em_energy_analysis.script.energy") + " [kWh]"}
                                         y_digits={2}
-                                        default_fill={true}
-                                        padding={[null, 5, null, null] as uPlot.Padding} />
+                                        y2_enable={true}
+                                        y2_min={-1}
+                                        y2_max={9}
+                                        y2_unit={"ct/kWh"}
+                                        y2_label={__("em_energy_analysis.script.price") + " [ct/kWh]"}
+                                        y2_digits={0}
+                                        padding={[null, 5, null, null]} />
                     </UplotLoader>
                 </div>
 

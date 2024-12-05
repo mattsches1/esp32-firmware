@@ -37,7 +37,7 @@ void Automation::pre_setup()
             {"message", Config::Str("", 0, 64)}
         }),
         [this](const Config *cfg) {
-            logger.printfln_plain("    %s", cfg->get("message")->asString().c_str());
+            logger.printfln_continue("%s", cfg->get("message")->asString().c_str());
         }
     );
 
@@ -52,27 +52,26 @@ void Automation::pre_setup()
         })
     );
 
-    Config trigger_union = Config::Union<AutomationTriggerID>(
-                    *Config::Null(),
-                    AutomationTriggerID::None,
-                    trigger_prototypes.data(),
-                    trigger_prototypes.size());
-
-    Config action_union = Config::Union<AutomationActionID>(
-                    *Config::Null(),
-                    AutomationActionID::None,
-                    action_prototypes.data(),
-                    action_prototypes.size());
+    config_tasks_prototype = Config::Object({
+        {"trigger", Config::Union<AutomationTriggerID>(
+            *Config::Null(),
+            AutomationTriggerID::None,
+            trigger_prototypes.data(),
+            trigger_prototypes.size()
+        )},
+        {"action", Config::Union<AutomationActionID>(
+            *Config::Null(),
+            AutomationActionID::None,
+            action_prototypes.data(),
+            action_prototypes.size()
+        )},
+    });
 
     config = ConfigRoot{Config::Object({
             {"tasks", Config::Array(
                 {},
-                new Config{
-                    Config::Object({
-                        {"trigger", trigger_union},
-                        {"action", action_union}
-                    })
-                }, 0, 14, Config::type_id<Config::ConfObject>())
+                &config_tasks_prototype,
+                0, 14, Config::type_id<Config::ConfObject>())
             }
         }),
         [this](const Config &cfg, ConfigSource source) -> String {
@@ -110,7 +109,7 @@ void Automation::pre_setup()
         }
     };
 
-    const Config *conf_uint8_prototype = new Config{Config::Uint8(0)};
+    const Config *conf_uint8_prototype = Config::get_prototype_uint8_0();
 
     state = Config::Object({
         {"registered_triggers", Config::Array({}, conf_uint8_prototype, 0, AUTOMATION_TRIGGER_ID_COUNT, Config::type_id<Config::ConfUint>())},
@@ -147,7 +146,7 @@ void Automation::setup()
             static int last_min = 0;
             static bool was_synced = false;
             timeval tv;
-            bool is_synced = clock_synced(&tv);
+            bool is_synced = rtc.clock_synced(&tv);
             tm time_struct;
 
             localtime_r(&tv.tv_sec, &time_struct);
@@ -158,7 +157,7 @@ void Automation::setup()
 
             last_min = time_struct.tm_min;
             was_synced = is_synced;
-        }, 0, 1000);
+        }, 1_s);
     }
 
     initialized = true;
@@ -178,7 +177,7 @@ void Automation::register_action(AutomationActionID id, Config cfg, ActionCb &&c
     }
 
     action_prototypes.push_back({id, cfg});
-    action_map[id] = ActionValue{std::forward<ActionCb>(callback), std::forward<ValidatorCb>(validator), enable};
+    action_map[id] = ActionValue{std::move(callback), std::move(validator), enable};
 }
 
 void Automation::register_trigger(AutomationTriggerID id, Config cfg, ValidatorCb &&validator, bool enable)
@@ -189,7 +188,7 @@ void Automation::register_trigger(AutomationTriggerID id, Config cfg, ValidatorC
     }
 
     trigger_prototypes.push_back({id, cfg});
-    trigger_map[id] = TriggerValue{std::forward<ValidatorCb>(validator), enable};
+    trigger_map[id] = TriggerValue{std::move(validator), enable};
 }
 
 void Automation::set_enabled(AutomationActionID id, bool enable)
@@ -243,7 +242,7 @@ void Automation::set_enabled(AutomationTriggerID id, bool enable)
 bool Automation::trigger(AutomationTriggerID number, void *data, IAutomationBackend *backend)
 {
     if (config_in_use.is_null()) {
-        logger.printfln("Received trigger ID %u before loading config. Event lost.", static_cast<uint32_t>(number));
+        logger.printfln("Received trigger '%s' (%u) before loading config. Event lost.", get_automation_trigger_id_name(number), static_cast<uint32_t>(number));
         return false;
     }
     bool triggered = false;

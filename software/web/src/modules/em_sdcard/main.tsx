@@ -149,10 +149,10 @@ export class EMSDcard extends Component {
                     <Button variant="danger" className="form-control" onClick={async () => {
                         const modal = util.async_modal_ref.current;
                         if (!await modal.show({
-                                title: __("em_sdcard.content.format_sdcard"),
-                                body: __("em_sdcard.content.format_sdcard_modal_text"),
-                                no_text: __("em_sdcard.content.abort_format"),
-                                yes_text: __("em_sdcard.content.confirm_format"),
+                                title: () => __("em_sdcard.content.format_sdcard"),
+                                body: () => __("em_sdcard.content.format_sdcard_modal_text"),
+                                no_text: () => __("em_sdcard.content.abort_format"),
+                                yes_text: () => __("em_sdcard.content.confirm_format"),
                                 no_variant: "secondary",
                                 yes_variant: "danger"
                             }))
@@ -161,7 +161,7 @@ export class EMSDcard extends Component {
                         try {
                             await util.put("/energy_manager/sdcard_format", {"do_i_know_what_i_am_doing": true});
                         } catch (error) {
-                            util.add_alert("sdcard_format_failed", "danger", __("em_sdcard.script.sdcard_format_error"), error);
+                            util.add_alert("sdcard_format_failed", "danger", () => __("em_sdcard.script.sdcard_format_error"), () => error);
                         }
                     }}>{__("em_sdcard.content.format_sdcard")}</Button>
                 </FormRow>

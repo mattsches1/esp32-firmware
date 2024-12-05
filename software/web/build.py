@@ -2,13 +2,18 @@ import os
 import sys
 import shutil
 import subprocess
+import pathlib
 from base64 import b64encode
-
 import argparse
+import tinkerforge_util as tfutil
+
+tfutil.create_parent_module(__file__, 'software')
+
+from software.tfpp import tfpp
 
 JS_ANALYZE = False
 
-BUILD_DIR = 'build'
+BUILD_DIR = pathlib.Path('..', 'build')
 
 HTML_MINIFIER_TERSER_OPTIONS = [
     '--collapse-boolean-attributes',
@@ -38,14 +43,42 @@ def main():
     parser.add_argument('--js-source-map', action='store_true')
     parser.add_argument('--css-source-map', action='store_true')
     parser.add_argument('--no-minify', action='store_true')
-    build_args = parser.parse_args()
+    parser.add_argument('modules', nargs='+')
+    args = parser.parse_args()
 
     try:
-        shutil.rmtree(BUILD_DIR)
+        shutil.rmtree('src_tfpp')
     except FileNotFoundError:
         pass
 
-    os.makedirs(BUILD_DIR)
+    print('tfpp...')
+    for root, dirs, files in os.walk('src', followlinks=True):
+        for name in files:
+            src_path = pathlib.Path(root) / name
+
+            if src_path.parts[:2] == ('src', 'modules') and src_path.parts[2] not in args.modules:
+                continue
+
+            src_tfpp_path = pathlib.Path('src_tfpp', *src_path.parts[1:])
+
+            if src_path.suffix in ['.ts', '.tsx']:
+                try:
+                    tfpp(src_path, src_tfpp_path)
+                except Exception as e:
+                    print(f'Error: {e}', file=sys.stderr)
+                    exit(42)
+            else:
+                src_tfpp_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src_path, src_tfpp_path)
+
+    os.chdir('src_tfpp')
+
+    try:
+        shutil.rmtree(str(BUILD_DIR))
+    except FileNotFoundError:
+        pass
+
+    BUILD_DIR.mkdir(parents=True)
 
     print('tsc...')
     subprocess.check_call([
@@ -56,67 +89,63 @@ def main():
     ], shell=sys.platform == 'win32')
 
     print('esbuild...')
-    args = [
+    esbuild_args = [
         'npx',
         'esbuild',
-        'src/main.tsx',
-        '--metafile={}'.format(os.path.join(BUILD_DIR, 'meta.json')),
+        'main.tsx',
+        f'--metafile={BUILD_DIR / "meta.json"}',
         '--bundle',
         '--target=es6',
-        '--alias:argon2-browser=./node_modules/argon2-browser/dist/argon2-bundled.min.js',
-        '--alias:jquery=./node_modules/jquery/dist/jquery.slim.min',
-        '--outfile={0}'.format(os.path.join(BUILD_DIR, 'bundle.min.js'))
+        '--alias:argon2-browser=../node_modules/argon2-browser/dist/argon2-bundled.min.js',
+        '--alias:jquery=../node_modules/jquery/dist/jquery.slim.min',
+        f'--outfile={BUILD_DIR / "bundle.min.js"}'
     ]
 
     if JS_ANALYZE:
-        args += ['--analyze']
+        esbuild_args += ['--analyze']
 
-    if build_args.js_source_map:
-        args += ['--sourcemap=inline']
+    if args.js_source_map:
+        esbuild_args += ['--sourcemap=inline']
 
-    if not build_args.no_minify:
-        args += ['--minify']
+    if not args.no_minify:
+        esbuild_args += ['--minify']
 
-    subprocess.check_call(args, shell=sys.platform == 'win32')
+    subprocess.check_call(esbuild_args, shell=sys.platform == 'win32')
 
     print('sass...')
-    args = [
+    scss_args = [
         'npx',
         'sass',
     ]
 
-    if not build_args.css_source_map:
-        args += ['--no-source-map']
+    if not args.css_source_map:
+        scss_args += ['--no-source-map']
 
-    args += [
-        'src/main.scss',
-        os.path.join(BUILD_DIR, 'main.css')
+    scss_args += [
+        'main.scss',
+        str(BUILD_DIR / 'main.css')
     ]
 
-    subprocess.check_call(args, shell=sys.platform == 'win32')
+    subprocess.check_call(scss_args, shell=sys.platform == 'win32')
 
     print('postcss...')
     subprocess.check_call([
         'npx',
         'postcss',
-        os.path.join(BUILD_DIR, 'main.css'),
+        str(BUILD_DIR / 'main.css'),
         '-o',
-        os.path.join(BUILD_DIR, 'main.min.css')
+        str(BUILD_DIR / 'main.min.css')
     ], shell=sys.platform == 'win32')
 
-    if build_args.css_source_map:
-        with open(os.path.join(BUILD_DIR, 'main.min.css'), 'r', encoding='utf-8') as f:
-            css_src = f.read()
+    if args.css_source_map:
+        css_src = (BUILD_DIR / 'main.min.css').read_text(encoding='utf-8')
+        css_map = b64encode((BUILD_DIR / 'main.min.css.map').read_bytes()).decode('ascii')
 
-        with open(os.path.join(BUILD_DIR, 'main.min.css.map'), 'rb') as f:
-            css_map = b64encode(f.read()).decode('ascii')
+        (BUILD_DIR / 'main.min.css.map').unlink()
 
-        os.remove(os.path.join(BUILD_DIR, 'main.min.css.map'))
+        css_src = css_src.replace('sourceMappingURL=main.min.css.map', f'sourceMappingURL=data:text/json;base64,{css_map}')
 
-        css_src = css_src.replace('sourceMappingURL=main.min.css.map', 'sourceMappingURL=data:text/json;base64,{0}'.format(css_map))
-
-        with open(os.path.join(BUILD_DIR, 'main.min.css'), 'w', encoding='utf-8') as f:
-            f.write(css_src)
+        (BUILD_DIR / 'main.min.css').write_text(css_src, encoding='utf-8')
 
     print('html-minifier-terser...')
     subprocess.check_call([
@@ -124,8 +153,8 @@ def main():
         'html-minifier-terser'] +
         HTML_MINIFIER_TERSER_OPTIONS + [
         '-o',
-        os.path.join(BUILD_DIR, 'index.min.html'),
-        'src/index.html'
+        str(BUILD_DIR / 'index.min.html'),
+        'index.html'
     ], shell=sys.platform == 'win32')
 
 if __name__ == '__main__':

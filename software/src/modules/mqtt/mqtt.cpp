@@ -28,10 +28,6 @@
 #include "build.h"
 #include "matchTopicFilter.h"
 
-#if MODULE_AUTOMATION_AVAILABLE()
-extern Mqtt mqtt;
-#endif
-
 extern char local_uid_str[32];
 
 // MQTT over WSS takes ~ 3.4k only for the connection
@@ -41,14 +37,14 @@ extern char local_uid_str[32];
 
 // Also change ws.cpp WS_SEND_BUFFER_SIZE when changing MQTT_RECV_BUFFER_SIZE here!
 #if defined(BOARD_HAS_PSRAM)
-#define MQTT_RECV_BUFFER_SIZE 6144U
+#define MQTT_RECV_BUFFER_SIZE 10240U
 #define MQTT_SEND_BUFFER_SIZE 32768U
 #else
 #define MQTT_RECV_BUFFER_SIZE 4096U
 #define MQTT_SEND_BUFFER_SIZE 4096U
 #endif
 
-#define MQTT_RECV_BUFFER_HEADROOM (MQTT_RECV_BUFFER_SIZE / 4)
+#define MQTT_RECV_BUFFER_HEADROOM (MQTT_RECV_BUFFER_SIZE / 6)
 
 extern "C" esp_err_t esp_crt_bundle_attach(void *conf);
 
@@ -86,7 +82,7 @@ void Mqtt::pre_setup()
     }};
 
     state = Config::Object({
-        {"connection_state", Config::Uint((uint)MqttConnectionState::NotConfigured)},
+        {"connection_state", Config::Enum(MqttConnectionState::NotConfigured, MqttConnectionState::NotConfigured, MqttConnectionState::Error)},
         {"connection_start", Config::Uint(0)},
         {"connection_end", Config::Uint(0)},
         {"last_error", Config::Int(0)}
@@ -184,7 +180,7 @@ void Mqtt::subscribe(const String &path, SubscribeCallback &&callback, Retained 
 
     bool subscribed = esp_mqtt_client_subscribe(client, topic->c_str(), 0) >= 0;
 
-    this->commands.push_back({*topic, std::forward<SubscribeCallback>(callback), retained, callback_in_thread, starts_with_global_topic_prefix, subscribed});
+    this->commands.push_back({*topic, std::move(callback), retained, callback_in_thread, starts_with_global_topic_prefix, subscribed});
 }
 
 void Mqtt::addCommand(size_t commandIdx, const CommandRegistration &reg)
@@ -223,11 +219,12 @@ bool Mqtt::publish(const String &topic, const String &payload, bool retain)
     if (client == nullptr || this->state.get("connection_state")->asEnum<MqttConnectionState>() != MqttConnectionState::Connected)
         return false;
 
-#if defined(BOARD_HAS_PSRAM)
-    return esp_mqtt_client_enqueue(this->client, topic.c_str(), payload.c_str(), payload.length(), 0, retain, true) >= 0;
-#else
+// enqueue uses an unbounded queue! IDF 5.3 adds a limit for the queue. Until then use publish even though it blocks the main thread.
+//#if defined(BOARD_HAS_PSRAM)
+//    return esp_mqtt_client_enqueue(this->client, topic.c_str(), payload.c_str(), payload.length(), 0, retain, true) >= 0;
+//#else
     return esp_mqtt_client_publish(this->client, topic.c_str(), payload.c_str(), payload.length(), 0, retain) >= 0;
-#endif
+//#endif
 }
 
 bool Mqtt::pushStateUpdate(size_t stateIdx, const String &payload, const String &path)
@@ -283,7 +280,28 @@ void Mqtt::onMqttConnect()
     last_connected_ms = millis();
     state.get("connection_start")->updateUint(last_connected_ms);
     was_connected = true;
-    logger.printfln("Connected to broker.");
+
+    const char *schema = "";
+    bool print_path = false;
+    // + 1 to undo the -1 in the config's definition.
+    switch (this->config.get("protocol")->asUint() + 1) {
+        case MQTT_TRANSPORT_OVER_TCP:
+            schema = "mqtt://";
+            break;
+        case MQTT_TRANSPORT_OVER_SSL:
+            schema = "mqtts://";
+            break;
+        case MQTT_TRANSPORT_OVER_WS:
+            schema = "ws://";
+            print_path = true;
+            break;
+        case MQTT_TRANSPORT_OVER_WSS:
+            schema = "wss://";
+            print_path = true;
+            break;
+    }
+    logger.printfln("Connected to broker at %s%s:%u%s.", schema, this->config.get("broker_host")->asEphemeralCStr(), this->config.get("broker_port")->asUint(), print_path ? this->config.get("broker_path")->asEphemeralCStr() : "");
+
     this->state.get("connection_state")->updateEnum(MqttConnectionState::Connected);
 
     for (size_t i = 0; i < api.commands.size(); ++i) {
@@ -368,7 +386,7 @@ void Mqtt::onMqttMessage(char *topic, size_t topic_len, char *data, size_t data_
                 c.callback(copy_buf, topic_len, copy_buf + topic_len, data_len);
                 free(copy_buf);
                 esp_mqtt_client_enable_receive(client);
-            }, 0);
+            });
         } else
             c.callback(topic, topic_len, data, data_len);
 
@@ -400,7 +418,7 @@ void Mqtt::onMqttMessage(char *topic, size_t topic_len, char *data, size_t data_
         }
 
         esp_mqtt_client_disable_receive(client, 100);
-        api.callCommandNonBlocking(reg, data, data_len, [this, reg](String error) {
+        api.callCommandNonBlocking(reg, data, data_len, [this, reg](const String &error) {
             if (!error.isEmpty())
                 logger.printfln("On %s: %s", reg.path, error.c_str());
             esp_mqtt_client_enable_receive(this->client);
@@ -423,8 +441,6 @@ void Mqtt::onMqttMessage(char *topic, size_t topic_len, char *data, size_t data_
     if (!retain && filter_mqtt_log(topic, topic_len))
         logger.printfln("Received message on unknown topic '%.*s' (data_len=%u)", static_cast<int>(topic_len), topic, data_len);
 }
-
-static char err_buf[64] = {0};
 
 static const char *get_mqtt_error(esp_mqtt_connect_return_code_t rc)
 {
@@ -459,12 +475,12 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         case MQTT_EVENT_CONNECTED:
             task_scheduler.scheduleOnce([mqtt](){
                 mqtt->onMqttConnect();
-            }, 0);
+            });
             break;
         case MQTT_EVENT_DISCONNECTED:
             task_scheduler.scheduleOnce([mqtt](){
                 mqtt->onMqttDisconnect();
-            }, 0);
+            });
             break;
         case MQTT_EVENT_DATA:
             if (event->current_data_offset != 0)
@@ -483,10 +499,12 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                     if (eh.error_type == MQTT_ERROR_TYPE_TCP_TRANSPORT) {
                         if (was_connected) {
                             if (eh.esp_tls_last_esp_err != ESP_OK) {
+                                char err_buf[64];
                                 const char *e = esp_err_to_name_r(eh.esp_tls_last_esp_err, err_buf, ARRAY_SIZE(err_buf));
                                 logger.printfln("Transport error: %s (esp_tls_last_esp_err)", e);
                                 mqtt->state.get("last_error")->updateInt(eh.esp_tls_last_esp_err);
                             } else if (eh.esp_tls_stack_err != 0) {
+                                char err_buf[64];
                                 const char *e = esp_err_to_name_r(eh.esp_tls_stack_err, err_buf, ARRAY_SIZE(err_buf));
                                 logger.printfln("Transport error: %s (esp_tls_stack_err)", e);
                                 mqtt->state.get("last_error")->updateInt(eh.esp_tls_stack_err);
@@ -510,7 +528,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                         logger.printfln("Unknown error");
                         mqtt->state.get("last_error")->updateInt(0xFFFFFFFF);
                     }
-                }, 0);
+                });
                 break;
             }
         default:
@@ -662,7 +680,7 @@ void Mqtt::setup()
 
     task_scheduler.scheduleWithFixedDelay([this](){
         this->resubscribe();
-    }, 1000, 1000);
+    }, 1_s, 1_s);
 }
 
 void Mqtt::register_urls()
@@ -708,31 +726,37 @@ void Mqtt::register_events()
     }
 
     // Start MQTT client here to make sure all handlers are already registered.
-
-    // Start immediately if we already have a working ethernet connection. WiFi takes a bit longer.
-    // Wait 20 secs to not spam the event log with a failed connection attempt.
-    bool start_immediately = false;
-#if MODULE_ETHERNET_AVAILABLE()
-    start_immediately = ethernet.get_connection_state() == EthernetState::Connected;
-#endif
-    if (start_immediately) {
-        esp_mqtt_client_start(client);
-#if MODULE_DEBUG_AVAILABLE()
-        debug.register_task("mqtt_task", MQTT_TASK_STACK_SIZE);
-#endif
-    } else {
-        task_scheduler.scheduleOnce([this]() {
+    event.registerEvent("network/state", {"connected"}, [this](const Config *connected) {
+        if (connected->asBool()) {
             esp_mqtt_client_start(client);
 #if MODULE_DEBUG_AVAILABLE()
             debug.register_task("mqtt_task", MQTT_TASK_STACK_SIZE);
 #endif
-        }, 20000);
-    }
+        }
+        else {
+#if MODULE_DEBUG_AVAILABLE()
+            // This event will trigger during start-up and may send a 'disconnected' event in an already disconnected state.
+            // The following esp_mqtt_client_stop doesn't care, but deregistering a task that doesn't exist will log a warning.
+            // Only handle 'disconnected' events if they’re not the very first event.
+            if (this->initial_network_event_seen) {
+                debug.deregister_task("mqtt_task");
+            }
+#endif
+            esp_mqtt_client_stop(client);
+        }
+
+        this->initial_network_event_seen = true;
+
+        return EventResult::OK;
+    });
 }
 
 void Mqtt::pre_reboot()
 {
     if (client != nullptr) {
+#if MODULE_DEBUG_AVAILABLE()
+        debug.deregister_task("mqtt_task");
+#endif
         esp_mqtt_client_stop(client);
     }
 }

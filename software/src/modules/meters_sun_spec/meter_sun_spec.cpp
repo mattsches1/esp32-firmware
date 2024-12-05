@@ -58,17 +58,26 @@ void MeterSunSpec::setup(const Config &ephemeral_config)
         return;
     }
 
-    task_scheduler.scheduleOnce([this]() {
-        this->read_allowed = false;
-        this->start_connection();
-    }, 1000);
-
     task_scheduler.scheduleWithFixedDelay([this]() {
-        if (this->read_allowed) {
-            this->read_allowed = false;
-            this->start_generic_read();
-        };
-    }, 2000, 1000);
+        if (read_allowed) {
+            read_allowed = false;
+            start_generic_read();
+        }
+    }, 2_s, 1_s);
+}
+
+void MeterSunSpec::register_events()
+{
+    event.registerEvent("network/state", {"connected"}, [this](const Config *connected) {
+        if (connected->asBool()) {
+            start_connection();
+        }
+        else {
+            stop_connection();
+        }
+
+        return EventResult::OK;
+    });
 }
 
 void MeterSunSpec::pre_reboot()
@@ -78,6 +87,8 @@ void MeterSunSpec::pre_reboot()
 
 void MeterSunSpec::connect_callback()
 {
+    GenericModbusTCPClient::connect_callback();
+
     scan_start();
 }
 
@@ -119,8 +130,12 @@ void MeterSunSpec::read_done_callback()
 {
     read_allowed = true;
 
-    if (generic_read_request.result_code != Modbus::ResultCode::EX_SUCCESS) {
-        logger.printfln("Read error: %s (%d)", get_modbus_result_code_name(generic_read_request.result_code), generic_read_request.result_code);
+    if (generic_read_request.result != TFModbusTCPClientTransactionResult::Success) {
+        if (generic_read_request.result == TFModbusTCPClientTransactionResult::Timeout) {
+            auto timeout = errors->get("timeout");
+            timeout->updateUint(timeout->asUint() + 1);
+        }
+
         return;
     }
 
@@ -135,7 +150,8 @@ void MeterSunSpec::read_done_callback()
     }
 
     if (!model_parser->parse_values(generic_read_request.data, quirks)) {
-        logger.printfln("Ignoring inconsistent data set for model %u in slot %u.", model_id, slot);
+        auto inconsistency = errors->get("inconsistency");
+        inconsistency->updateUint(inconsistency->asUint() + 1);
         // TODO: Read again if parsing failed?
     }
 }
@@ -144,7 +160,7 @@ void MeterSunSpec::scan_start_delay()
 {
     task_scheduler.scheduleOnce([this](){
         this->scan_start();
-    }, 10000);
+    }, 10_s);
 }
 
 void MeterSunSpec::scan_start()
@@ -182,13 +198,17 @@ void MeterSunSpec::scan_read_delay()
 {
     task_scheduler.scheduleOnce([this](){
         this->start_generic_read();
-    }, 1000 + (esp_random() % 4000));
+    }, 1_s + (millis_t{esp_random() % 4000}));
 }
 
 void MeterSunSpec::scan_next()
 {
-    if (generic_read_request.result_code != Modbus::ResultCode::EX_SUCCESS) {
-        logger.printfln("Modbus read error during scan: %s (%d)", get_modbus_result_code_name(generic_read_request.result_code), generic_read_request.result_code);
+    if (generic_read_request.result != TFModbusTCPClientTransactionResult::Success) {
+        if (generic_read_request.result == TFModbusTCPClientTransactionResult::Timeout) {
+            auto timeout = errors->get("timeout");
+            timeout->updateUint(timeout->asUint() + 1);
+        }
+
         scan_read_delay();
         return;
     }
@@ -339,6 +359,6 @@ void MeterSunSpec::scan_next()
             break;
 
         default:
-            esp_system_abort("Invalid state.");
+            esp_system_abort("meter_sun_spec: Invalid state during scan");
     }
 }

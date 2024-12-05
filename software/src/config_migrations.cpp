@@ -34,8 +34,18 @@
 #include "tools.h"
 
 struct ConfigMigration {
-    const int major, minor, patch;
+    int major, minor, patch;
     void (*const fn)();
+
+    inline bool version_less_than(const struct ConfigMigration &mig) const {
+        return version_less_than(mig.major, mig.minor, mig.patch);
+    }
+
+    inline bool version_less_than(uint8_t major, uint8_t minor, uint8_t patch) const {
+        return (this->major <  major)
+            || (this->major == major && this->minor <  minor)
+            || (this->major == major && this->minor == minor && this->patch < patch);
+    }
 };
 
 [[gnu::unused]]
@@ -365,8 +375,8 @@ static const ConfigMigration migrations[] = {
                             api.callCommand("evse/button_configuration_update", Config::ConfUpdateObject{{
                                 {"button", (uint32_t)new_button_cfg}
                             }});
-                        }, 1000);
-                    }, 0);
+                        }, 1_s);
+                    });
                 }
                 write_config_file("users/config", users_json);
             }
@@ -404,52 +414,6 @@ static const ConfigMigration migrations[] = {
             }
 
             rename_config_file("meter/last_reset", "meters/0/last_reset");
-        }
-    },
-#endif
-
-#if BUILD_IS_WARP() || BUILD_IS_WARP2() || BUILD_IS_WARP3() || BUILD_IS_ENERGY_MANAGER()
-    {
-        #if BUILD_IS_ENERGY_MANAGER()
-        2, 2, 0,
-        #elif BUILD_IS_WARP()
-        2, 4, 2,
-        #else // WARP2, 3
-        2, 5, 0,
-        #endif
-        // Changes
-        // - Move remote access keys into separate directory
-        // - Rename relay_host_port to relay_port
-        [](){
-            {
-                DynamicJsonDocument cfg{4096};
-                if (read_config_file("remote_access/config", cfg)) {
-                    cfg["relay_port"] = cfg["relay_host_port"];
-                    cfg.remove("relay_host_port");
-                    write_config_file("remote_access/config", cfg);
-                }
-            }
-
-            if (LittleFS.exists(KEY_DIRECTORY)) {
-                return;
-            }
-
-            DynamicJsonDocument mgmt{4096};
-            DynamicJsonDocument conn{4096};
-            if (!read_config_file("remote_access/management_connection", mgmt) || !read_config_file("remote_access/remote_connection_config", conn)) {
-                return;
-            }
-
-            LittleFS.mkdir(KEY_DIRECTORY);
-
-            store_key(0, 0, mgmt["private_key"].as<const char *>(), mgmt["psk"].as<const char *>(), mgmt["remote_public_key"].as<const char *>());
-            for(int i = 0; i < 5; ++i) {
-                auto key = conn["connections"][i];
-                store_key(1, i, key["private_key"].as<const char *>(), key["psk"].as<const char *>(), key["remote_public_key"].as<const char *>());
-            }
-
-            delete_config_file("remote_access/management_connection");
-            delete_config_file("remote_access/remote_connection_config");
         }
     },
 #endif
@@ -778,6 +742,86 @@ static const ConfigMigration migrations[] = {
         }
     },
 #endif
+
+#if BUILD_IS_WARP() || BUILD_IS_WARP2() || BUILD_IS_WARP3() || BUILD_IS_ENERGY_MANAGER()
+    {
+        #if BUILD_IS_ENERGY_MANAGER()
+        2, 2, 0,
+        #elif BUILD_IS_WARP()
+        2, 4, 2,
+        #else // WARP2, 3
+        2, 5, 0,
+        #endif
+        // Changes
+        // - Move remote access keys into separate directory
+        // - Rename relay_host_port to relay_port
+        [](){
+            {
+                DynamicJsonDocument cfg{4096};
+                if (read_config_file("remote_access/config", cfg)) {
+                    cfg["relay_port"] = cfg["relay_host_port"];
+                    cfg.remove("relay_host_port");
+                    write_config_file("remote_access/config", cfg);
+                }
+            }
+
+            if (LittleFS.exists(KEY_DIRECTORY)) {
+                return;
+            }
+
+            DynamicJsonDocument mgmt{4096};
+            DynamicJsonDocument conn{4096};
+            if (!read_config_file("remote_access/management_connection", mgmt) || !read_config_file("remote_access/remote_connection_config", conn)) {
+                return;
+            }
+
+            LittleFS.mkdir(KEY_DIRECTORY);
+
+            store_key(0, 0, mgmt["private_key"].as<const char *>(), mgmt["psk"].as<const char *>(), mgmt["remote_public_key"].as<const char *>());
+            for(int i = 0; i < 5; ++i) {
+                auto key = conn["connections"][i];
+                store_key(1, i, key["private_key"].as<const char *>(), key["psk"].as<const char *>(), key["remote_public_key"].as<const char *>());
+            }
+
+            delete_config_file("remote_access/management_connection");
+            delete_config_file("remote_access/remote_connection_config");
+        }
+    },
+#endif
+
+#if BUILD_IS_WARP() || BUILD_IS_WARP2() || BUILD_IS_WARP3() || BUILD_IS_ENERGY_MANAGER() || BUILD_IS_SMART_ENERGY_BROKER()
+    {
+        #if BUILD_IS_WARP() || BUILD_IS_WARP2() || BUILD_IS_WARP3()
+        2, 6, 2,
+        #elif BUILD_IS_ENERGY_MANAGER()
+        2, 2, 1,
+        #else // TODO: Update SEB firmware below.
+        0, 0, 0,
+        #endif
+        // Changes
+        // - PM phase switching modes 1phase, 3phase and PV1+Fast3 have been removed, change to automatic
+        [](){
+            #if BUILD_IS_SMART_ENERGY_BROKER()
+            static_assert(BUILD_VERSION_MAJOR == 1, "Fix migration for SEB");
+            static_assert(BUILD_VERSION_MINOR == 0, "Fix migration for SEB");
+            static_assert(BUILD_VERSION_PATCH == 0, "Fix migration for SEB");
+            #endif
+            // - PM phase switching modes 1phase, 3phase and PV1+Fast3 have been removed, change to automatic
+            {
+                StaticJsonDocument<512> pm_cfg;
+
+                if (read_config_file("power_manager/config", pm_cfg)) {
+                    uint32_t phase_switching_mode = pm_cfg["phase_switching_mode"].as<uint32_t>();
+
+                    if (phase_switching_mode != 0 && phase_switching_mode != 3) { // Not automatic or external (EVCC)
+                        pm_cfg["phase_switching_mode"] = 0; // Set to automatic
+                        write_config_file("power_manager/config", pm_cfg);
+                    }
+                }
+            }
+        }
+    },
+#endif
 };
 
 bool prepare_migrations()
@@ -865,7 +909,7 @@ void migrate_config()
     bool migrations_executed = false;
 
     String config_type;
-    uint8_t major, minor, patch;
+    ConfigMigration current{0, 0, 0, nullptr};
     if (LittleFS.exists("/config/version")) {
         StaticJsonDocument<256> doc;
         File f = LittleFS.open("/config/version");
@@ -887,20 +931,20 @@ void migrate_config()
         size_t first_dot = v.indexOf('.');
         size_t second_dot = v.indexOf('.', first_dot + 1);
 
-        major = (uint8_t)v.substring(0, first_dot).toInt();
-        minor = (uint8_t)v.substring(first_dot + 1, second_dot).toInt();
-        patch = (uint8_t)v.substring(second_dot + 1).toInt();
+        current.major = (uint8_t)v.substring(0, first_dot).toInt();
+        current.minor = (uint8_t)v.substring(first_dot + 1, second_dot).toInt();
+        current.patch = (uint8_t)v.substring(second_dot + 1).toInt();
     } else if (migration_count > 0) {
         auto &last_mig = migrations[migration_count - 1];
-        major = last_mig.major;
-        minor = last_mig.minor;
-        patch = last_mig.patch;
+        current.major = last_mig.major;
+        current.minor = last_mig.minor;
+        current.patch = last_mig.patch;
 
         write_version_file = true;
     } else {
-        major = OLDEST_VERSION_MAJOR;
-        minor = OLDEST_VERSION_MINOR;
-        patch = OLDEST_VERSION_PATCH;
+        current.major = OLDEST_VERSION_MAJOR;
+        current.minor = OLDEST_VERSION_MINOR;
+        current.patch = OLDEST_VERSION_PATCH;
 
         write_version_file = true;
     }
@@ -914,7 +958,13 @@ void migrate_config()
     for (int i = 0; i < migration_count; ++i) {
         auto &mig = migrations[i];
 
-        bool have_to_migrate = (major < mig.major)|| (major == mig.major && minor < mig.minor) || (major == mig.major && minor == mig.minor && patch < mig.patch);
+        if (i > 0) {
+            auto &last_mig = migrations[i - 1];
+            if (!last_mig.version_less_than(mig))
+                esp_system_abort("Config migration order broken!");
+        }
+
+        bool have_to_migrate = current.version_less_than(mig);
         if (!have_to_migrate) {
             continue;
         }
@@ -928,15 +978,15 @@ void migrate_config()
             first = false;
         }
 
-        logger.printfln("Migrating config from %d.%d.%d to %d.%d.%d", major, minor, patch, mig.major, mig.minor, mig.patch);
+        logger.printfln("Migrating config from %d.%d.%d to %d.%d.%d", current.major, current.minor, current.patch, mig.major, mig.minor, mig.patch);
         mig.fn();
 
         write_version_file = true;
         migrations_executed = true;
 
-        major = mig.major;
-        minor = mig.minor;
-        patch = mig.patch;
+        current.major = mig.major;
+        current.minor = mig.minor;
+        current.patch = mig.patch;
     }
 
     if (!write_version_file)
@@ -944,7 +994,7 @@ void migrate_config()
 
     File file = LittleFS.open(migrations_executed ? "/migration/version" : "/config/version", "w");
 
-    file.printf("{\"spiffs\": \"%u.%u.%u\", \"config_type\": \"%s\"}", major, minor, patch, BUILD_CONFIG_TYPE);
+    file.printf("{\"spiffs\": \"%u.%u.%u\", \"config_type\": \"%s\"}", current.major, current.minor, current.patch, BUILD_CONFIG_TYPE);
     file.close();
 
     if (!migrations_executed)

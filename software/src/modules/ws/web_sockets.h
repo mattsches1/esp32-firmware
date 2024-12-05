@@ -37,7 +37,7 @@ struct WebSocketsClient {
     int fd;
     WebSockets *ws;
 
-    bool sendOwnedNoFreeBlocking_HTTPThread(char *payload, size_t payload_len);
+    bool sendOwnedNoFreeBlocking_HTTPThread(char *payload, size_t payload_len, httpd_ws_type_t ws_type = HTTPD_WS_TYPE_TEXT);
     void close_HTTPThread();
 };
 
@@ -45,6 +45,7 @@ struct ws_work_item {
     int fds[MAX_WEB_SOCKET_CLIENTS];
     char *payload;
     size_t payload_len;
+    httpd_ws_type_t ws_type;
 };
 
 void clear_ws_work_item(ws_work_item *wi);
@@ -59,12 +60,12 @@ public:
     WebSockets() : worker_active(WEBSOCKET_WORKER_DONE) {}
 
     void pre_setup();
-    void start(const char *uri);
+    void start(const char *uri, const char *state_path, httpd_handle_t httpd, const char *supported_subprotocol = nullptr);
 
-    bool sendToClient(const char *payload, size_t payload_len, int sock);
-    bool sendToClientOwned(char *payload, size_t payload_len, int sock);
-    bool sendToAll(const char *payload, size_t payload_len);
-    bool sendToAllOwned(char *payload, size_t payload_len);
+    bool sendToClient(const char *payload, size_t payload_len, int sock, httpd_ws_type_t ws_type = HTTPD_WS_TYPE_TEXT);
+    bool sendToClientOwned(char *payload, size_t payload_len, int sock, httpd_ws_type_t ws_type = HTTPD_WS_TYPE_TEXT);
+    bool sendToAll(const char *payload, size_t payload_len, httpd_ws_type_t ws_type = HTTPD_WS_TYPE_TEXT);
+    bool sendToAllOwned(char *payload, size_t payload_len, httpd_ws_type_t ws_type = HTTPD_WS_TYPE_TEXT);
 
     bool haveFreeSlot();
     bool haveActiveClient();
@@ -75,7 +76,8 @@ public:
     void cleanUpQueue();
     bool queueFull();
 
-    void onConnect_HTTPThread(std::function<void(WebSocketsClient)> fn);
+    void onConnect_HTTPThread(std::function<void(WebSocketsClient)> &&fn);
+    void onBinaryDataReceived_HTTPThread(std::function<void(const int fd, httpd_ws_frame_t *ws_pkt)> &&fn);
 
     void triggerHttpThread();
     bool haveWork(ws_work_item *item);
@@ -100,7 +102,10 @@ public:
     uint32_t last_worker_run = 0;
     uint32_t worker_poll_count = 0;
 
+    httpd_handle_t httpd;
+
     std::function<void(WebSocketsClient)> on_client_connect_fn;
+    std::function<void(const int fd, httpd_ws_frame_t *ws_pkt)> on_binary_data_received_fn;
 
     ConfigRoot state;
 };

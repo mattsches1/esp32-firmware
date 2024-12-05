@@ -29,10 +29,10 @@
 #include "semantic_version.h"
 #include "modules/charge_manager/charge_manager_private.h"
 #include "metadata.h"
+#include "build.h"
 
-#define UPDATE_INTERVAL 1000
+static constexpr auto UPDATE_INTERVAL = 1_s;
 #define PAGE_FRONT_TEXT_MAX_CHAR 6
-#define TILE_TYPES 8
 
 
 #if MODULE_CM_NETWORKING_AVAILABLE()
@@ -58,40 +58,38 @@ void FrontPanel::pre_setup()
 {
     this->DeviceModule::pre_setup();
 
-    ConfUnionPrototype<TileType> *tile_prototypes = new ConfUnionPrototype<TileType>[TILE_TYPES]{
-        {TileType::EmptyTile,           *Config::Null()},
-        {TileType::Wallbox,             Config::Uint(0, 0, FRONT_PANEL_CONTROLLED_CHARGES)},
-        {TileType::ChargeManagement,    *Config::Null()},
-        {TileType::Meter,               Config::Uint(0, 0, FRONT_PANEL_METERS_SLOTS)},
-        {TileType::DayAheadPrices,      Config::Enum(DAPType::CurrentPrice, DAPType::CurrentPrice, DAPType::AveragePriveTomorrow)},
-        {TileType::SolarForecast,       Config::Enum(SFType::ForecastToday, SFType::ForecastToday, SFType::ForecastTomorrow)},
-        {TileType::EnergyManagerStatus, *Config::Null()},
-        {TileType::HeatingStatus,       *Config::Null()},
-    };
+    tile_prototypes[0] = {TileType::EmptyTile,           *Config::Null()};
+    tile_prototypes[1] = {TileType::Wallbox,             Config::Uint(0, 0, FRONT_PANEL_CONTROLLED_CHARGES)};
+    tile_prototypes[2] = {TileType::ChargeManagement,    *Config::Null()};
+    tile_prototypes[3] = {TileType::Meter,               Config::Uint(0, 0, FRONT_PANEL_METERS_SLOTS)};
+    tile_prototypes[4] = {TileType::DayAheadPrices,      Config::Enum(DAPType::CurrentPrice, DAPType::CurrentPrice, DAPType::AveragePriveTomorrow)};
+    tile_prototypes[5] = {TileType::SolarForecast,       Config::Enum(SFType::ForecastToday, SFType::ForecastToday, SFType::ForecastTomorrow)};
+    tile_prototypes[6] = {TileType::EnergyManagerStatus, *Config::Null()};
+    tile_prototypes[7] = {TileType::HeatingStatus,       *Config::Null()};
 
-    Config *tile_union = new Config{Config::Union<TileType>(
+    config_tiles_prototype = Config::Union<TileType>(
         *Config::Null(),
         TileType::EmptyTile,
         tile_prototypes,
         TILE_TYPES
-    )};
+    );
 
     config = ConfigRoot{Config::Object({
             {"enable", Config::Bool(true)},
             {"tiles", Config::Array({
-                    *tile_union,
-                    *tile_union,
-                    *tile_union,
-                    *tile_union,
-                    *tile_union,
-                    *tile_union
-                }, tile_union, FRONT_PANEL_TILES, FRONT_PANEL_TILES, Config::type_id<Config::ConfUnion>())}
+                    config_tiles_prototype,
+                    config_tiles_prototype,
+                    config_tiles_prototype,
+                    config_tiles_prototype,
+                    config_tiles_prototype,
+                    config_tiles_prototype,
+                }, &config_tiles_prototype, FRONT_PANEL_TILES, FRONT_PANEL_TILES, Config::type_id<Config::ConfUnion>())}
         }), [this](Config &cfg, ConfigSource source) -> String {
             // Schedule check_bricklet_state() here, since this checks
             // if the display needs to be turned on/off.
             task_scheduler.scheduleOnce([this](){
                 this->check_bricklet_state();
-            }, 0);
+            });
 
             return "";
         }
@@ -155,11 +153,11 @@ void FrontPanel::setup()
 
     task_scheduler.scheduleWithFixedDelay([this](){
         this->check_bricklet_state();
-    }, 5 * 60 * 1000, 5 * 60 * 1000);
+    }, 5_m, 5_m);
 
     task_scheduler.scheduleOnce([this](){
         this->check_flash_metadata();
-    }, 15*1000); // We assume that the Bricklet has booted and read the metadata after 15s
+    }, 15_s); // We assume that the Bricklet has booted and read the metadata after 15s
 }
 
 void FrontPanel::register_urls()
@@ -168,7 +166,7 @@ void FrontPanel::register_urls()
 
     task_scheduler.scheduleWithFixedDelay([this]() {
         this->update();
-    }, 100, UPDATE_INTERVAL);
+    }, 100_ms, UPDATE_INTERVAL);
 
     this->DeviceModule::register_urls();
 }
@@ -246,10 +244,9 @@ void FrontPanel::update_status_bar()
     uint8_t seconds = 0;
 
     struct timeval tv_now;
-    if (clock_synced(&tv_now)) {
-        time_t now = time(nullptr);
+    if (rtc.clock_synced(&tv_now)) {
         struct tm tm;
-        localtime_r(&now, &tm);
+        localtime_r(&tv_now.tv_sec, &tm);
         hours   = tm.tm_hour;
         minutes = tm.tm_min;
         seconds = tm.tm_sec;
@@ -304,6 +301,15 @@ int FrontPanel::update_front_page_empty_tile(const uint8_t index, const TileType
     );
 }
 
+const char* FrontPanel::get_i18n_string(const char *key_en, const char *key_de)
+{
+#if MODULE_SYSTEM_AVAILABLE()
+    return (system_.get_system_language() == Language::English) ? key_en : key_de;
+#else
+    return key_de;
+#endif
+}
+
 int FrontPanel::update_front_page_wallbox(const uint8_t index, const TileType type, const uint8_t param)
 {
     String str1 = "Box " + String(param);
@@ -356,13 +362,13 @@ int FrontPanel::update_front_page_charge_management(const uint8_t index, const T
 
 int FrontPanel::update_front_page_meter(const uint8_t index, const TileType type, const uint8_t param)
 {
-    String str1 = "Bezug";
+    String str1 = get_i18n_string("Import", "Bezug");
     String str2 = "-- kW";
     uint32_t icon_index = SPRITE_ICON_ENERGY;
 
 #if MODULE_METERS_AVAILABLE()
     float watt = 0;
-    MeterValueAvailability meter_availability = meters.get_power_real(param, &watt);
+    MeterValueAvailability meter_availability = meters.get_power(param, &watt);
     if (meter_availability == MeterValueAvailability::Fresh) {
         if (watt > 0) {
             icon_index = SPRITE_ICON_ENERGY_IMPORT;
@@ -371,7 +377,7 @@ int FrontPanel::update_front_page_meter(const uint8_t index, const TileType type
         } else if (watt < 0) {
             icon_index = SPRITE_ICON_ENERGY_EXPORT;
             watt = -watt;
-            str1 = "Einsp.";
+            str1 = get_i18n_string("FeedIn", "Einsp.");
         }
 
         str2 = watt_value_to_display_string(watt);
@@ -391,28 +397,28 @@ int FrontPanel::update_front_page_meter(const uint8_t index, const TileType type
 
 int FrontPanel::update_front_page_day_ahead_prices(const uint8_t index, const TileType type, const DAPType param)
 {
-    String str1 = "Preis";
+    String str1 = get_i18n_string("Price", "Preis");
     String str2 = "-- ct";
 
 #if MODULE_DAY_AHEAD_PRICES_AVAILABLE()
-    DataReturn<int32_t> price = {false, 0};
+    Option<int32_t> price = {};
     switch (param) {
         case DAPType::CurrentPrice:
-            str1 = "Preis";
+            str1 = get_i18n_string("Price", "Preis");
             price = day_ahead_prices.get_current_price();
             break;
         case DAPType::AveragePriveToday:
-            str1 = "Heute";
+            str1 = get_i18n_string("Today", "Heute");
             price = day_ahead_prices.get_average_price_today();
             break;
         case DAPType::AveragePriveTomorrow:
-            str1 = "Morgen";
+            str1 = get_i18n_string("Tmrw", "Morgen");
             price = day_ahead_prices.get_average_price_tomorrow();
             break;
     }
 
-    if (price.data_available) {
-        str2 = price_value_to_display_string(price.data / 1000);
+    if (price.is_some()) {
+        str2 = price_value_to_display_string((price.unwrap() + day_ahead_prices.get_grid_cost_plus_tax_plus_markup()) / 1000);
     }
 #endif
 
@@ -434,23 +440,23 @@ int FrontPanel::update_front_page_solar_forecast(const uint8_t index, const Tile
     uint32_t icon_index = SPRITE_ICON_SUN;
 
 #if MODULE_SOLAR_FORECAST_AVAILABLE()
-    DataReturn<uint32_t> kwh{};
+    Option<uint32_t> kwh{};
     switch (param) {
         case SFType::ForecastToday:
-            str1 = "Heute";
-            kwh = solar_forecast.get_kwh_today();
+            str1 = get_i18n_string("Today", "Heute");
+            kwh = solar_forecast.get_wh_today();
             break;
         case SFType::ForecastTomorrow:
-            str1 = "Morgen";
-            kwh = solar_forecast.get_kwh_tomorrow();
+            str1 = get_i18n_string("Tmrw", "Morgen");
+            kwh = solar_forecast.get_wh_tomorrow();
             break;
     }
 
-    if (kwh.data_available) {
-        str2 = watt_hour_value_to_display_string(kwh.data);
+    if (kwh.is_some()) {
+        str2 = watt_hour_value_to_display_string(kwh.unwrap());
         // If 5 kWh is a high or a low value of course depends on the size of the pv system.
         // On average, 5 kWh in a day sounds low enough to show some clouds.
-        if (kwh.data <= 5) {
+        if (kwh.unwrap() <= 5) {
             icon_index = SPRITE_ICON_CLOUD_SUN;
         }
     }
@@ -469,9 +475,8 @@ int FrontPanel::update_front_page_solar_forecast(const uint8_t index, const Tile
 
 int FrontPanel::update_front_page_energy_manager_status(const uint8_t index, const TileType type, const uint8_t param)
 {
-    const SemanticVersion version;
     String str1 = "FW Ver";
-    String str2 = String(version.major) + '.' + String(version.minor) + '.' + String(version.patch);
+    String str2 = String(BUILD_VERSION_STRING);
 
     // TODO: Show error instead if energy manager has an error?
 
@@ -489,23 +494,34 @@ int FrontPanel::update_front_page_energy_manager_status(const uint8_t index, con
 
 int FrontPanel::update_front_page_heating_status(const uint8_t index, const TileType type, const uint8_t param)
 {
-    const SemanticVersion version;
     String str1 = "SG Rdy";
     String str2 = "--";
     uint32_t icon_index = SPRITE_ICON_HEATING;
 
 #if MODULE_HEATING_AVAILABLE()
     if (heating.is_active()) {
-        // First check for SG Ready output 0 (§14EnWG blocked or not)
-        // §14EnWG has priority if active. Afterwards check for heating overdrive
-        if (heating.is_sg_ready_output0_closed()) {
-            str1 = "14EnWG";
-            str2 = "Block.";
-            icon_index = SPRITE_ICON_HEATING_OFF;
-        } else {
-            const bool closed1 = heating.is_sg_ready_output1_closed();
-            str2 = closed1 ? "Ein" : "Aus";
-            icon_index = closed1 ? SPRITE_ICON_HEATING_HOT : SPRITE_ICON_HEATING;
+        auto status = heating.get_status();
+        switch (status) {
+            case Heating::Status::Idle:
+                str1 = "SG Rdy";
+                str2 = get_i18n_string("Off", "Aus");
+                icon_index = SPRITE_ICON_HEATING;
+                break;
+            case Heating::Status::Blocking:
+                str1 = "SG Rdy";
+                str2 = "Block.";
+                icon_index = SPRITE_ICON_HEATING_COLD;
+                break;
+            case Heating::Status::BlockingP14:
+                str1 = "14EnWG";
+                str2 = "Block.";
+                icon_index = SPRITE_ICON_HEATING_OFF;
+                break;
+            case Heating::Status::Extended:
+                str1 = "SG Rdy";
+                str2 = get_i18n_string("On", "Ein");
+                icon_index = SPRITE_ICON_HEATING_HOT;
+                break;
         }
     }
 #endif
@@ -607,39 +623,39 @@ void FrontPanel::update()
     update_led();
 }
 
-String FrontPanel::watt_value_to_display_string(const int32_t watt)
+String FrontPanel::watt_value_to_display_string(const int32_t w)
 {
-    if (watt < 10000) {
-        return String(watt) + " W";
-    } else if (watt < (1000*1000)) {
-        uint32_t kw = watt / 1000;
+    if (w < 10000) {
+        return String(w) + " W";
+    } else if (w < (1000*1000)) {
+        uint32_t kw = w / 1000;
         return String(kw) + " kW";
-    } else if (watt < (1000*1000*1000)) {
-        uint32_t mw = watt / (1000*1000);
+    } else if (w < (1000*1000*1000)) {
+        uint32_t mw = w / (1000*1000);
         return String(mw) + " MW";
     } else {
         return String(">1GW");
     }
 }
 
-String FrontPanel::watt_hour_value_to_display_string(const uint32_t kilo_watt_hour)
+String FrontPanel::watt_hour_value_to_display_string(const uint32_t wh)
 {
-    if (kilo_watt_hour < 1000) {
-        return String(kilo_watt_hour) + "kWh";
-    } else if (kilo_watt_hour < (1000*10)) {
-        uint32_t mwh = kilo_watt_hour / 1000;
-        return String(mwh/10) + "." + String(mwh%10) + "MWh";
-    } else if (kilo_watt_hour < (1000*1000)) {
-        uint32_t mwh = kilo_watt_hour / 1000;
+    if (wh < 1000) {
+        return String(wh) + "Wh";
+    } else if (wh < (1000*10)) {
+        uint32_t wh100 = wh / 100;
+        return String(wh100/10) + "." + String(wh100%10) + "kWh";
+    } else if (wh < (1000*1000)) {
+        uint32_t kwh = wh / 1000;
+        return String(kwh) + "kWh";
+    } else if(wh < (1000*1000*10)) {
+        uint32_t kwh100 = wh / (1000*100);
+        return String(kwh100/10) + "." + String(kwh100%10) + "MWh";
+    } else if (wh < (1000*1000*1000)) {
+        uint32_t mwh = wh / (1000*1000);
         return String(mwh) + "MWh";
-    } else if(kilo_watt_hour < (1000*1000*10)) {
-        uint32_t gwh = kilo_watt_hour / (1000*1000);
-        return String(gwh/10) + "." + String(gwh%10) + "GWh";
-    } else if (kilo_watt_hour < (1000*1000*1000)) {
-        uint32_t gwh = kilo_watt_hour / (1000*1000);
-        return String(gwh) + "GWh";
     } else {
-        return String(">1 TWh"); // damn
+        return String(">1 GWh"); // damn
     }
 }
 
@@ -660,7 +676,7 @@ void FrontPanel::check_flash_metadata()
     if (!initialized) {
         task_scheduler.scheduleOnce([this](){
             this->check_flash_metadata();
-        }, 15*1000);
+        }, 15_s);
         return;
     }
 

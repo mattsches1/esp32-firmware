@@ -273,7 +273,7 @@ InstallState FirmwareUpdate::check_firmware_info(bool detect_downgrade, bool log
     return InstallState::InProgress;
 }
 
-InstallState FirmwareUpdate::handle_firmware_chunk(size_t chunk_offset, uint8_t *chunk_data, size_t chunk_len, size_t remaining_len, size_t complete_len, TFJsonSerializer *json_ptr)
+InstallState FirmwareUpdate::handle_firmware_chunk(size_t chunk_offset, uint8_t *chunk_data, size_t chunk_len, size_t complete_len, bool is_complete, TFJsonSerializer *json_ptr)
 {
     if (chunk_offset == 0) {
 #if signature_sodium_public_key_length != 0
@@ -360,7 +360,7 @@ InstallState FirmwareUpdate::handle_firmware_chunk(size_t chunk_offset, uint8_t 
         return InstallState::FlashShortWrite;
     }
 
-    if (remaining_len == 0) {
+    if (is_complete) {
 #if signature_sodium_public_key_length != 0
         signature_info.block.publisher[ARRAY_SIZE(signature_info.block.publisher) - 1] = '\0';
 
@@ -423,13 +423,13 @@ void FirmwareUpdate::register_urls()
 
     api.addState("firmware_update/state", &state);
 
-    api.addCommand("firmware_update/check_for_update", Config::Null(), {}, [this]() {
+    api.addCommand("firmware_update/check_for_update", Config::Null(), {}, [this](String &/*errmsg*/) {
         check_for_update();
     }, true);
 
-    api.addCommand("firmware_update/install_firmware", &install_firmware_config, {}, [this]() {
+    api.addCommand("firmware_update/install_firmware", &install_firmware_config, {}, [this](String &/*errmsg*/) {
 #if signature_sodium_public_key_length == 0
-        logger.printfln("Installing firmware from URL is not supported (installed firmware is unsigned)");
+        logger.printfln("Installing firmware from URL is not supported (running firmware is unsigned)");
 
         state.get("install_state")->updateEnum(InstallState::NotSupported);
         state.get("install_progress")->updateUint(0);
@@ -478,20 +478,20 @@ void FirmwareUpdate::register_urls()
 #endif
     }, true);
 
-    api.addCommand("firmware_update/override_signature", &override_signature, {}, [this](String &result) {
+    api.addCommand("firmware_update/override_signature", &override_signature, {}, [this](String &errmsg) {
 #if signature_sodium_public_key_length != 0
         char json_buf[64] = "";
         TFJsonSerializer json{json_buf, sizeof(json_buf)};
 
         if (signature_override_cookie == 0) {
-            result = "No update pending";
+            errmsg = "No update pending";
             return;
         }
 
         uint32_t cookie = override_signature.get("cookie")->asUint();
 
         if (signature_override_cookie != cookie) {
-            result = "Wrong signature override cookie";
+            errmsg = "Wrong signature override cookie";
             return;
         }
 
@@ -500,14 +500,14 @@ void FirmwareUpdate::register_urls()
         signature_override_cookie = 0;
 
         if (!Update.end(true) || Update.hasError()) {
-            result = "Failed to apply update";
-            logger.printfln("%s: %s", result.c_str(), Update.errorString());
+            errmsg = "Failed to apply update";
+            logger.printfln("%s: %s", errmsg.c_str(), Update.errorString());
             return;
         }
 
-        trigger_reboot("Firmware update", 1000);
+        trigger_reboot("firmware update", 1_s);
 #else
-        result = "Signature verification is disabled";
+        errmsg = "Signature verification is disabled";
 #endif
     }, true);
 
@@ -578,7 +578,7 @@ void FirmwareUpdate::register_urls()
     });
 
     server.on_HTTPThread("/flash_firmware", HTTP_POST, [this](WebServerRequest request) {
-        trigger_reboot("Firmware update", 1000);
+        trigger_reboot("firmware update", 1_s);
         task_scheduler.await([this](){flash_firmware_in_progress = false;});
         return request.send(200, "text/plain", "Update OK");
     },
@@ -599,12 +599,14 @@ void FirmwareUpdate::register_urls()
 
                 delay(100); // wait for other operations to react
             }
+
+            logger.printfln("Installing firmware from file upload");
         }
 
         char json_buf[256] = "";
         TFJsonSerializer json{json_buf, sizeof(json_buf)};
 
-        InstallState result = handle_firmware_chunk(offset, data, len, remaining, request.contentLength(), &json);
+        InstallState result = handle_firmware_chunk(offset, data, len, request.contentLength(), remaining == 0, &json);
 
         if (result != InstallState::InProgress) {
             if (json_buf[0] == '\0') {
@@ -875,12 +877,12 @@ void FirmwareUpdate::handle_index_data(const void *data, size_t data_len)
 void FirmwareUpdate::install_firmware(const char *url)
 {
 #if signature_sodium_public_key_length == 0
-    logger.printfln("Installing firmware from URL is not supported (installed firmware is unsigned)");
+    logger.printfln("Installing firmware from URL is not supported (running firmware is unsigned)");
 
     state.get("install_state")->updateEnum(InstallState::NotSupported);
     state.get("install_progress")->updateUint(0);
 #else
-    logger.printfln("Installing firmware: %s", url);
+    logger.printfln("Installing firmware from URL: %s", url);
 
     state.get("install_state")->updateEnum(InstallState::InProgress);
     state.get("install_progress")->updateUint(0);
@@ -968,6 +970,13 @@ void FirmwareUpdate::install_firmware(const char *url)
             break;
 
         case AsyncHTTPSClientEventType::Data:
+            if (event->data_complete_len < 0) {
+                logger.printfln("Firmware file size is unknown");
+                state.get("install_state")->updateEnum(InstallState::FirmwareSizeUnknown);
+                https_client.abort_async();
+                return;
+            }
+
             if (event->data_complete_len <= FIRMWARE_OFFSET) {
                 logger.printfln("Firmware file is too small: %u", event->data_complete_len);
                 state.get("install_state")->updateEnum(InstallState::FirmwareTooSmall);
@@ -975,7 +984,7 @@ void FirmwareUpdate::install_firmware(const char *url)
                 return;
             }
 
-            result = handle_firmware_chunk(event->data_chunk_offset, (uint8_t *)event->data_chunk, event->data_chunk_len, event->data_remaining_len, event->data_complete_len, nullptr);
+            result = handle_firmware_chunk(event->data_chunk_offset, (uint8_t *)event->data_chunk, event->data_chunk_len, (size_t)event->data_complete_len, event->data_is_complete, nullptr);
 
             if (result != InstallState::InProgress) {
                 https_client.abort_async();
@@ -1000,7 +1009,7 @@ void FirmwareUpdate::install_firmware(const char *url)
             logger.printfln("Firmware successfully installed");
             state.get("install_state")->updateEnum(InstallState::Rebooting);
             state.get("install_progress")->updateUint(0);
-            trigger_reboot("Firmware update", 1000);
+            trigger_reboot("firmware update", 1_s);
             install_firmware_in_progress = false;
             break;
         }

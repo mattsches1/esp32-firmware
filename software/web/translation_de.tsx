@@ -54,6 +54,7 @@ let x = {
             "wireguard": "die WireGuard-Verbindung"
         },
         "collapsed_section": {
+            "heading": "Details",
             "show": "Anzeigen",
             "hide": "Verstecken"
         },
@@ -92,7 +93,8 @@ let x = {
         "upload_timeout": "Timeout beim Hochladen",
         "download_abort": "Download abgebrochen",
         "download_error": "Fehler beim Herunterladen",
-        "download_timeout": "Timeout beim Herunterladen"
+        "download_timeout": "Timeout beim Herunterladen",
+        "not_yet_known": "Noch unbekannt"
     },
     "reset": {
         "reset_modal": "Zurücksetzen",
@@ -103,5 +105,7 @@ let x = {
         "reset_modal_confirm": "Zurücksetzen"
     },
     "days": "Tage",
-    "day": "Tag"
+    "day": "Tag",
+    "today": "Heute",
+    "tomorrow": "Morgen"
 }

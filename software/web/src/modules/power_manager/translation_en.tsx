@@ -14,33 +14,23 @@ let x = {
             "config_error_phase_switching": "Phase switching or contactor not configured",
             "config_error_no_max_current": "No maximum current configured for chargers",
             "config_error_no_chargers": "No chargers configured",
-            "config_error_excess_no_meter": "Excess charging enabled but no meter configured"
+            "config_error_excess_no_meter": "Excess charging enabled but no meter configured or meter does not provide total power",
+            "config_error_dlm_no_meter": "Dynamic load management enabled but no meter configured or meter does not provide directional phase currents"
         },
         "navbar": {
-            "power_manager_settings": "Settings",
-            "pv_excess_settings": "PV excess charging"
+            "pv_excess_settings": "PV Excess Charging"
         },
         "content": {
-            "page_header": "Energy Manager",
-
-            "enable_pm": "Power Manager enabled",
-            "enable_pm_desc": "Automatically adjust the amount of available charging power",
+            "em_proxy_warning": "When the Energy Manager is controlled by another charge manager, PV excess charging must be enabled on the charge manager, not here.",
             "cm_requirements_warning": null,
-            "cm_multiple_chargers_warning": "To use the PV excess charging with this charger, no other chargers should be configured as manager chargers in the charge manager.",
 
-            "contactor_installed": "Contactor installed",
-            "contactor_installed_desc": "The energy manager is connected to a contactor that it can use to switch its managed chargers between single-phase and three-phase connection.",
             "phase_switching_mode": "Phase switching",
-            "fixed_single_phase": "Fixed single-phase connection",
-            "fixed_three_phases": "Fixed three-phase connection",
             "automatic": "Automatic",
-            "always_single_phase": "Always single-phase",
-            "always_three_phases": "Always three-phase",
-            "pv1p_fast3p": "PV mode single-phase, Fast mode three-phase",
             "external_control": "External control (EVCC)",
+            "external_control_unavailable": "External control (EVCC) – no managed charger for phase switching",
             "external_control_notification": "External control for phase switching is active. This will disable all settings related to PV excess charging.",
 
-            "header_excess_charging": "Photovoltaic excess charging",
+            "header_excess_charging": "Photovoltaic Excess Charging",
             "enable_excess_charging": "Excess charging enabled",
             "enable_excess_charging_muted": <><a href="{{{manual_url}}}">see manual for details</a></>,
             "enable_excess_charging_desc": "Will adjust the power consumption of controlled chargers, depending on the power generation of a photovoltaic system and the charge mode.",
@@ -51,6 +41,7 @@ let x = {
             "meter_slot_grid_power_select": "Select...",
             "meter_slot_grid_power_none": "No power meter configured",
             "meter_slot_grid_power_missing_value": "sum of directional active power is missing",
+            "meter_slot_grid_power_in_use_by_battery": "selected as battery storage power meter",
             "guaranteed_power": "Min + PV: Minimum charging power",
             "guaranteed_power_muted": "Charging power that is allowed to be drawn from the grid to charge vehicles.",
             "target_power_from_grid": "Target grid power draw",
@@ -59,9 +50,12 @@ let x = {
             "control_behavior_muted": <><a href="{{{manual_url}}}">see manual for details</a></>,
             "target_power_n200": "Very conservative (− 200 W)",
             "target_power_n100": "Conservative (− 100 W)",
-            "target_power_n50": "Slightly conservative (− 50 W) – charges battery bank first",
-            "target_power_0": "Balanced (± 0 W) – recommended with no battery bank",
-            "target_power_p50": "Slightly aggressive (+ 50 W) – uses battery bank to charge vehicle",
+            "target_power_n50_with_battery_meter": "Slightly conservative (− 50 W)",
+            "target_power_n50_without_battery_meter": "Slightly conservative (− 50 W) – charges battery storage first",
+            "target_power_0_with_battery_meter": "Balanced (± 0 W)",
+            "target_power_0_without_battery_meter": "Balanced (± 0 W) – recommended with no battery storage",
+            "target_power_p50_with_battery_meter": "Slightly aggressive (+ 50 W)",
+            "target_power_p50_without_battery_meter": "Slightly aggressive (+ 50 W) – uses battery storage to charge vehicle",
             "target_power_p100": "Aggressive (+ 100 W)",
             "target_power_p200": "Very aggressive (+ 200 W)",
             "cloud_filter": "Cloud filter",
@@ -71,9 +65,21 @@ let x = {
             "cloud_filter_medium": "Medium",
             "cloud_filter_strong": "Strong",
 
-            "header_expert_settings": "Expert settings",
-            "hysteresis_time": "Hysteresis time",
-            "hysteresis_time_muted": "Minimum delay before phase switches or starting or stopping a charge, to avoid excessive wear on the vehicle's charge electronics by switching too often."
+            "header_battery_storage": "Battery storage",
+            "meter_slot_battery_power": "Power meter",
+            "meter_slot_battery_power_muted": "of the battery",
+            "meter_slot_battery_power_none": "No battery",
+            "meter_slot_battery_power_missing_value": "sum of directional active power or directional DC power are missing",
+            "meter_slot_battery_power_in_use_by_grid": "selected as grid power meter",
+            "battery_mode": "Battery priority",
+            "battery_mode_prefer_chargers": "Prefer chargers, charge battery storage with any excess power",
+            "battery_mode_prefer_battery": "Prefer battery, charge vehicles with any excess power",
+            "battery_inverted": "Battery power direction",
+            "battery_inverted_n": "Normal: positive power while charging, negative power while discharging",
+            "battery_inverted_i": "Inverted: negative power while charging, positive power while discharging",
+            "battery_deadzone": "Import and export tolerance",
+            "battery_deadzone_muted": "at the grid connection, while the battery is active",
+            "battery_deadzone_help": "Most battery storages will allow some export and import while charging or discharging. The tolerance should be set to 1.5 times the expected export and import. If the battery permits an export of -50 W and an import of 50 W, the tolerance should be set to 75 W."
         },
         "automation": {
             "slot": "Blocking slot",

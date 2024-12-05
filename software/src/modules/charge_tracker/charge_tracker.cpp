@@ -62,13 +62,18 @@ static_assert(CHARGE_RECORD_SIZE == 16, "Unexpected size of ChargeStart + Charge
 
 void ChargeTracker::pre_setup()
 {
-    last_charges = Config::Array({},
-        new Config{Config::Object({
-            {"timestamp_minutes", Config::Uint32(0)},
-            {"charge_duration", Config::Uint32(0)},
-            {"user_id", Config::Uint8(0)},
-            {"energy_charged", Config::Float(0)}
-        })}, 0, CHARGE_RECORD_LAST_CHARGES_SIZE, Config::type_id<Config::ConfObject>());
+    last_charges_prototype = Config::Object({
+        {"timestamp_minutes", Config::Uint32(0)},
+        {"charge_duration", Config::Uint32(0)},
+        {"user_id", Config::Uint8(0)},
+        {"energy_charged", Config::Float(0)}
+    });
+
+    last_charges = Config::Array(
+        {},
+        &last_charges_prototype,
+        0, CHARGE_RECORD_LAST_CHARGES_SIZE, Config::type_id<Config::ConfObject>()
+    );
 
     current_charge = Config::Object({
         {"user_id", Config::Int16(-1)},
@@ -422,11 +427,11 @@ void ChargeTracker::readNRecords(File *f, size_t records_to_read)
         memcpy(&cs, buf, sizeof(cs));
         memcpy(&ce, buf + sizeof(cs), sizeof(ce));
 
-        last_charges.add();
-        last_charges.get(last_charges.count() - 1)->get("timestamp_minutes")->updateUint(cs.timestamp_minutes);
-        last_charges.get(last_charges.count() - 1)->get("charge_duration")->updateUint(ce.charge_duration);
-        last_charges.get(last_charges.count() - 1)->get("user_id")->updateUint(cs.user_id);
-        last_charges.get(last_charges.count() - 1)->get("energy_charged")->updateFloat(charged_invalid(cs, ce) ? NAN : ce.meter_end - cs.meter_start);
+        auto last_charge = last_charges.add();
+        last_charge->get("timestamp_minutes")->updateUint(cs.timestamp_minutes);
+        last_charge->get("charge_duration")->updateUint(ce.charge_duration);
+        last_charge->get("user_id")->updateUint(cs.user_id);
+        last_charge->get("energy_charged")->updateFloat(charged_invalid(cs, ce) ? NAN : ce.meter_end - cs.meter_start);
     }
 }
 
@@ -761,16 +766,16 @@ void ChargeTracker::register_urls()
     api.addState("charge_tracker/current_charge", &current_charge);
     api.addState("charge_tracker/state", &state);
 
-    api.addCommand("charge_tracker/remove_all_charges", Config::Confirm(), {Config::confirm_key}, [this](String &result){
+    api.addCommand("charge_tracker/remove_all_charges", Config::Confirm(), {Config::confirm_key}, [this](String &errmsg) {
         if (!Config::Confirm()->get(Config::ConfirmKey())->asBool()) {
-            result = "Tracked charges will NOT be removed";
+            errmsg = "Tracked charges will NOT be removed";
             return;
         }
 
         remove_directory(CHARGE_RECORD_FOLDER);
         users.remove_username_file();
 
-        trigger_reboot("Removing all tracked charges", 1000);
+        trigger_reboot("removing all tracked charges", 1_s);
     }, true);
 
     server.on_HTTPThread("/charge_tracker/pdf", HTTP_PUT, [this](WebServerRequest request) {
@@ -780,7 +785,7 @@ void ChargeTracker::register_urls()
         int user_filter = USER_FILTER_ALL_USERS;
         uint32_t start_timestamp_min = 0;
         uint32_t end_timestamp_min = 0;
-        uint32_t current_timestamp_min = timestamp_minutes();
+        uint32_t current_timestamp_min = rtc.timestamp_minutes();
 
         bool english = false;
         #define LETTERHEAD_SIZE 512
@@ -851,7 +856,7 @@ void ChargeTracker::register_urls()
         String dev_name;
         auto await_result = task_scheduler.await([this, configured_users, &electricity_price, &dev_name]() mutable {
             electricity_price = this->config.get("electricity_price")->asUint();
-            for (int i = 0; i < users.config.get("users")->count(); ++i) {
+            for (size_t i = 0; i < users.config.get("users")->count(); ++i) {
                 configured_users[i] = users.config.get("users")->get(i)->get("id")->asUint();
             }
             dev_name = device_name.display_name.get("display_name")->asString();
@@ -1085,8 +1090,8 @@ search_done:
                     ++lines_generated;
                 }
 
-                f.close();
                 if (current_charge >= (CHARGE_RECORD_MAX_FILE_SIZE / CHARGE_RECORD_SIZE)) {
+                    f.close();
                     ++current_file;
                     current_charge = 0;
                 }
@@ -1096,13 +1101,17 @@ search_done:
                     break;
 
                 if (current_file == last_file && current_charge >= last_charge) {
+                    f.close();
                     break;
                 }
             }
-            if (!f)
-                f.close();
 
             *table_lines = table_lines_buffer;
+
+            // The HTTP task generating the PDF has a higher priority than the main loop and will starve it of CPU time.
+            // Suspend execution for a moment after every block so that the main loop has a chance to run.
+            vTaskDelay(1);
+
             return lines_generated;
         });
         free(display_name_cache);

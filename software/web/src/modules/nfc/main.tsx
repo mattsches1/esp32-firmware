@@ -49,8 +49,8 @@ interface NFCState {
 export class NFC extends ConfigComponent<'nfc/config', {}, NFCState> {
     constructor() {
         super('nfc/config',
-              __("nfc.script.save_failed"),
-              __("nfc.script.reboot_content_changed"), {
+              () => __("nfc.script.save_failed"),
+              () => __("nfc.script.reboot_content_changed"), {
                 addTag: {
                     tag_id: "",
                     user_id: 0,
@@ -166,6 +166,7 @@ export class NFC extends ConfigComponent<'nfc/config', {}, NFCState> {
                                                     ["2",__("nfc.content.type_2")],
                                                     ["3",__("nfc.content.type_3")],
                                                     ["4",__("nfc.content.type_4")],
+                                                    ["5",__("nfc.content.type_5")],
                                                 ]}
                                                 value={state.editTag.tag_type.toString()}
                                                 onValue={(v) => this.setState({editTag: {...state.editTag, tag_type: parseInt(v)}})} />
@@ -223,6 +224,7 @@ export class NFC extends ConfigComponent<'nfc/config', {}, NFCState> {
                                             ["2",__("nfc.content.type_2")],
                                             ["3",__("nfc.content.type_3")],
                                             ["4",__("nfc.content.type_4")],
+                                            ["5",__("nfc.content.type_5")],
                                         ]}
                                         placeholder={__("nfc.content.select_type")}
                                         value={state.addTag.tag_type.toString()}

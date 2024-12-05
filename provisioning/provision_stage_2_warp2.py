@@ -1,5 +1,9 @@
 #!/usr/bin/python3 -u
 
+import tinkerforge_util as tfutil
+
+tfutil.create_parent_module(__file__, 'provisioning')
+
 import contextlib
 from contextlib import contextmanager
 import datetime
@@ -26,13 +30,13 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-from tinkerforge.ip_connection import IPConnection, base58encode, base58decode, BASE58
-from tinkerforge.bricklet_rgb_led_v2 import BrickletRGBLEDV2
+from provisioning.tinkerforge.ip_connection import IPConnection, base58encode, base58decode, BASE58
+from provisioning.tinkerforge.bricklet_rgb_led_v2 import BrickletRGBLEDV2
+from provisioning.tinkerforge.bricklet_nfc import SimpleGetTagID
+from provisioning.tinkerforge.bricklet_evse_v2 import BrickletEVSEV2
 
-from provision_common.provision_common import *
-from provision_common.bricklet_nfc import SimpleGetTagID
-from provision_common.bricklet_evse_v2 import BrickletEVSEV2
-from provision_stage_3_warp2 import Stage3
+from provisioning.provision_common.provision_common import *
+from provisioning.provision_stage_3_warp2 import Stage3
 
 evse = None
 power_off_on_error = True
@@ -425,7 +429,7 @@ def main(stage3):
             run(["git", "pull"])
 
     # T:WARP2-CP-22KW-50;V:2.1;S:5000000001;B:2021-09;A:0;;;
-    pattern = r'^T:WARP(2|3)-C(B|S|P)-(11|22)KW-(50|75)(?:-PC)?;V:(\d+\.\d+);S:(5\d{9});B:(\d{4}-\d{2})(?:;A:(0|1))?;;;*$'
+    pattern = r'^T:WARP(2|3)-C(B|S|P)-(11|22)KW-(50|75|CC)(?:-PC)?;V:(\d+\.\d+);S:(5\d{9});B:(\d{4}-\d{2})(?:;A:(0|1))?;;;*$'
     qr_code = my_input("Scan the wallbox QR code")
     match = re.match(pattern, qr_code)
 
@@ -448,7 +452,12 @@ def main(stage3):
     print("Wallbox QR code data:")
     print("    WARP{} Charger {}".format(qr_gen, {"B": "Basic", "S": "Smart", "P": "Pro"}[qr_variant]))
     print("    {} kW".format(qr_power))
-    print("    {:1.1f} m".format(int(qr_cable_len) / 10.0))
+
+    if qr_cable_len == 'CC':
+        print("    Custom Cable")
+    else:
+        print("    {:1.1f} m".format(int(qr_cable_len) / 10.0))
+
     print("    HW Version: {}".format(qr_hw_version))
     print("    Serial: {}".format(qr_serial))
     print("    Build month: {}".format(qr_built))

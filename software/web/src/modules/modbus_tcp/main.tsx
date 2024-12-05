@@ -28,7 +28,7 @@ import { InputNumber } from "../../ts/components/input_number";
 import { InputSelect } from "../../ts/components/input_select";
 import { SubPage } from "../../ts/components/sub_page";
 import { EVSE_SLOT_MODBUS_TCP } from "../evse_common/api";
-import { CollapsedSection } from "../../ts/components/collapsed_section";
+import { FormSeparator } from "../../ts/components/form_separator";
 import { NavbarItem } from "../../ts/components/navbar_item";
 
 export function ModbusTcpNavbar() {
@@ -47,8 +47,7 @@ interface config {
 export class ModbusTcp extends ConfigComponent<'modbus_tcp/config', {}, config> {
     constructor() {
         super('modbus_tcp/config',
-                __("modbus_tcp.script.save_failed"),
-                __("modbus_tcp.script.reboot_content_changed"));
+              () => __("modbus_tcp.script.save_failed"));
 
         util.addApiEventListener('evse/slots', () => {
             this.setState({evse_enable: API.get('evse/slots')[EVSE_SLOT_MODBUS_TCP].active});
@@ -56,12 +55,12 @@ export class ModbusTcp extends ConfigComponent<'modbus_tcp/config', {}, config> 
     }
 
     override async sendSave(t: "modbus_tcp/config", cfg: config & ModbusTcpConfig) {
-        await API.save_unchecked('evse/modbus_tcp_enabled', {enabled: this.state.evse_enable}, __("evse.script.save_failed"));
+        await API.save_unchecked('evse/modbus_tcp_enabled', {enabled: this.state.evse_enable}, () => __("evse.script.save_failed"));
         await super.sendSave(t, cfg);
     }
 
     override async sendReset(t: "modbus_tcp/config"){
-        await API.save_unchecked('evse/modbus_tcp_enabled', {enabled: false}, __("evse.script.save_failed"));
+        await API.save_unchecked('evse/modbus_tcp_enabled', {enabled: false}, () => __("evse.script.save_failed"));
         await super.sendReset(t);
     }
 
@@ -76,11 +75,12 @@ export class ModbusTcp extends ConfigComponent<'modbus_tcp/config', {}, config> 
         if (!util.render_allowed())
             return <SubPage name="modbus_tcp" />;
 
-        let docu = <CollapsedSection label={__("modbus_tcp.content.table_docu")}>
+        let docu = <>
+            <FormSeparator heading={__("modbus_tcp.content.table_docu")} />
             <table class="table table-bordered table-sm">
                 {__("modbus_tcp.content.table_content")}
             </table>
-        </CollapsedSection>
+        </>;
 
         return (
             <SubPage name="modbus_tcp">

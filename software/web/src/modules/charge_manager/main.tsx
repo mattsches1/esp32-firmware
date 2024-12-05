@@ -87,7 +87,7 @@ export class ChargeManagerStatus extends Component<{}, ChargeManagerStatusState>
 
             if (c.s != 5) {
                 if (state.state.state == 2) {
-                    c_body_classes = "bg-danger text-white bg-disabled";
+                    c_body_classes = "bg-warning bg-disabled";
                     c_state = __("charge_manager.script.charge_state_blocked_by_other_box");
                     c_info = __("charge_manager.script.charge_state_blocked_by_other_box_details");
                 } else {
@@ -151,7 +151,7 @@ export class ChargeManagerStatus extends Component<{}, ChargeManagerStatusState>
                 <FormRow label={__("charge_manager.status.available_current")}>
                     <InputFloat min={0} max={state.config.maximum_available_current} digits={3} unit="A"
                         value={state.available_current.current}
-                        onValue={(v) => API.save("charge_manager/available_current", {"current": v}, __("charge_manager.script.set_available_current_failed"))}
+                        onValue={(v) => API.save("charge_manager/available_current", {"current": v}, () => __("charge_manager.script.set_available_current_failed"))}
                         showMinMax/>
                 </FormRow>
             }

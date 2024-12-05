@@ -42,6 +42,8 @@
 static float benchmark_area(uint32_t *start_address, size_t max_length);
 static void get_spi_settings(uint32_t spi_num, uint32_t apb_clk, uint32_t *spi_clk, uint32_t *dummy_cyclelen, const char **spi_mode);
 
+extern uint32_t _rodata_start;
+extern uint32_t _rodata_end;
 extern uint32_t _text_start;
 
 [[gnu::noinline]]
@@ -54,7 +56,8 @@ static void malloc_failed_log_detailed(size_t size, uint32_t caps, const char *f
     size_t backtrace_len = strn_backtrace(backtrace_buf, sizeof(backtrace_buf), 1);
 
     logger.printfln("malloc_failed_hook sz=%u frBl=%u frTot=%u caps=0x%x fn=%s t=%s", size, ram_info.largest_free_block, ram_info.total_free_bytes, caps, function_name, task_name);
-    logger.write(backtrace_buf, backtrace_len);
+    logger.print_plain(backtrace_buf, backtrace_len);
+    logger.print_plain("\n", 1);
 }
 
 // Called on affected task's stack, which might be small.
@@ -65,8 +68,10 @@ static void malloc_failed_hook(size_t size, uint32_t caps, const char *function_
     if (strcmp(task_name, "loopTask") == 0 || strcmp(task_name, "httpd") == 0 || strcmp(task_name, "wifi") == 0) {
         malloc_failed_log_detailed(size, caps, function_name, task_name);
     } else {
-        logger.write("malloc_failed_hook from other task", 34);
-        logger.write(task_name, strlen(task_name));
+        logger.print_timestamp();
+        logger.print_plain("malloc_failed_hook from other task\n", 35);
+        logger.print_plain(task_name, strlen(task_name));
+        logger.print_plain("\n", 1);
 
         esp_backtrace_print(INT32_MAX);
     }
@@ -86,31 +91,18 @@ void Debug::pre_setup()
     psram_size = 4 * 1024 * 1024;
 #endif
 
-    String flash_mode;
-    switch (esp_flash_default_chip->read_mode) {
-        case SPI_FLASH_SLOWRD:  flash_mode = "slowrd";  break;
-        case SPI_FLASH_FASTRD:  flash_mode = "fastrd";  break;
-        case SPI_FLASH_DOUT:    flash_mode = "dout";    break;
-        case SPI_FLASH_DIO:     flash_mode = "dio";     break;
-        case SPI_FLASH_QOUT:    flash_mode = "qout";    break;
-        case SPI_FLASH_QIO:     flash_mode = "qio";     break;
-        case SPI_FLASH_OPI_STR: flash_mode = "opi_str"; break;
-        case SPI_FLASH_OPI_DTR: flash_mode = "opi_dtr"; break;
-        case SPI_FLASH_READ_MODE_MAX:
-        default: flash_mode = static_cast<int>(esp_flash_default_chip->read_mode);
-    }
+    rtc_cpu_freq_config_t cpu_freq_conf;
+    rtc_clk_cpu_freq_get_config(&cpu_freq_conf);
+
+    float dram_speed   = static_cast<float>(cpu_freq_conf.freq_mhz * 1000000 * 4) / 1048576.0f; // DRAM speed cannot be measured accurately, but we know that it can deliver 4 bytes per CPU clock cycle.
+    float iram_speed   = benchmark_area(reinterpret_cast<uint32_t *>(0x40080000), 128*1024);
+    float rodata_speed = benchmark_area(&_rodata_start, 128*1024); // 128KiB at the beginning of the readonly-data
+    float text_speed   = benchmark_area(&_text_start,   128*1024); // 128KiB at the beginning of the code
 
     float psram_speed = 0;
 #if defined(BOARD_HAS_PSRAM)
     psram_speed = benchmark_area(reinterpret_cast<uint32_t *>(0x3FB00000), 128*1024); // 128KiB inside the fourth MiB
 #endif
-
-    float dram_speed  = benchmark_area(reinterpret_cast<uint32_t *>(0x3FFAE000), 200*1024);
-    float iram_speed  = benchmark_area(reinterpret_cast<uint32_t *>(0x40080000), 128*1024);
-    float flash_speed = benchmark_area(&_text_start, 128*1024); // 128KiB at the beginning of the code
-
-    rtc_cpu_freq_config_t cpu_freq_conf;
-    rtc_clk_cpu_freq_get_config(&cpu_freq_conf);
 
     state_spi_bus_prototype = Config::Object({
         {"clk",          Config::Uint32(0)},
@@ -129,11 +121,11 @@ void Debug::pre_setup()
             &state_spi_bus_prototype,
             0, 4, Config::type_id<Config::ConfObject>()
         )},
-        {"dram_benchmark",  Config::Float(dram_speed)},
-        {"iram_benchmark",  Config::Float(iram_speed)},
-        {"psram_benchmark", Config::Float(psram_speed)},
-        {"flash_benchmark", Config::Float(flash_speed)},
-        {"flash_mode",      Config::Str(flash_mode, 0, 8)},
+        {"dram_benchmark",   Config::Float(dram_speed)},
+        {"iram_benchmark",   Config::Float(iram_speed)},
+        {"psram_benchmark",  Config::Float(psram_speed)},
+        {"rodata_benchmark", Config::Float(rodata_speed)},
+        {"text_benchmark",   Config::Float(text_speed)},
     });
 
     for (uint32_t i = 0; i < 4; i++) {
@@ -229,13 +221,13 @@ void Debug::setup()
             logger.printfln("Heap full. Largest block is %u bytes.", dram_info.largest_free_block);
         }
 
-        uint32_t task_count = this->task_handles.size();
-        for (uint16_t i = 0; i < task_count; i++) {
+        size_t task_count = this->task_handles.size();
+        for (size_t i = 0; i < task_count; i++) {
             uint32_t hwm = uxTaskGetStackHighWaterMark(this->task_handles[i]);
             Config *conf_task_hwm = static_cast<Config *>(this->state_hwm.get(i));
             if (conf_task_hwm->get("hwm")->updateUint(hwm) && hwm < 256) {
                 const char *task_name = conf_task_hwm->get("task_name")->asUnsafeCStr();
-                if (hwm < 120 || strcmp(task_name, "watchdog_task") != 0) {
+                if (hwm < 48 || strcmp(task_name, "watchdog_task") != 0) {
                     logger.printfln("HWM of task '%s' changed: %u", task_name, hwm);
                 }
             }
@@ -259,7 +251,7 @@ void Debug::setup()
         this->integrity_check_runs = 0;
         this->integrity_check_runtime_sum = 0;
         this->integrity_check_runtime_max = 0;
-    }, 1000, 1000);
+    }, 1_s, 1_s);
 
     last_state_update = now_us();
 
@@ -340,10 +332,12 @@ void Debug::register_urls()
     api.addState("debug/state_slow", &state_slow);
     api.addState("debug/state_hwm", &state_hwm);
 
+#ifdef DEBUG_FS_ENABLE
     server.on_HTTPThread("/debug/crash", HTTP_GET, [](WebServerRequest req) {
         esp_system_abort("Crash requested");
         return req.send(200);
     });
+#endif
 
     server.on_HTTPThread("/debug/state_sizes", HTTP_GET, [](WebServerRequest req) {
         char buf[3072]; // on httpd stack, which is large enough
@@ -465,7 +459,7 @@ void Debug::register_events()
     uint32_t apb_clk = state_static.get("apb_clk")->asUint();
     Config *conf_spi_buses = static_cast<Config *>(state_static.get("spi_buses"));
 
-    for (uint16_t i = 0; i < 4; i++) {
+    for (uint32_t i = 0; i < 4; i++) {
         uint32_t spi_clk;
         uint32_t dummy_cyclelen;
         const char *spi_mode;
@@ -540,6 +534,14 @@ void Debug::loop()
 
 void Debug::register_task(const char *task_name, uint32_t stack_size, TaskAvailability availability)
 {
+    size_t task_count = state_hwm.count();
+    for (size_t i = 0; i < task_count; i++) {
+        if (state_hwm.get(i)->get("task_name")->asString() == task_name) {
+            logger.printfln("Can't register task: A task named '%s' is already registered.", task_name);
+            return;
+        }
+    }
+
     TaskHandle_t handle = xTaskGetHandle(task_name);
     if (!handle) {
         if (availability == ExpectPresent) {
@@ -566,12 +568,57 @@ void Debug::register_task(TaskHandle_t handle, uint32_t stack_size)
         return;
     }
 
+    size_t task_count = task_handles.size();
+    for (size_t i = 0; i < task_count; i++) {
+        if (task_handles[i] == handle) {
+            logger.printfln("Can't register task: TaskHandle of task '%s' already registered.", task_name);
+            return;
+        }
+    }
+
     task_handles.push_back(handle);
 
     Config *conf = static_cast<Config *>(state_hwm.add());
     conf->get("task_name")->updateString(task_name);
     conf->get("hwm")->updateUint(uxTaskGetStackHighWaterMark(handle));
     conf->get("stack_size")->updateUint(stack_size);
+}
+
+void Debug::deregister_task(const char *task_name)
+{
+    size_t task_count = state_hwm.count();
+    for (size_t i = 0; i < task_count; i++) {
+        if (state_hwm.get(i)->get("task_name")->asString() == task_name) {
+            deregister_task_internal(i);
+            return;
+        }
+    }
+
+    logger.printfln("Cannot deregister task: Name '%s' not found.", task_name);
+}
+
+void Debug::deregister_task(TaskHandle_t handle)
+{
+    if (!handle) {
+        logger.printfln("deregister_task called with invalid handle.");
+        return;
+    }
+
+    size_t task_count = task_handles.size();
+    for (size_t i = 0; i < task_count; i++) {
+        if (task_handles[i] == handle) {
+            deregister_task_internal(i);
+            return;
+        }
+    }
+
+    logger.printfln("Cannot deregister task: Handle not found.");
+}
+
+void Debug::deregister_task_internal(size_t i)
+{
+    task_handles.erase(task_handles.begin() + static_cast<int>(i));
+    state_hwm.remove(i);
 }
 
 static float benchmark_area(uint32_t *start_address, size_t max_length)

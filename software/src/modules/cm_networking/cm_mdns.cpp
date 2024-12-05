@@ -19,34 +19,69 @@
 
 #include "cm_networking.h"
 
-#include <Arduino.h>
-#include <ESPmDNS.h>
 #include <lwip/ip_addr.h>
 #include <lwip/opt.h>
 #include <lwip/dns.h>
 #include <cstring>
 #include <TFJson.h>
 
+#include "mdns.h"
 #include "event_log_prefix.h"
 #include "module_dependencies.h"
 #include "tools.h"
+#include "tools/net.h"
 #include "cool_string.h"
-
-extern CMNetworking cm_networking;
 
 void CMNetworking::setup()
 {
-    mdns_init();
     initialized = true;
 }
 
+#if MODULE_EVSE_COMMON_AVAILABLE()
+static void add_charger_services() {
+    mdns_service_add(NULL, "_tf-warp-cm", "_udp", 34127, NULL, 0);
+    mdns_service_txt_item_set("_tf-warp-cm", "_udp", "version", MACRO_VALUE_TO_STRING(CM_PACKET_MAGIC) "." MACRO_VALUE_TO_STRING(CM_STATE_VERSION));
+
+    task_scheduler.scheduleWithFixedDelay([](){
+#if MODULE_DEVICE_NAME_AVAILABLE()
+        // Keep "display_name" updated because it can be changed at runtime without reboot.
+        mdns_service_txt_item_set("_tf-warp-cm", "_udp", "display_name", device_name.display_name.get("display_name")->asEphemeralCStr());
+#endif
+        // Keep "enabled" updated because it is retrieved from the EVSE.
+        mdns_service_txt_item_set("_tf-warp-cm", "_udp", "enabled", evse_common.get_management_enabled() ? "true" : "false");
+    }, 10_s);
+}
+#endif
+
+#if MODULE_EM_PHASE_SWITCHER_AVAILABLE()
+static void add_wem_services() {
+
+    static auto *cfg = api.getState("em_phase_switcher/charger_config");
+    if (!cfg->get("proxy_mode")->asBool())
+        return;
+
+    mdns_service_add(NULL, "_tf-warp-cm", "_udp", 34127, NULL, 0);
+    // TODO comment
+    mdns_service_txt_item_set("_tf-warp-cm", "_udp", "version", MACRO_VALUE_TO_STRING(CM_PACKET_MAGIC) "." MACRO_VALUE_TO_STRING(CM_STATE_VERSION));
+    mdns_service_txt_item_set("_tf-warp-cm", "_udp", "enabled", "true");
+
+#if MODULE_DEVICE_NAME_AVAILABLE()
+    task_scheduler.scheduleWithFixedDelay([](){
+        // Keep "display_name" updated because it can be changed at runtime without reboot.
+        mdns_service_txt_item_set("_tf-warp-cm", "_udp", "display_name", device_name.display_name.get("display_name")->asEphemeralCStr());
+        mdns_service_txt_item_set("_tf-warp-cm", "_udp", "proxy_of", cfg->get("host")->asEphemeralCStr());
+    }, 10_s);
+#endif
+}
+#endif
+
 void CMNetworking::register_urls()
 {
-    api.addCommand("charge_manager/scan", Config::Null(), {}, [this]() {
+    api.addCommand("charge_manager/scan", Config::Null(), {}, [this](String &/*errmsg*/) {
         start_scan();
     }, true);
 
-    server.on_HTTPThread("/charge_manager/scan_result", HTTP_GET, [this](WebServerRequest request) {
+    server.on_HTTPThread("/charge_manager/scan_result", HTTP_GET, [](WebServerRequest request) {
         CoolString result;
 
         if (!cm_networking.get_scan_results(result))
@@ -54,24 +89,19 @@ void CMNetworking::register_urls()
 
         return request.send(200, "application/json; charset=utf-8", result.c_str());
     });
+}
 
-// If we don't have the evse or evse_v2 module, but have cm_networking, this is probably an energy manager.
-// We only want to announce manageable chargers, not managers.
-#if MODULE_NETWORK_AVAILABLE() && MODULE_EVSE_COMMON_AVAILABLE()
+void CMNetworking::register_events() {
+#if MODULE_NETWORK_AVAILABLE()
     if (!network.config.get("enable_mdns")->asBool())
         return;
 
-    MDNS.addService("tf-warp-cm", "udp", 34127);
-    MDNS.addServiceTxt("tf-warp-cm", "udp", "version", MACRO_VALUE_TO_STRING(CM_PACKET_MAGIC) "." MACRO_VALUE_TO_STRING(CM_STATE_VERSION));
-    task_scheduler.scheduleWithFixedDelay([](){
-        #if MODULE_DEVICE_NAME_AVAILABLE()
-            // Keep "display_name" updated because it can be changed at runtime without clicking "Save".
-            MDNS.addServiceTxt("tf-warp-cm", "udp", "display_name", device_name.display_name.get("display_name")->asString());
-        #endif
+#if MODULE_EVSE_COMMON_AVAILABLE()
+    add_charger_services();
+#elif MODULE_EM_PHASE_SWITCHER_AVAILABLE()
+    add_wem_services();
+#endif
 
-        // Keep "enabled" updated because it is retrieved from the EVSE.
-        MDNS.addServiceTxt("tf-warp-cm", "udp", "enabled", evse_common.get_management_enabled() ? "true" : "false");
-    }, 0, 10000);
 #endif
 }
 
@@ -87,9 +117,9 @@ static void dns_callback(const char *host, const ip_addr_t *ip, void *args)
 
 void CMNetworking::resolve_hostname(uint8_t charger_idx)
 {
-    if ((this->needs_mdns & (1 << charger_idx)) != 0) {
+    if ((this->needs_mdns & (1ull << charger_idx)) != 0) {
         if (!periodic_scan_task_started)
-            task_scheduler.scheduleWithFixedDelay([this](){this->start_scan();}, 0, 60 * 1000);
+            task_scheduler.scheduleWithFixedDelay([this](){this->start_scan();}, 1_m);
         periodic_scan_task_started = true;
         return;
     }
@@ -110,7 +140,8 @@ void CMNetworking::resolve_hostname(uint8_t charger_idx)
 
     std::lock_guard<std::mutex> lock{dns_resolve_mutex};
     if (resolve_state[charger_idx] != RESOLVE_STATE_RESOLVED || dest_addrs[charger_idx].sin_addr.s_addr != in) {
-        const char *ip_str = ipaddr_ntoa(&ip);
+        char ip_str[16];
+        tf_ip4addr_ntoa(&ip, ip_str, sizeof(ip_str));
         // Show resolved hostname only if it wasn't already an IP
         if (strcmp(this->hosts[charger_idx], ip_str) != 0) {
             logger.printfln("Resolved %s to %s", this->hosts[charger_idx], ip_str);
@@ -180,11 +211,11 @@ void CMNetworking::start_scan()
     }
 
     scan = mdns_query_async_new(NULL, "_tf-warp-cm", "_udp", MDNS_TYPE_PTR, 1000, INT8_MAX, [](mdns_search_once_t *search) {
-        task_scheduler.scheduleOnce([](){ cm_networking.check_results(); }, 0);
+        task_scheduler.scheduleOnce([](){ cm_networking.check_results(); });
     });
 }
 
-bool CMNetworking::mdns_result_is_charger(mdns_result_t *entry, const char ** ret_version, const char **ret_enabled, const char **ret_display_name) {
+bool CMNetworking::mdns_result_is_charger(mdns_result_t *entry, const char ** ret_version, const char **ret_enabled, const char **ret_display_name, const char **ret_proxy_of) {
     if (ret_version != nullptr)
         *ret_version = "0";
     if (ret_enabled != nullptr)
@@ -214,6 +245,11 @@ bool CMNetworking::mdns_result_is_charger(mdns_result_t *entry, const char ** re
                 *ret_version = entry->txt[i].value;
             ++found;
         }
+        else if (strcmp(entry->txt[i].key, "proxy_of") == 0 && entry->txt_value_len[i] > 0) {
+            if (ret_proxy_of != nullptr)
+                *ret_proxy_of = entry->txt[i].value;
+            // don't increase found: this is an optional entry.
+        }
     }
 
     if (found < 3)
@@ -226,7 +262,7 @@ void CMNetworking::resolve_via_mdns(mdns_result_t *entry)
 {
     if (entry->addr && entry->addr->addr.type == IPADDR_TYPE_V4) {
         for (size_t i = 0; i < charger_count; ++i) {
-            if ((this->needs_mdns & (1 << i)) == 0)
+            if ((this->needs_mdns & (1ull << i)) == 0)
                 continue;
 
             String host = String(this->hosts[i]);
@@ -235,7 +271,9 @@ void CMNetworking::resolve_via_mdns(mdns_result_t *entry)
             if (host == entry->hostname) {
                 this->dest_addrs[i].sin_addr.s_addr = entry->addr->addr.u_addr.ip4.addr;
                 if (this->resolve_state[i] != RESOLVE_STATE_RESOLVED) {
-                    logger.printfln("Resolved %s to %s (via mDNS scan)", this->hosts[i], ipaddr_ntoa((const ip_addr *)&entry->addr->addr));
+                    char addr_str[16];
+                    tf_ip4addr_ntoa(&entry->addr->addr, addr_str, sizeof(addr_str));
+                    logger.printfln("Resolved %s to %s (via mDNS scan)", this->hosts[i], addr_str);
                 }
                 this->resolve_state[i] = RESOLVE_STATE_RESOLVED;
             }
@@ -248,7 +286,8 @@ void CMNetworking::add_scan_result_entry(mdns_result_t *entry, TFJsonSerializer 
     const char *version;
     const char *enabled;
     const char *display_name;
-    if (!this->mdns_result_is_charger(entry, &version, &enabled, &display_name))
+    const char *proxy_of = nullptr;
+    if (!this->mdns_result_is_charger(entry, &version, &enabled, &display_name, &proxy_of))
         return;
 
     this->resolve_via_mdns(entry);
@@ -278,13 +317,16 @@ void CMNetworking::add_scan_result_entry(mdns_result_t *entry, TFJsonSerializer 
     json.addObject();
         json.addMemberString("hostname", entry->hostname);
 
-        char buf[32] = "[no_address]";
-        if (entry->addr && entry->addr->addr.type == IPADDR_TYPE_V4)
-            esp_ip4addr_ntoa(&entry->addr->addr.u_addr.ip4, buf, ARRAY_SIZE(buf));
-        json.addMemberString("ip", buf);
+        char addr_str[32] = "[no_address]";
+        if (entry->addr && entry->addr->addr.type == IPADDR_TYPE_V4) {
+            tf_ip4addr_ntoa(&entry->addr->addr, addr_str, sizeof(addr_str));
+        }
+        json.addMemberString("ip", addr_str);
 
         json.addMemberString("display_name", display_name);
         json.addMemberNumber("error", error);
+        if (proxy_of != nullptr)
+            json.addMemberString("proxy_of", proxy_of);
     json.endObject();
 }
 
@@ -310,7 +352,8 @@ bool CMNetworking::get_scan_results(CoolString &result)
 
     size_t payload_size = build_scan_result_json(scan_results, nullptr, 0) + 1; // null terminator
 
-    result.reserve(payload_size);
+    if (!result.reserve(payload_size))
+        return false;
 
     build_scan_result_json(scan_results, result.begin(), payload_size);
     result.setLength(payload_size - 1);

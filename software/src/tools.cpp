@@ -92,14 +92,16 @@ bool deadline_elapsed(uint32_t deadline_ms)
     return a_after_b(millis(), deadline_ms);
 }
 
+// implement TFTools/Micros.h now_us
 micros_t now_us()
 {
     return micros_t{esp_timer_get_time()};
 }
 
-bool deadline_elapsed(micros_t deadline_us)
+// implement TFTools/Tools.h now_us
+[[gnu::noreturn]] void system_abort(const char *message)
 {
-    return deadline_us < now_us();
+    esp_system_abort(message);
 }
 
 void read_efuses(uint32_t *ret_uid_num, char *ret_uid_str, char *ret_passphrase)
@@ -179,7 +181,7 @@ int check(int rc, const char *msg)
     return rc;
 }
 
-int vprintf_dev_null(const char *format, va_list ap)
+int vprintf_dev_null(const char *fmt, va_list args)
 {
     return 0;
 }
@@ -404,16 +406,16 @@ static bool wait_for_bootloader_mode(TF_Unknown *bricklet, int target_mode)
 
 static bool flash_plugin(TF_Unknown *bricklet, const uint8_t *firmware, size_t firmware_len, int regular_plugin_upto)
 {
-    logger.printfln_plain("    Setting bootloader mode to bootloader.");
+    logger.printfln_continue("Setting bootloader mode to bootloader.");
     tf_unknown_set_bootloader_mode(bricklet, 0, nullptr);
-    logger.printfln_plain("    Waiting for bootloader...");
+    logger.printfln_continue("Waiting for bootloader...");
 
     if (!wait_for_bootloader_mode(bricklet, 0)) {
-        logger.printfln_plain("    Timed out, flashing failed");
+        logger.printfln_continue("Timed out, flashing failed");
         return false;
     }
 
-    logger.printfln_plain("    Device is in bootloader, flashing...");
+    logger.printfln_continue("Device is in bootloader, flashing...");
 
     int num_packets = firmware_len / 64;
     int last_packet = 0;
@@ -431,14 +433,14 @@ static bool flash_plugin(TF_Unknown *bricklet, const uint8_t *firmware, size_t f
 
         if (tf_unknown_set_write_firmware_pointer(bricklet, start) != TF_E_OK) {
             if (tf_unknown_set_write_firmware_pointer(bricklet, start) != TF_E_OK) {
-                logger.printfln_plain("    Failed to set firmware pointer to %d", start);
+                logger.printfln_continue("Failed to set firmware pointer to %d", start);
                 return false;
             }
         }
 
         if (tf_unknown_write_firmware(bricklet, const_cast<uint8_t *>(firmware + start), nullptr) != TF_E_OK) {
             if (tf_unknown_write_firmware(bricklet, const_cast<uint8_t *>(firmware + start), nullptr) != TF_E_OK) {
-                logger.printfln_plain("    Failed to write firmware at %d", start);
+                logger.printfln_continue("Failed to write firmware at %d", start);
                 return false;
             }
         }
@@ -450,21 +452,21 @@ static bool flash_plugin(TF_Unknown *bricklet, const uint8_t *firmware, size_t f
 
             if (tf_unknown_set_write_firmware_pointer(bricklet, start) != TF_E_OK) {
                 if (tf_unknown_set_write_firmware_pointer(bricklet, start) != TF_E_OK) {
-                    logger.printfln_plain("    (Footer) Failed to set firmware pointer to %d", start);
+                    logger.printfln_continue("(Footer) Failed to set firmware pointer to %d", start);
                     return false;
                 }
             }
 
             if (tf_unknown_write_firmware(bricklet, const_cast<uint8_t *>(firmware + start), nullptr) != TF_E_OK) {
                 if (tf_unknown_write_firmware(bricklet, const_cast<uint8_t *>(firmware + start), nullptr) != TF_E_OK) {
-                    logger.printfln_plain("    (Footer) Failed to write firmware at %d", start);
+                    logger.printfln_continue("(Footer) Failed to write firmware at %d", start);
                     return false;
                 }
             }
         }
     }
 
-    logger.printfln_plain("    Device flashed successfully.");
+    logger.printfln_continue("Device flashed successfully.");
 
     return true;
 }
@@ -484,7 +486,7 @@ static bool flash_firmware(TF_Unknown *bricklet, const uint8_t *firmware, size_t
     }
 
     if (regular_plugin_upto == -1) {
-        logger.printfln_plain("    Firmware end marker not found. Is this a valid firmware?");
+        logger.printfln_continue("Firmware end marker not found. Is this a valid firmware?");
         return false;
     }
 
@@ -492,20 +494,20 @@ static bool flash_firmware(TF_Unknown *bricklet, const uint8_t *firmware, size_t
         return false;
     }
 
-    logger.printfln_plain("    Setting bootloader mode to firmware.");
+    logger.printfln_continue("Setting bootloader mode to firmware.");
 
     uint8_t ret_status = 0;
 
     tf_unknown_set_bootloader_mode(bricklet, 1, &ret_status);
 
     if (ret_status != 0 && ret_status != 2) {
-        logger.printfln_plain("    Failed to set bootloader mode to firmware. status %d.", ret_status);
+        logger.printfln_continue("Failed to set bootloader mode to firmware. status %d.", ret_status);
 
         if (ret_status != 5) {
             return false;
         }
 
-        logger.printfln_plain("    Status is 5, retrying.");
+        logger.printfln_continue("Status is 5, retrying.");
 
         if (!flash_plugin(bricklet, firmware, firmware_len, firmware_len)) {
             return false;
@@ -513,23 +515,23 @@ static bool flash_firmware(TF_Unknown *bricklet, const uint8_t *firmware, size_t
 
         ret_status = 0;
 
-        logger.printfln_plain("    Setting bootloader mode to firmware.");
+        logger.printfln_continue("Setting bootloader mode to firmware.");
         tf_unknown_set_bootloader_mode(bricklet, 1, &ret_status);
 
         if (ret_status != 0 && ret_status != 2) {
-            logger.printfln_plain("    (Second attempt) Failed to set bootloader mode to firmware. status %d.", ret_status);
+            logger.printfln_continue("(Second attempt) Failed to set bootloader mode to firmware. status %d.", ret_status);
             return false;
         }
     }
 
-    logger.printfln_plain("    Waiting for firmware...");
+    logger.printfln_continue("Waiting for firmware...");
 
     if (!wait_for_bootloader_mode(bricklet, 1)) {
-        logger.printfln_plain("    Timed out, flashing failed");
+        logger.printfln_continue("Timed out, flashing failed");
         return false;
     }
 
-    logger.printfln_plain("    Firmware flashed successfully");
+    logger.printfln_continue("Firmware flashed successfully");
 
     return true;
 }
@@ -644,29 +646,6 @@ int compare_version(uint8_t left_major, uint8_t left_minor, uint8_t left_patch, 
     return 0;
 }
 
-#define BUILD_YEAR \
-    ( \
-        (__DATE__[ 7] - '0') * 1000 + \
-        (__DATE__[ 8] - '0') *  100 + \
-        (__DATE__[ 9] - '0') *   10 + \
-        (__DATE__[10] - '0') \
-    )
-
-bool clock_synced(struct timeval *out_tv_now)
-{
-    gettimeofday(out_tv_now, nullptr);
-    return out_tv_now->tv_sec > ((BUILD_YEAR - 1970) * 365 * 24 * 60 * 60);
-}
-
-uint32_t timestamp_minutes()
-{
-    struct timeval tv_now;
-
-    if (!clock_synced(&tv_now))
-        return 0;
-
-    return tv_now.tv_sec / 60;
-}
 
 bool for_file_in(const char *dir, bool (*callback)(File *open_file), bool skip_directories)
 {
@@ -842,7 +821,7 @@ static void gethostbyname_addrtype_lwip_ctx_async(const char */*hostname*/, cons
 
     task_scheduler.scheduleOnce([data]() {
         data->found_callback(data);
-    }, 0);
+    });
 }
 
 void dns_gethostbyname_addrtype_lwip_ctx_async(const char *hostname,
@@ -850,7 +829,7 @@ void dns_gethostbyname_addrtype_lwip_ctx_async(const char *hostname,
                                                dns_gethostbyname_addrtype_lwip_ctx_async_data *callback_arg,
                                                u8_t dns_addrtype)
 {
-    callback_arg->found_callback = found_callback;
+    callback_arg->found_callback = std::move(found_callback);
     err_t err = dns_gethostbyname_addrtype_lwip_ctx(hostname, &callback_arg->addr, gethostbyname_addrtype_lwip_ctx_async, callback_arg, dns_addrtype);
 
     // Don't set the callback_arg's err if the result is not available yet.
@@ -861,7 +840,7 @@ void dns_gethostbyname_addrtype_lwip_ctx_async(const char *hostname,
     callback_arg->err = err;
     callback_arg->addr_ptr = &callback_arg->addr;
 
-    found_callback(callback_arg);
+    callback_arg->found_callback(callback_arg); // Can't call local found_callback anymore because it has been std::forward'ed.
 }
 
 static esp_err_t poke_localhost_fn(void * /*ctx*/)
@@ -898,7 +877,7 @@ void poke_localhost()
     esp_netif_tcpip_exec(poke_localhost_fn, nullptr);
 }
 
-void trigger_reboot(const char *initiator, uint32_t delay_ms)
+void trigger_reboot(const char *initiator, millis_t delay_ms)
 {
     logger.printfln("Reboot requested by %s.", initiator);
     task_scheduler.scheduleOnce([]() {
@@ -979,29 +958,29 @@ time_t ms_until_time(int h, int m)
 	return delay;
 }
 
-size_t sprintf_u(char *buf, const char *format, ...)
+size_t sprintf_u(char *buf, const char *fmt, ...)
 {
     va_list args;
-    va_start(args, format);
-    int res = vsprintf(buf, format, args);
+    va_start(args, fmt);
+    int res = vsprintf(buf, fmt, args);
     va_end(args);
 
     return res < 0 ? 0 : static_cast<size_t>(res);
 }
 
-size_t snprintf_u(char *buf, size_t len, const char *format, ...)
+size_t snprintf_u(char *buf, size_t len, const char *fmt, ...)
 {
     va_list args;
-    va_start(args, format);
-    int res = vsnprintf(buf, len, format, args);
+    va_start(args, fmt);
+    int res = vsnprintf(buf, len, fmt, args);
     va_end(args);
 
     return res < 0 ? 0 : static_cast<size_t>(res);
 }
 
-size_t vsnprintf_u(char *buf, size_t len, const char *format, va_list args)
+size_t vsnprintf_u(char *buf, size_t len, const char *fmt, va_list args)
 {
-    int res = vsnprintf(buf, len, format, args);
+    int res = vsnprintf(buf, len, fmt, args);
 
     return res < 0 ? 0 : static_cast<size_t>(res);
 }
@@ -1057,7 +1036,7 @@ bool OwnershipGuard::have_ownership()
     return acquired;
 }
 
-void remove_separator(const char *const in, char *out)
+int remove_separator(const char *const in, char *out)
 {
     int written = 0;
     size_t s = strlen(in);
@@ -1068,6 +1047,7 @@ void remove_separator(const char *const in, char *out)
         ++written;
     }
     out[written] = '\0';
+    return written;
 }
 
 int strncmp_with_same_len(const char *left, const char *right, size_t right_len)
@@ -1138,27 +1118,27 @@ error:
     return nullptr;
 }
 
-time_t get_localtime_today_midnight()
+time_t get_localtime_midnight_in_utc(time_t timestamp)
 {
-    // Current local time
-    time_t now = time(nullptr);
-    struct tm tm;
-    localtime_r(&now, &tm);
+    // Local time for timestamp
+    struct tm *tm  = localtime(&timestamp);
 
     // Local time to today midnight
-    tm.tm_hour = 0;
-    tm.tm_min = 0;
-    tm.tm_sec = 0;
-    return mktime(&tm);
+    tm->tm_hour  =  0;
+    tm->tm_min   =  0;
+    tm->tm_sec   =  0;
+    tm->tm_isdst = -1; // isdst = -1 => let mktime figure out if DST is in effect
+
+    // Return midnight in UTC
+    return mktime(tm);
 }
 
-time_t get_localtime_today_midnight_in_utc()
+Option<time_t> get_localtime_today_midnight_in_utc()
 {
-    time_t midnight_local = get_localtime_today_midnight();
+    struct timeval tv;
+    if (!rtc.clock_synced(&tv))
+        return {};
 
-    // Midnight local time to UTC
-    struct tm tm_utc;
-    gmtime_r(&midnight_local, &tm_utc);
-
-    return mktime(&tm_utc);
+    return get_localtime_midnight_in_utc(tv.tv_sec);
 }
+

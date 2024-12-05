@@ -1,5 +1,6 @@
 /* esp32-firmware
  * Copyright (C) 2022 Matthias Bolte <matthias@tinkerforge.com>
+ * Copyright (C) 2024 Olaf Lüke <olaf@tinkerforge.com>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -18,6 +19,7 @@
  */
 
 import { h, Fragment, VNode } from "preact";
+import { signal, Signal } from "@preact/signals-core";
 
 {{{translation}}}
 
@@ -43,27 +45,39 @@ type DeepKeys<T, S extends string> =
             : keyof T & string
     : ""
 
-let active_translation: Translation = translation['en'];
+// get_languages can be overwritten by a module that can provide a function that returnes a user-specified preferred language.
+// If no such module exists the languages preferred by the browser are used.
+let get_languages: () => readonly string[] = () => navigator.languages;
+export function update_languages_function(f: () => readonly string[]) {
+    get_languages = f;
+}
 
-export function select_language() {
-    for (let language of navigator.languages) {
+let active_language: Signal<string> = signal("en");
+function update_active_language() {
+    const languages = get_languages();
+    for (let language of languages) {
         language = language.substr(0, 2);
 
         if (language in translation) {
-            active_translation = translation[language];
-            break;
+            if (active_language.value != language) {
+                active_language.value = language;
+            }
+            return;
         }
 
         console.log("Sorry, got no translation for " + language);
     }
-}
 
-select_language();
+    if (active_language.value != 'en') {
+        active_language.value = 'en';
+    }
+}
+window.addEventListener('languagechange', update_active_language);
 
 function translate<S extends string>(key: string): GetDictValue<S, Translation> {
-    let key_parts = key.split(".");
-    let subtranslation: any = active_translation;
+    let subtranslation: any = translation[active_language.value];
 
+    let key_parts = key.split(".");
     while (subtranslation !== undefined && key_parts.length > 0) {
         subtranslation = subtranslation[key_parts.shift() as any];
     }
@@ -82,7 +96,7 @@ export function __<S extends string>(key: DeepKeys<Translation, S>): GetDictValu
     return translate(key);
 }
 
-export function translate_unchecked<S extends string>(key: string): string {
+export function translate_unchecked(key: string): string {
     let value = translate(key);
 
     if (value !== undefined) {

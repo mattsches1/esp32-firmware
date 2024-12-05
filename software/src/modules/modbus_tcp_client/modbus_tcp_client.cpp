@@ -22,15 +22,20 @@
 #include "modbus_tcp_client.h"
 
 #include <TFNetworkUtil.h>
+#include <esp_timer.h>
 
 #include "event_log_prefix.h"
 #include "module_dependencies.h"
 
 void ModbusTCPClient::setup()
 {
-    TFNetworkUtil::set_milliseconds_callback(millis);
+    TFNetworkUtil::vlogfln = [](const char *fmt, va_list args) {
+        logger.vprintfln(fmt, args);
+    };
 
-    TFNetworkUtil::set_resolve_callback([this](const char *host_name, std::function<void(uint32_t host_address, int error_number)> &&callback) {
+    TFNetworkUtil::resolve = [this](const char *host_name, std::function<void(uint32_t host_address, int error_number)> &&callback) {
+        dns_gethostbyname_addrtype_lwip_ctx_async_data *outer_data = new dns_gethostbyname_addrtype_lwip_ctx_async_data;
+
         dns_gethostbyname_addrtype_lwip_ctx_async(host_name, [callback](dns_gethostbyname_addrtype_lwip_ctx_async_data *data) {
             if (data->err != ERR_OK) {
                 callback(0, err_to_errno(data->err));
@@ -41,8 +46,10 @@ void ModbusTCPClient::setup()
             else {
                 callback(data->addr_ptr->u_addr.ip4.addr, -1);
             }
-        }, &dns_data, LWIP_DNS_ADDRTYPE_IPV4);
-    });
+
+            delete data;
+        }, outer_data, LWIP_DNS_ADDRTYPE_IPV4);
+    };
 
     initialized = true;
 }

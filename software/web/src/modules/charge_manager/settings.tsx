@@ -27,18 +27,16 @@ import { FormRow } from "../../ts/components/form_row";
 import { Button, Collapse } from "react-bootstrap";
 import { InputSelect } from "../../ts/components/input_select";
 import { InputFloat } from "../../ts/components/input_float";
-import { OutputFloat } from "src/ts/components/output_float";
+import { OutputFloat } from "../../ts/components/output_float";
 import { Switch } from "../../ts/components/switch";
 import { InputNumber } from "../../ts/components/input_number";
 import { SubPage } from "../../ts/components/sub_page";
-
 import { MeterValueID } from "../meters/meter_value_id";
-import { get_noninternal_meter_slots } from "../power_manager/main";
+import { get_noninternal_meter_slots, NoninternalMeterSelector } from "../power_manager/main";
 import type { ChargeManagerStatus } from "./main"
-import { FormSeparator } from "src/ts/components/form_separator";
-
+import { FormSeparator } from "../../ts/components/form_separator";
 import { ChargeManagerDebug } from "./debug";
-import { CollapsedSection } from "src/ts/components/collapsed_section";
+import { CollapsedSection } from "../../ts/components/collapsed_section";
 
 type ChargeManagerConfig = API.getType["charge_manager/config"];
 
@@ -52,8 +50,8 @@ export class ChargeManagerSettings extends ConfigComponent<'charge_manager/confi
 
     constructor() {
         super('charge_manager/config',
-              __("charge_manager.script.save_failed"),
-              __("charge_manager.script.reboot_content_changed"), {
+              () => __("charge_manager.script.save_failed"),
+              () => __("charge_manager.script.reboot_content_changed"), {
                   showExpert: false
               });
 
@@ -70,9 +68,9 @@ export class ChargeManagerSettings extends ConfigComponent<'charge_manager/confi
                 current_limit: this.state.dynamicLoadConfig.current_limit,
                 largest_consumer_current: this.state.dynamicLoadConfig.largest_consumer_current,
                 safety_margin_pct: this.state.dynamicLoadConfig.safety_margin_pct,
-            }, __("power_manager.script.save_failed"));
+            }, () => __("power_manager.script.save_failed"));
         } catch (e) {
-            console.log("charge_manager save failed", e);
+            console.log("charge_manager save failed because of power_manager/dynamic_load_config", e);
         }
 
         let {enable_charge_manager, chargers, maximum_available_current, ...new_values} = cfg;
@@ -84,10 +82,10 @@ export class ChargeManagerSettings extends ConfigComponent<'charge_manager/confi
     override async sendReset(t: "charge_manager/config"){
         const modal = util.async_modal_ref.current;
         if (!await modal.show({
-                title:__("reset.reset_modal"),
-                body: __("charge_manager.content.charge_manager_settings_reset_modal_text"),
-                no_text: __("reset.reset_modal_abort"),
-                yes_text: __("reset.reset_modal_confirm"),
+                title: () => __("reset.reset_modal"),
+                body: () => __("charge_manager.content.charge_manager_settings_reset_modal_text"),
+                no_text: () => __("reset.reset_modal_abort"),
+                yes_text: () => __("reset.reset_modal_confirm"),
                 no_variant: "secondary",
                 yes_variant: "danger"
             }))
@@ -95,7 +93,7 @@ export class ChargeManagerSettings extends ConfigComponent<'charge_manager/confi
 
         let energyManagerMode = API.hasModule("em_common") && !(API.hasModule("evse_v2") || API.hasModule("evse"));
         if (!energyManagerMode)
-            await API.save_unchecked('evse/management_enabled', {"enabled": false}, translate_unchecked("charge_manager.script.save_failed"));
+            await API.save_unchecked('evse/management_enabled', {"enabled": false}, () => translate_unchecked("charge_manager.script.save_failed"));
 
         await super.sendReset(t);
     }
@@ -111,12 +109,30 @@ export class ChargeManagerSettings extends ConfigComponent<'charge_manager/confi
         if (!util.render_allowed())
             return <SubPage name="charge_manager_settings" />;
 
-        let energyManagerMode = API.hasModule("em_common") && !(API.hasModule("evse_v2") || API.hasModule("evse"));
-        let warpUltimateMode  = API.hasModule("em_common") &&  (API.hasModule("evse_v2") || API.hasModule("evse"));
-        let is_warp3          = API.get_unchecked("evse/hardware_configuration")?.evse_version >= 30;
-        let show_1p_current   = energyManagerMode || warpUltimateMode || is_warp3 || API.hasFeature("phase_switch");
+        let meter_slots = get_noninternal_meter_slots([MeterValueID.CurrentL1ImExDiff], NoninternalMeterSelector.AllValues, __("charge_manager.content.dlm_meter_slot_grid_currents_missing_values"));
+        for (let i in meter_slots) {
+            let meter = meter_slots[i];
+            let slot = meter[0];
+            if (slot.endsWith("-disabled")) {
+                continue;
+            }
 
-        const meter_slots = get_noninternal_meter_slots([MeterValueID.CurrentL1ImExDiff, MeterValueID.CurrentL2ImExDiff, MeterValueID.CurrentL3ImExDiff], __("charge_manager.content.dlm_meter_slot_grid_currents_missing_values"));
+            const value_ids = API.get_unchecked(`meters/${i}/value_ids`) as Readonly<number[]>;
+            if (value_ids?.length > 0) {
+                const have_L2 = value_ids.indexOf(MeterValueID.CurrentL2ImExDiff) >= 0;
+                const have_L3 = value_ids.indexOf(MeterValueID.CurrentL3ImExDiff) >= 0;
+
+                if (have_L2) {
+                    if (have_L3) {
+                        // Have all phases, no comment
+                    } else {
+                        meter_slots[i][1] += " (" + __("charge_manager.content.dlm_meter_slot_grid_currents_two_phase") + ")";
+                    }
+                } else {
+                    meter_slots[i][1] += " (" + __("charge_manager.content.dlm_meter_slot_grid_currents_single_phase") + ")";
+                }
+            }
+        }
 
         let verbose = <FormRow label={__("charge_manager.content.verbose")}>
                 <Switch desc={__("charge_manager.content.verbose_desc")}
@@ -188,8 +204,7 @@ export class ChargeManagerSettings extends ConfigComponent<'charge_manager/confi
 
             <Collapse in={!state.minimum_current_auto}>
                 <div>
-                    <FormRow label={      show_1p_current ? __("charge_manager.content.minimum_current_3p")       : __("charge_manager.content.minimum_current")}
-                             label_muted={show_1p_current ? __("charge_manager.content.minimum_current_3p_muted") : __("charge_manager.content.minimum_current_muted")}>
+                    <FormRow label={__("charge_manager.content.minimum_current_3p")} label_muted={__("charge_manager.content.minimum_current_3p_muted")}>
                         <InputFloat
                             unit="A"
                             value={state.minimum_current}
@@ -200,20 +215,16 @@ export class ChargeManagerSettings extends ConfigComponent<'charge_manager/confi
                         />
                     </FormRow>
 
-                    {show_1p_current ?
-                        <FormRow label={__("charge_manager.content.minimum_current_1p")} label_muted={__("charge_manager.content.minimum_current_1p_muted")}>
-                            <InputFloat
-                                unit="A"
-                                value={state.minimum_current_1p}
-                                onValue={(v) => this.setState({minimum_current_1p: v})}
-                                digits={3}
-                                min={6000}
-                                max={state.maximum_available_current}
-                            />
-                        </FormRow>
-                    :
-                        null
-                    }
+                    <FormRow label={__("charge_manager.content.minimum_current_1p")} label_muted={__("charge_manager.content.minimum_current_1p_muted")}>
+                        <InputFloat
+                            unit="A"
+                            value={state.minimum_current_1p}
+                            onValue={(v) => this.setState({minimum_current_1p: v})}
+                            digits={3}
+                            min={6000}
+                            max={state.maximum_available_current}
+                        />
+                    </FormRow>
                 </div>
             </Collapse>
         </>
@@ -221,40 +232,34 @@ export class ChargeManagerSettings extends ConfigComponent<'charge_manager/confi
         return (
             <SubPage name="charge_manager_settings">
                 <ConfigForm id="charge_manager_config_form" title={__("charge_manager.content.charge_manager_settings")} isModified={this.isModified()} isDirty={this.isDirty()} onSave={this.save} onReset={this.reset} onDirtyChange={this.setDirty}>
-                    {energyManagerMode ?
-                        <>
-                            {minimum_current}
-                        </>
-                        : <>
-                            <Collapse in={!API.get("charge_manager/config").enable_charge_manager}>
-                                <div>
-                                    <FormRow label="">
-                                        <div style="color:red">
-                                            {__("charge_manager.content.managed_disabled")}
-                                        </div>
-                                    </FormRow>
+                    <Collapse in={!API.get("charge_manager/config").enable_charge_manager}>
+                        <div>
+                            <FormRow label="">
+                                <div style="color:red">
+                                    {__("charge_manager.content.managed_disabled")}
                                 </div>
-                            </Collapse>
-
-                            {minimum_current}
-
-                            <FormRow label={__("charge_manager.content.configuration_mode")} label_muted={__("charge_manager.content.configuration_mode_muted")}>
-                                <Button className="form-control" onClick={() => this.setState({showExpert: !state.showExpert})}>
-                                    {state.showExpert ? __("component.collapsed_section.hide") : __("component.collapsed_section.show")}
-                                </Button>
                             </FormRow>
+                        </div>
+                    </Collapse>
 
-                            <Collapse in={state.showExpert}>
-                                <div>
-                                    {verbose}
-                                    {watchdog}
-                                    {default_available_current}
-                                    {requested_current_threshold}
-                                    {requested_current_margin}
-                                </div>
-                            </Collapse>
-                        </>
-                    }
+                    {minimum_current}
+
+                    <FormRow label={__("charge_manager.content.configuration_mode")} label_muted={__("charge_manager.content.configuration_mode_muted")}>
+                        <Button className="form-control" onClick={() => this.setState({showExpert: !state.showExpert})}>
+                            {state.showExpert ? __("component.collapsed_section.hide") : __("component.collapsed_section.show")}
+                        </Button>
+                    </FormRow>
+
+                    <Collapse in={state.showExpert}>
+                        <div>
+                            {verbose}
+                            {watchdog}
+                            {default_available_current}
+                            {requested_current_threshold}
+                            {requested_current_margin}
+                        </div>
+                    </Collapse>
+
                     {API.hasModule("power_manager") ?
                         <>
                             <FormSeparator heading={__("charge_manager.content.header_load_management")} />
@@ -315,10 +320,10 @@ export class ChargeManagerSettings extends ConfigComponent<'charge_manager/confi
                     :
                         null
                     }
-                    <CollapsedSection label="Debug">
+                    <CollapsedSection>
                         <ChargeManagerDebug dynamicLoadConfig={state.dynamicLoadConfig}/>
                     </CollapsedSection>
-                    </ConfigForm>
+                </ConfigForm>
             </SubPage>
         )
     }

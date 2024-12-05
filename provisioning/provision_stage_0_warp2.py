@@ -1,5 +1,9 @@
 #!/usr/bin/python3 -u
 
+import tinkerforge_util as tfutil
+
+tfutil.create_parent_module(__file__, 'provisioning')
+
 import contextlib
 from contextlib import contextmanager
 import datetime
@@ -18,10 +22,10 @@ import threading
 import time
 import urllib.request
 
-from tinkerforge.ip_connection import IPConnection, base58encode, base58decode, BASE58
-from tinkerforge.bricklet_rgb_led_v2 import BrickletRGBLEDV2
+from provisioning.tinkerforge.ip_connection import IPConnection, base58encode, base58decode, BASE58
+from provisioning.tinkerforge.bricklet_rgb_led_v2 import BrickletRGBLEDV2
 
-from provision_common.provision_common import *
+from provisioning.provision_common.provision_common import *
 
 def main():
     if len(sys.argv) != 4:
@@ -31,7 +35,7 @@ def main():
         fatal_error("Firmware {} not found.".format(sys.argv[1]))
 
     firmware_type = sys.argv[3]
-    if firmware_type not in ["esp32", "esp32_ethernet", "warp2", "energy_manager", "warp3"]:
+    if firmware_type not in ["esp32", "esp32_ethernet", "warp2", "energy_manager", "energy_manager_v2", "smart_energy_broker", "warp3"]:
         fatal_error("Unknown firmware type {}".format(firmware_type))
 
     PORT = sys.argv[2]
@@ -80,7 +84,7 @@ def main():
     flash_firmware(sys.argv[1])
     result["firmware"] = sys.argv[1]
 
-    if firmware_type in ["esp32", "esp32_ethernet", "warp2", "energy_manager"]:
+    if firmware_type in ["esp32", "esp32_ethernet", "warp2", "energy_manager", "energy_manager_v2", "smart_energy_broker"]:
         print('Configuring CP2102N chip')
         port_name = os.path.split(PORT)[-1]
         device_dir = os.path.realpath(os.path.join('/sys/bus/usb-serial/devices', port_name, '..', '..'))

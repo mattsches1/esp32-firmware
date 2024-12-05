@@ -19,6 +19,7 @@
 
 #include "api.h"
 
+#include <esp_task.h>
 #include <LittleFS.h>
 
 #include "event_log_prefix.h"
@@ -28,11 +29,9 @@
 #include "build.h"
 #include "config_migrations.h"
 #include "tools.h"
+#include "tools/memory.h"
 
 extern TF_HAL hal;
-
-extern char _rodata_start;
-extern char _rodata_end;
 
 API::API()
 {
@@ -40,9 +39,11 @@ API::API()
 
 void API::pre_setup()
 {
+    features_prototype = Config::Str("", 0, 32);
+
     features = Config::Array(
         {},
-        new Config{Config::Str("", 0, 32)},
+        &features_prototype,
         0, 20, Config::type_id<Config::ConfString>()
     );
 
@@ -138,7 +139,7 @@ void API::setup()
 
             reg.config->clear_updated(sent);
         }
-    }, 250, 250);
+    }, 250_ms, 250_ms);
 
     initialized = true;
 }
@@ -178,8 +179,7 @@ void API::addCommand(const char * const path, ConfigRoot *config, std::initializ
     {
         int i = 0;
         for(const char *k : keys_to_censor_in_debug_report){
-            bool key_in_flash = (k >= &_rodata_start && k <= &_rodata_end);
-            if (!key_in_flash)
+            if (!string_is_in_rodata(k))
                 esp_system_abort("Key to censor not in flash! Please pass a string literal!");
 
             ktc[i] = k;
@@ -191,9 +191,9 @@ void API::addCommand(const char * const path, ConfigRoot *config, std::initializ
         path,
         ktc,
         config,
-        std::forward<std::function<void(String &)>>(callback),
-        (uint8_t)path_len,
-        (uint8_t)ktc_size,
+        std::move(callback),
+        path_len,
+        ktc_size,
         is_action,
     });
 
@@ -211,10 +211,10 @@ void API::addCommand(const String &path, ConfigRoot *config, std::initializer_li
 
 void API::addCommand(const String &path, ConfigRoot *config, std::initializer_list<const char *> keys_to_censor_in_debug_report, std::function<void(String &)> &&callback, bool is_action)
 {
-    this->addCommand(strdup(path.c_str()), config, keys_to_censor_in_debug_report, std::forward<std::function<void(String &)>>(callback), is_action);
+    this->addCommand(strdup(path.c_str()), config, keys_to_censor_in_debug_report, std::move(callback), is_action);
 }
 
-void API::addState(const char * const path, ConfigRoot *config, std::initializer_list<const char *> keys_to_censor, bool low_latency)
+void API::addState(const char * const path, ConfigRoot *config, std::initializer_list<const char *> keys_to_censor, std::initializer_list<const char *> keys_to_censor_in_debug_report, bool low_latency)
 {
     size_t path_len = strlen(path);
 
@@ -229,6 +229,12 @@ void API::addState(const char * const path, ConfigRoot *config, std::initializer
         return;
     }
 
+    size_t ktc_debug_size = keys_to_censor_in_debug_report.size() + ktc_size;
+    if (ktc_debug_size > std::numeric_limits<decltype(StateRegistration::keys_to_censor_in_debug_report_len)>::max()) {
+        logger.printfln("State %s: keys_to_censor_in_debug_report (includes keys_to_censor!) too long!", path);
+        return;
+    }
+
     if (already_registered(path, path_len, "state"))
         return;
 
@@ -236,8 +242,7 @@ void API::addState(const char * const path, ConfigRoot *config, std::initializer
     {
         int i = 0;
         for(const char *k : keys_to_censor){
-            bool key_in_flash = (k >= &_rodata_start && k <= &_rodata_end);
-            if (!key_in_flash)
+            if (!string_is_in_rodata(k))
                 esp_system_abort("Key to censor not in flash! Please pass a string literal!");
 
             ktc[i] = k;
@@ -245,12 +250,33 @@ void API::addState(const char * const path, ConfigRoot *config, std::initializer
         }
     }
 
+    auto ktc_debug = ktc_debug_size == 0 ? nullptr : new const char *[ktc_debug_size];
+    {
+        int i = 0;
+        for(const char *k : keys_to_censor){
+            if (!string_is_in_rodata(k))
+                esp_system_abort("Key to censor not in flash! Please pass a string literal!");
+
+            ktc_debug[i] = k;
+            ++i;
+        }
+        for(const char *k : keys_to_censor_in_debug_report){
+            if (!string_is_in_rodata(k))
+                esp_system_abort("Key to censor not in flash! Please pass a string literal!");
+
+            ktc_debug[i] = k;
+            ++i;
+        }
+    }
+
     states.push_back({
         path,
         ktc,
+        ktc_debug,
         config,
-        (uint8_t)path_len,
-        (uint8_t)ktc_size,
+        path_len,
+        ktc_size,
+        ktc_debug_size,
         low_latency
     });
 
@@ -261,9 +287,9 @@ void API::addState(const char * const path, ConfigRoot *config, std::initializer
     }
 }
 
-void API::addState(const String &path, ConfigRoot *config, std::initializer_list<const char *> keys_to_censor, bool low_latency)
+void API::addState(const String &path, ConfigRoot *config, std::initializer_list<const char *> keys_to_censor, std::initializer_list<const char *> keys_to_censor_in_debug_report, bool low_latency)
 {
-    this->addState(strdup(path.c_str()), config, keys_to_censor, low_latency);
+    this->addState(strdup(path.c_str()), config, keys_to_censor, keys_to_censor_in_debug_report, low_latency);
 }
 
 bool API::addPersistentConfig(const String &path, ConfigRoot *config, std::initializer_list<const char *> keys_to_censor)
@@ -298,12 +324,12 @@ bool API::addPersistentConfig(const String &path, ConfigRoot *config, std::initi
 
     addState(path, config, keys_to_censor);
 
-    addCommand(path + "_update", config, keys_to_censor, [path, config, conf_modified]() {
+    addCommand(path + "_update", config, keys_to_censor, [path, config, conf_modified](String &/*errmsg*/) {
         API::writeConfig(path, config);
         conf_modified->get("modified")->updateUint(3);
     }, false);
 
-    addCommand(path + "_reset", Config::Null(), {}, [path, conf_modified]() {
+    addCommand(path + "_reset", Config::Null(), {}, [path, conf_modified](String &/*errmsg*/) {
         API::removeConfig(path);
         conf_modified->get("modified")->updateUint(1);
     }, true);
@@ -317,13 +343,21 @@ void API::callResponse(ResponseRegistration &reg, char *payload, size_t len, ICh
         return;
     }
 
-    if (!(len == 0 && reg.config->is_null())) {
+    if (len != 0 || !reg.config->is_null()) {
         String message = reg.config->update_from_cstr(payload, len);
+
         if (!message.isEmpty()) {
+            OwnershipGuard ownership_guard(response_ownership, response_owner_id);
+
+            if (!ownership_guard.have_ownership()) {
+                return;
+            }
+
             response->begin(false);
             response->write(message.c_str(), message.length());
             response->flush();
             response->end("");
+
             return;
         }
     }
@@ -353,8 +387,7 @@ void API::addResponse(const char * const path, ConfigRoot *config, std::initiali
     {
         int i = 0;
         for(const char *k : keys_to_censor_in_debug_report){
-            bool key_in_flash = (k >= &_rodata_start && k <= &_rodata_end);
-            if (!key_in_flash)
+            if (!string_is_in_rodata(k))
                 esp_system_abort("Key to censor not in flash! Please pass a string literal!");
 
             ktc[i] = k;
@@ -366,7 +399,7 @@ void API::addResponse(const char * const path, ConfigRoot *config, std::initiali
         path,
         ktc,
         config,
-        std::forward<std::function<void(IChunkedResponse *, Ownership *, uint32_t)>>(callback),
+        std::move(callback),
         (uint8_t)path_len,
         (uint8_t)ktc_size
     });
@@ -379,7 +412,7 @@ void API::addResponse(const char * const path, ConfigRoot *config, std::initiali
 
 bool API::hasFeature(const char *name)
 {
-    for (int i = 0; i < features.count(); ++i)
+    for (size_t i = 0; i < features.count(); ++i)
         if (features.get(i)->asString() == name)
             return true;
     return false;
@@ -426,10 +459,10 @@ void API::removeAllConfig()
 }
 
 /*
-void API::addTemporaryConfig(String path, Config *config, std::initializer_list<const char *> keys_to_censor, std::function<void(void)> &&callback)
+void API::addTemporaryConfig(String path, Config *config, std::initializer_list<const char *> keys_to_censor, std::function<void(String &)> &&callback)
 {
     addState(path, config, keys_to_censor);
-    addCommand(path + "_update", config, std::forward<std::function<void(void)>>(callback));
+    addCommand(path + "_update", config, std::move(callback));
 }
 */
 
@@ -674,7 +707,7 @@ void API::register_urls()
             result += ",\n \"";
             result += reg.path;
             result += "\": ";
-            result += reg.config->to_string_except(reg.keys_to_censor, reg.keys_to_censor_len);
+            result += reg.config->to_string_except(reg.keys_to_censor_in_debug_report, reg.keys_to_censor_in_debug_report_len);
         }
 
         for (auto &reg : commands) {
@@ -715,7 +748,7 @@ String API::callCommand(CommandRegistration &reg, char *payload, size_t len)
         return "Use ConfUpdate overload of callCommand in main thread!";
     }
 
-    String result = "";
+    String result;
 
     auto await_result = task_scheduler.await(
         [&result, reg, payload, len]() mutable {
@@ -734,22 +767,27 @@ String API::callCommand(CommandRegistration &reg, char *payload, size_t len)
         });
 
     if (await_result == TaskScheduler::AwaitResult::Timeout) {
+        const char *task_name = pcTaskGetName(xTaskGetCurrentTaskHandle());
+        logger.printfln("callCommand timed out. This may affect the stack of task '%s'.", task_name);
+
         return "Failed to execute command: Timeout reached.";
     }
 
     return result;
 }
 
-void API::callCommandNonBlocking(CommandRegistration &reg, char *payload, size_t len, std::function<void(String)> done_cb)
+void API::callCommandNonBlocking(CommandRegistration &reg, char *payload, size_t len, const std::function<void(const String &errmsg)> &done_cb)
 {
     if (running_in_main_task()) {
-        done_cb("callCommandNonBlocking: Use ConfUpdate overload of callCommand in main thread!");
+        String err = "callCommandNonBlocking: Use ConfUpdate overload of callCommand in main thread!";
+        done_cb(err);
         return;
     }
 
     char *cpy = (char *)malloc(len);
     if (cpy == nullptr) {
-        done_cb("callCommandNonBlocking: Failed to allocate payload copy!");
+        String err = "callCommandNonBlocking: Failed to allocate payload copy!";
+        done_cb(err);
         return;
     }
     memcpy(cpy, payload, len);
@@ -776,7 +814,7 @@ void API::callCommandNonBlocking(CommandRegistration &reg, char *payload, size_t
             }
 
             reg.callback(result);
-        }, 0);
+        });
 }
 
 String API::callCommand(const char *path, Config::ConfUpdate payload)
@@ -785,27 +823,64 @@ String API::callCommand(const char *path, Config::ConfUpdate payload)
         return "Use char *, size_t overload of callCommand in non-main thread!";
     }
 
-    for (CommandRegistration &reg : commands) {
-        if (reg.path != path) {
-            continue;
+    CommandRegistration *reg = nullptr;
+
+    // If the called path is in rodata, try a quick address check first.
+    if (string_is_in_rodata(path)) {
+        for (CommandRegistration &chk_reg : commands) {
+            if (chk_reg.path == path) { // Address comparison
+                reg = &chk_reg;
+                break;
+            }
+        }
+    }
+
+    // If the address check didn't find a match, try string comparison instead.
+    if (!reg) {
+        for (CommandRegistration &chk_reg : commands) {
+            if (strcmp(chk_reg.path, path) == 0) {
+                reg = &chk_reg;
+                break;
+            }
         }
 
-        String error = reg.config->update(&payload);
-
-        if (!error.isEmpty()) {
-            return error;
+        if (!reg) {
+            return StringSumHelper("Unknown command: ") + path;
         }
-        reg.callback(error);
+    }
+
+    String error = reg->config->update(&payload);
+
+    if (!error.isEmpty()) {
         return error;
     }
 
-    return String("Unknown command ") + path;
+    reg->callback(error);
+
+    return error;
 }
 
-const Config *API::getState(const String &path, bool log_if_not_found)
+const Config *API::getState(const char *path, bool log_if_not_found, size_t path_len)
 {
-    for (auto &reg : states) {
-        if (path.length() != reg.path_len || path != reg.path) {
+    if (!path) {
+        return nullptr;
+    }
+
+    // If the requested path is in rodata, try a quick address check first.
+    if (string_is_in_rodata(path)) {
+        for (const auto &reg : states) {
+            if (path == reg.path) { // Address check
+                return reg.config;
+            }
+        }
+    }
+
+    if (!path_len) {
+        path_len = strlen(path);
+    }
+
+    for (const auto &reg : states) {
+        if (path_len != reg.path_len || strcmp(path, reg.path) != 0) {
             continue;
         }
 
@@ -813,14 +888,19 @@ const Config *API::getState(const String &path, bool log_if_not_found)
     }
 
     if (log_if_not_found) {
-        logger.printfln("State %s not found. Known states are:", path.c_str());
+        logger.printfln("State %s not found. Known states are:", path);
 
-        for (auto &reg : states) {
-            logger.printfln_plain("    %s,", reg.path);
+        for (const auto &reg : states) {
+            logger.printfln_continue("%s,", reg.path);
         }
     }
 
     return nullptr;
+}
+
+const Config *API::getState(const String &path, bool log_if_not_found)
+{
+    return getState(path.c_str(), log_if_not_found, path.length());
 }
 
 void API::addFeature(const char *name)

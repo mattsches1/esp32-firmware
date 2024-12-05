@@ -25,15 +25,13 @@
 #include "module_dependencies.h"
 #include "build.h"
 
+#if !BUILD_IS_SIGNED()
 #define SOLAR_FORECAST_USE_TEST_DATA
-
-extern "C" esp_err_t esp_crt_bundle_attach(void *conf);
+#endif
 
 #define CHECK_FOR_SF_TIMEOUT 15000
 #define CHECK_INTERVAL 2*60*60*1000
 #define CHECK_DELAY_MIN 2500
-
-extern SolarForecast dap;
 
 enum Resolution {
     RESOLUTION_15MIN,
@@ -74,7 +72,7 @@ void SolarForecast::pre_setup()
     for (SolarForecastPlane &plane : planes) {
         plane.config = ConfigRoot{Config::Object({
             {"active", Config::Bool(false)},
-            {"name", Config::Str("#" + index, 0, 16)},
+            {"name", Config::Str(String("#") + index, 0, 16)},
             {"latitude", Config::Int(0, -900000, 900000)},    // in 1/10000 degrees
             {"longitude", Config::Int(0, -1800000, 1800000)}, // in 1/10000 degrees
             {"declination", Config::Uint(0, 0, 90)},          // in degrees
@@ -104,7 +102,7 @@ void SolarForecast::pre_setup()
         plane.forecast = Config::Object({
             {"first_date", Config::Uint32(0)}, // unix timestamp in minutes
             {"resolution", Config::Uint(RESOLUTION_60MIN, RESOLUTION_15MIN, RESOLUTION_60MIN)}, // currently only 60 minutes supported
-            {"forecast",   Config::Array({}, new Config{Config::Uint32(0)}, 0, 49, Config::type_id<Config::ConfInt>())} // in watt hours, 48 hours + 1 for switch to DST
+            {"forecast",   Config::Array({}, Config::get_prototype_uint32_0(), 0, 49, Config::type_id<Config::ConfUint>())} // in watt hours, 48 hours + 1 for switch to DST
         });
 
         plane.index = index++;
@@ -137,7 +135,7 @@ void SolarForecast::register_urls()
     task_scheduler.scheduleWhenClockSynced([this]() {
         this->task_id = task_scheduler.scheduleWithFixedDelay([this]() {
             this->update();
-        }, 100, CHECK_INTERVAL);
+        }, 100_ms, millis_t{CHECK_INTERVAL});
     });
 }
 
@@ -153,22 +151,22 @@ void SolarForecast::next_update() {
                 first_delay_ms = CHECK_DELAY_MIN;
                 break;
             } else {
-                uint32_t current_time = timestamp_minutes();
+                uint32_t current_time = rtc.timestamp_minutes();
                 if(next_check < current_time) {
                     first_delay_ms = CHECK_DELAY_MIN;
                     break;
                 }
 
-                first_delay_ms = std::min(first_delay_ms, (int)(next_check - timestamp_minutes()) * 60 * 1000);
+                first_delay_ms = std::min(first_delay_ms, (int)(next_check - rtc.timestamp_minutes()) * 60 * 1000);
             }
         }
     }
 
     if(next_sync_forced != 0) {
-        first_delay_ms = std::max(first_delay_ms, (int)(next_sync_forced - timestamp_minutes()) * 60 * 1000);
+        first_delay_ms = std::max(first_delay_ms, (int)(next_sync_forced - rtc.timestamp_minutes()) * 60 * 1000);
     }
 
-    state.get("next_api_call")->updateUint(timestamp_minutes() + first_delay_ms / 60000);
+    state.get("next_api_call")->updateUint(rtc.timestamp_minutes() + first_delay_ms / 60000);
 
     // Cancel current task
     task_scheduler.cancel(task_id);
@@ -177,76 +175,10 @@ void SolarForecast::next_update() {
     // but with the standard interval afterwards again
     this->task_id = task_scheduler.scheduleWithFixedDelay([this]() {
         this->update();
-    }, first_delay_ms, CHECK_INTERVAL);
+    }, millis_t{first_delay_ms}, millis_t{CHECK_INTERVAL});
 }
 
-esp_err_t SolarForecast::update_event_handler_impl(esp_http_client_event_t *event)
-{
-    if (download_complete) {
-        return ESP_OK;
-    }
-
-    switch (event->event_id) {
-    case HTTP_EVENT_ERROR: {
-        logger.printfln("HTTP error while downloading json");
-        download_state = SF_DOWNLOAD_STATE_ERROR;
-        download_complete = true;
-        break;
-    }
-
-    case HTTP_EVENT_ON_DATA: {
-        int code = esp_http_client_get_status_code(http_client);
-        // Check status code
-        if (code != 200) {
-            logger.printfln("HTTP error while downloading json: %d", code);
-            if(code == 429) { // 429 = rate limit reached
-                logger.printfln("Solar Forecast rate limit reached, next solar forecast API call will be in 2 hours");
-                next_sync_forced = timestamp_minutes() + 120;
-                state.get("rate_remaining")->updateInt(0);
-            } else {
-                // Wait 30 minutes after unknown error
-                logger.printfln("Next solar forecast API call will be in 30 minutes");
-                next_sync_forced = timestamp_minutes() + 30;
-            }
-            download_state = SF_DOWNLOAD_STATE_ERROR;
-            download_complete = true;
-            break;
-        }
-
-        // Check length
-        if((event->data_len + json_buffer_position) > (SOLAR_FORECAST_MAX_JSON_LENGTH - 1)) {
-            logger.printfln("JSON buffer too small");
-            logger.printfln("Next solar forecast API call will be in 30 minutes");
-            next_sync_forced = timestamp_minutes() + 30;
-            download_state = SF_DOWNLOAD_STATE_ERROR;
-            download_complete = true;
-            break;
-        }
-
-        // Copy data to temporary buffer
-        memcpy(json_buffer + json_buffer_position, event->data, event->data_len);
-        json_buffer_position += event->data_len;
-        break;
-    }
-
-    case HTTP_EVENT_ON_FINISH:
-        json_buffer[json_buffer_position] = '\0';
-        download_complete = true;
-        break;
-
-    default:
-        break;
-    }
-
-    return ESP_OK;
-}
-
-static esp_err_t update_event_handler(esp_http_client_event_t *event)
-{
-    return static_cast<SolarForecast *>(event->user_data)->update_event_handler_impl(event);
-}
-
-void SolarForecast::deserialize_data()
+void SolarForecast::handle_new_data()
 {
     // Deserialize json received from API
     DynamicJsonDocument json_doc{SOLAR_FORECAST_MAX_ARDUINO_JSON_BUFFER_SIZE};
@@ -254,7 +186,7 @@ void SolarForecast::deserialize_data()
     if (error) {
         logger.printfln("Error during JSON deserialization: %s", error.c_str());
         logger.printfln("Next solar forecast API call will be in 30 minutes");
-        next_sync_forced = timestamp_minutes() + 30;
+        next_sync_forced = rtc.timestamp_minutes() + 30;
         download_state = SF_DOWNLOAD_STATE_ERROR;
     } else {
         JsonObject js_message = json_doc["message"];
@@ -264,12 +196,12 @@ void SolarForecast::deserialize_data()
             logger.printfln("Solar Forecast server returned error code %ld (%s)", code, text.c_str());
             if(code == 429) { // 429 = rate limit reached
                 logger.printfln("Solar Forecast rate limit reached, next solar forecast API call will be in 2 hours");
-                next_sync_forced = timestamp_minutes() + 120;
+                next_sync_forced = rtc.timestamp_minutes() + 120;
                 state.get("rate_remaining")->updateInt(0);
             } else {
                 // Wait 30 minutes after unknown error
                 logger.printfln("Next solar forecast API call will be in 30 minutes");
-                next_sync_forced = timestamp_minutes() + 30;
+                next_sync_forced = rtc.timestamp_minutes() + 30;
             }
             return;
         } else {
@@ -286,7 +218,7 @@ void SolarForecast::deserialize_data()
             state.get("rate_remaining")->updateInt(remaining);
             if (remaining == 0) {
                 logger.printfln("Solar Forecast rate limit reached, next solar forecast API call will be in 2 hours");
-                next_sync_forced = timestamp_minutes() + 120;
+                next_sync_forced = rtc.timestamp_minutes() + 120;
             } else {
                 next_sync_forced = 0;
             }
@@ -299,7 +231,7 @@ void SolarForecast::deserialize_data()
 
             plane_current->forecast.get("forecast")->removeAll();
             while(plane_current->forecast.get("forecast")->count() < 48) {
-                plane_current->forecast.get("forecast")->add()->updateUint(0);
+                plane_current->forecast.get("forecast")->add();
             }
             for (JsonPair pair : js_wh_period) {
                 String key(pair.key().c_str());
@@ -335,7 +267,7 @@ void SolarForecast::deserialize_data()
                 plane_current->forecast.get("forecast")->get(index)->updateUint(value + old_value);
             }
 
-            const uint32_t current_minutes = timestamp_minutes();
+            const uint32_t current_minutes = rtc.timestamp_minutes();
             plane_current->state.get("last_sync")->updateUint(current_minutes);
             plane_current->state.get("last_check")->updateUint(current_minutes);
 
@@ -347,19 +279,46 @@ void SolarForecast::deserialize_data()
     }
 }
 
+void SolarForecast::handle_cleanup()
+{
+    if (json_buffer != nullptr) {
+        heap_caps_free(json_buffer);
+    }
+    json_buffer = nullptr;
+    json_buffer_position = 0;
+}
+
+void SolarForecast::retry_update(millis_t delay)
+{
+    // Cancel current task
+    task_scheduler.cancel(task_id);
+
+    // And schedule a new one that will run after the given delay,
+    // but with the standard interval afterwards again
+    this->task_id = task_scheduler.scheduleWithFixedDelay([this]() {
+        this->update();
+    }, delay, millis_t{CHECK_INTERVAL});
+}
+
 void SolarForecast::update()
 {
-    if (http_client != nullptr) {
+    if (config.get("enable")->asBool() == false) {
         return;
     }
 
-    if (config.get("enable")->asBool() == false) {
+    if (!network.is_connected()) {
+        retry_update(1_s);
+        return;
+    }
+
+    if (download_state == SF_DOWNLOAD_STATE_PENDING) {
         return;
     }
 
     // Only update if NTP is available
     struct timeval tv_now;
-    if (!clock_synced(&tv_now)) {
+    if (!rtc.clock_synced(&tv_now)) {
+        retry_update(1_s);
         return;
     }
 
@@ -368,7 +327,7 @@ void SolarForecast::update()
     for (SolarForecastPlane &plane : planes) {
         if (plane.config.get("active")->asBool()) {
             uint32_t next_check = plane.state.get("next_check")->asUint();
-            if((next_check < timestamp_minutes() || next_check == 0)) {
+            if((next_check < rtc.timestamp_minutes() || next_check == 0)) {
                 plane_current = &plane;
                 break;
             }
@@ -380,9 +339,6 @@ void SolarForecast::update()
         return;
     }
 
-    logger.printfln("Solar Forecast update started for plane %d", plane_current->index);
-
-
 #ifdef SOLAR_FORECAST_USE_TEST_DATA
     if(json_buffer == nullptr) {
         json_buffer = (char *)heap_caps_calloc_prefer(SOLAR_FORECAST_MAX_JSON_LENGTH, sizeof(char), 2, MALLOC_CAP_SPIRAM, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
@@ -392,75 +348,25 @@ void SolarForecast::update()
     }
 
     // Copy test data to temporary buffer
-    logger.printfln("JSON copy test");
+    logger.printfln("Using test data");
     memcpy(json_buffer + json_buffer_position, test_data.c_str(), test_data.length());
     json_buffer_position += test_data.length();
     json_buffer[json_buffer_position] = '\0';
-    download_complete = true;
 
-    deserialize_data();
-
+    handle_new_data();
+    handle_cleanup();
     next_update();
 
     return;
 #endif
 
-    download_state = SF_DOWNLOAD_STATE_PENDING;
-    plane_current->state.get("last_check")->updateUint(timestamp_minutes());
+    plane_current->state.get("last_check")->updateUint(rtc.timestamp_minutes());
 
     if (config.get("api_url")->asString().length() == 0) {
-        logger.printfln("No day ahead price API server configured");
+        logger.printfln("No solar forecast API server configured");
         download_state = SF_DOWNLOAD_STATE_ERROR;
         return;
     }
-
-    esp_http_client_config_t http_config = {};
-
-    http_config.event_handler = update_event_handler;
-    http_config.user_data = this;
-    http_config.is_async = true;
-    http_config.timeout_ms = 500;
-
-    const int cert_id = config.get("cert_id")->asInt();
-
-    if (cert_id < 0) {
-        http_config.crt_bundle_attach = esp_crt_bundle_attach;
-    }
-    else {
-#if MODULE_CERTS_AVAILABLE()
-        size_t cert_len = 0;
-
-        cert = certs.get_cert(static_cast<uint8_t>(cert_id), &cert_len);
-
-        if (cert == nullptr) {
-            logger.printfln("Certificate with ID %d is not available", cert_id);
-            download_state = SF_DOWNLOAD_STATE_ERROR;
-            return;
-        }
-
-        http_config.cert_pem = (const char *)cert.get();
-#else
-        // defense in depth: it should not be possible to arrive here because in case
-        // that the certs module is not available the cert_id should always be -1
-        logger.printfln("Can't use custom certificate: certs module is not built into this firmware!");
-        return;
-#endif
-    }
-
-    {
-        // esp_http_client_init copies the url.
-        String api_url_with_path = get_api_url_with_path(*plane_current);
-        http_config.url = api_url_with_path.c_str();
-        http_client = esp_http_client_init(&http_config);
-    }
-
-    if (http_client == nullptr) {
-        logger.printfln("Error while creating HTTP client");
-        cert.reset();
-        return;
-    }
-
-    last_update_begin = millis();
 
     if(json_buffer == nullptr) {
         json_buffer = (char *)heap_caps_calloc_prefer(SOLAR_FORECAST_MAX_JSON_LENGTH, sizeof(char), 2, MALLOC_CAP_SPIRAM, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
@@ -469,65 +375,129 @@ void SolarForecast::update()
         json_buffer_position = 0;
     }
 
-    // Start async JSON download and check every 100ms
-    download_complete = false;
-    task_scheduler.scheduleWithFixedDelay([this]() {
-        // Check for global timeout
-        if (deadline_elapsed(last_update_begin + CHECK_FOR_SF_TIMEOUT)) {
-            logger.printfln("API server %s did not respond in time", config.get("api_url")->asString().c_str());
-            logger.printfln("Next solar forecast API call will be in 30 minutes");
-            next_sync_forced = timestamp_minutes() + 30;
+    download_state = SF_DOWNLOAD_STATE_PENDING;
+    https_client.download_async(get_api_url_with_path(*plane_current).c_str(), config.get("cert_id")->asInt(), [this](AsyncHTTPSClientEvent *event) {
+        switch (event->type) {
+        case AsyncHTTPSClientEventType::Error:
+            switch (event->error) {
+            case AsyncHTTPSClientError::NoHTTPSURL:
+                logger.printfln("No HTTPS update URL");
+                break;
+
+            case AsyncHTTPSClientError::Busy:
+                logger.printfln("HTTP client is busy");
+                break;
+
+            case AsyncHTTPSClientError::NoCert:
+                logger.printfln("Certificate with ID %d is not available", config.get("cert_id")->asInt());
+                break;
+
+            case AsyncHTTPSClientError::NoResponse:
+                logger.printfln("Server %s did not respond", get_api_url_with_path(*plane_current).c_str());
+                break;
+
+            case AsyncHTTPSClientError::ShortRead:
+                logger.printfln("Solar forecast download ended prematurely");
+                break;
+
+            case AsyncHTTPSClientError::HTTPError:
+                logger.printfln("HTTP error while downloading solar forecast");
+                break;
+
+            case AsyncHTTPSClientError::HTTPClientInitFailed:
+                logger.printfln("Error while creating HTTP client");
+                break;
+
+            case AsyncHTTPSClientError::HTTPClientError:
+                logger.printfln("Error while downloading solar forecast: %s", esp_err_to_name(event->error_http_client));
+                break;
+
+            case AsyncHTTPSClientError::HTTPStatusError:
+                logger.printfln("HTTP error while downloading solar forecast: %d", event->error_http_status);
+                break;
+
+            // use default to prevent warnings since we dont use a body, cookies or headers here
+            default:
+                logger.printfln("Uncovered error, this should never happen!");
+                break;
+            }
+
+            if (event->error_http_status == 429) {
+                // Wait for 120 minutes when rate limit is reached
+                logger.printfln("Solar Forecast rate limit reached, next solar forecast API call will be in 2 hours");
+                next_sync_forced = rtc.timestamp_minutes() + 120;
+                state.get("rate_remaining")->updateInt(0);
+            } else {
+                // Wait 30 minutes after other errors
+                logger.printfln("Next solar forecast API call will be in 30 minutes");
+                next_sync_forced = rtc.timestamp_minutes() + 30;
+            }
+
             download_state = SF_DOWNLOAD_STATE_ERROR;
-            download_complete = true;
-        }
+            handle_cleanup();
+            next_update();
 
-        if (!download_complete) {
-            // If download is not complete start a new download
-            esp_err_t err = esp_http_client_perform(http_client);
+            break;
 
-            if (err == ESP_ERR_HTTP_EAGAIN) {
-                // Nothing to do, just wait for more data
-            } else if (err != ESP_OK) {
-                logger.printfln("Error while downloading json: %s", esp_err_to_name(err));
-                if(err == 429) { // 429 = rate limit reached
-                    logger.printfln("Solar Forecast rate limit reached, next solar forecast API call will be in 2 hours");
-                    next_sync_forced = timestamp_minutes() + 120;
-                    state.get("rate_remaining")->updateInt(0);
-                } else {
-                    // Wait 30 minutes after unknown error
-                    logger.printfln("Next solar forecast API call will be in 30 minutes");
-                    next_sync_forced = timestamp_minutes() + 30;
-                }
+        case AsyncHTTPSClientEventType::Data:
+            if(json_buffer == nullptr) {
+                logger.printfln("JSON Buffer was not allocated correctly");
+                next_sync_forced = rtc.timestamp_minutes() + 30;
+
                 download_state = SF_DOWNLOAD_STATE_ERROR;
-                download_complete = true;
-            } else if (download_state == SF_DOWNLOAD_STATE_PENDING) {
-                // If we reach here the download finished and no error occurred during the download
+                handle_cleanup();
+                next_update();
+                break;
+            }
+
+            if(json_buffer_position + event->data_chunk_len >= SOLAR_FORECAST_MAX_JSON_LENGTH) {
+                logger.printfln("JSON Buffer overflow");
+                next_sync_forced = rtc.timestamp_minutes() + 30;
+
+                download_state = SF_DOWNLOAD_STATE_ERROR;
+                handle_cleanup();
+                next_update();
+                break;
+            }
+
+            memcpy(json_buffer + json_buffer_position, event->data_chunk, event->data_chunk_len);
+            json_buffer_position += event->data_chunk_len;
+            break;
+
+        case AsyncHTTPSClientEventType::Aborted:
+            if (download_state == SF_DOWNLOAD_STATE_PENDING) {
+                logger.printfln("Update check aborted, next solar forecast API call will be in 30 minutes");
+                next_sync_forced = rtc.timestamp_minutes() + 30;
+                download_state = SF_DOWNLOAD_STATE_ABORTED;
+            }
+            handle_cleanup();
+            next_update();
+
+            break;
+
+        case AsyncHTTPSClientEventType::Finished:
+            if(json_buffer == nullptr) {
+                logger.printfln("JSON Buffer was not allocated correctly");
+                next_sync_forced = rtc.timestamp_minutes() + 30;
+
+                download_state = SF_DOWNLOAD_STATE_ERROR;
+                break;
+            } else {
+                json_buffer[json_buffer_position] = '\0';
+                handle_new_data();
+            }
+
+            handle_cleanup();
+
+            if (download_state == SF_DOWNLOAD_STATE_PENDING) {
                 download_state = SF_DOWNLOAD_STATE_OK;
-                download_complete = true;
             }
-        }
-
-        if (download_complete) {
-            if(download_state == SF_DOWNLOAD_STATE_OK) {
-                // Deserialize json received from API
-                deserialize_data();
-            }
-
-            // Cleanup
-            esp_http_client_close(http_client);
-            esp_http_client_cleanup(http_client);
-            http_client = nullptr;
-            cert.reset();
-            heap_caps_free(json_buffer);
-            json_buffer = nullptr;
-            json_buffer_position = 0;
-
-            task_scheduler.cancel(task_scheduler.currentTaskId());
 
             next_update();
-        }
 
-    }, 100, 100);
+            break;
+        }
+    });
 }
 
 // Create API path including user configuration
@@ -565,9 +535,13 @@ bool SolarForecast::forecast_time_between(const uint32_t first_date, const uint3
     return (forecast_time >= start) && (forecast_time <= end);
 }
 
-DataReturn<uint32_t> SolarForecast::get_kwh_today()
+Option<uint32_t> SolarForecast::get_wh_today()
 {
-    const uint32_t start = get_localtime_today_midnight_in_utc() / 60;
+    time_t midnight;
+    if (!get_localtime_today_midnight_in_utc().try_unwrap(&midnight))
+        return {};
+
+    const uint32_t start = midnight / 60;
     const uint32_t end   = start + 60*24 - 1;
 
     uint32_t wh    = 0;
@@ -575,7 +549,7 @@ DataReturn<uint32_t> SolarForecast::get_kwh_today()
     for (const SolarForecastPlane &plane : planes) {
         if (plane.config.get("active")->asBool()) {
             const uint32_t first_date = plane.forecast.get("first_date")->asUint();
-            for (uint8_t index = 0; index < plane.forecast.get("forecast")->count(); index++) {
+            for (size_t index = 0; index < plane.forecast.get("forecast")->count(); index++) {
                 if (forecast_time_between(first_date, index, start, end)) {
                     wh += plane.forecast.get("forecast")->get(index)->asUint();
                     count++;
@@ -586,12 +560,19 @@ DataReturn<uint32_t> SolarForecast::get_kwh_today()
 
     // We assume that we have valid data for the day if
     // there is at least one data point today
-    return {count != 0, wh};
+    if (count != 0)
+        return {};
+
+    return wh;
 }
 
-DataReturn<uint32_t> SolarForecast::get_kwh_tomorrow()
+Option<uint32_t> SolarForecast::get_wh_tomorrow()
 {
-    const uint32_t start = get_localtime_today_midnight_in_utc() / 60 + 60*24;
+    time_t midnight;
+    if (!get_localtime_today_midnight_in_utc().try_unwrap(&midnight))
+        return {};
+
+    const uint32_t start = midnight / 60 + 60*24;
     const uint32_t end   = start + 60*24 - 1;
 
     uint32_t wh    = 0;
@@ -599,7 +580,7 @@ DataReturn<uint32_t> SolarForecast::get_kwh_tomorrow()
     for (const SolarForecastPlane &plane : planes) {
         if (plane.config.get("active")->asBool()) {
             const uint32_t first_date = plane.forecast.get("first_date")->asUint();
-            for (uint8_t index = 0; index < plane.forecast.get("forecast")->count(); index++) {
+            for (size_t index = 0; index < plane.forecast.get("forecast")->count(); index++) {
                 if (forecast_time_between(first_date, index, start, end)) {
                     wh += plane.forecast.get("forecast")->get(index)->asUint();
                     count++;
@@ -610,5 +591,8 @@ DataReturn<uint32_t> SolarForecast::get_kwh_tomorrow()
 
     // We assume that we have valid data for the day if
     // there is at least one data point tomorrow
-    return {count != 0, wh};
+    if (count != 0)
+        return {};
+
+    return wh;
 }

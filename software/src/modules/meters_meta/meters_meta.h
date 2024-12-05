@@ -37,8 +37,7 @@ class MetersMeta final : public IModule, public MeterGenerator
 {
 public:
     // for IModule
-    void pre_setup()       override;
-    void register_events() override;
+    void pre_setup() override;
 
     // for MeterGenerator
     [[gnu::const]] MeterClassID get_class() const override;
@@ -48,9 +47,7 @@ public:
     [[gnu::const]] const Config *get_errors_prototype() override;
 
 private:
-    ConfigRoot config_prototype;
-
-    std::vector<MeterMeta *> *child_meters = nullptr;
+    Config config_prototype;
 };
 
 #if defined(__GNUC__)

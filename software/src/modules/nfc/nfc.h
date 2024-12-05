@@ -41,8 +41,7 @@ class NFC : public DeviceModule<TF_NFC,
                                 tf_nfc_get_bootloader_mode,
                                 tf_nfc_reset,
                                 tf_nfc_destroy,
-                                BUILD_IS_WARP2() | BUILD_IS_WARP3()
-                                >
+                                BUILD_IS_WARP2() | BUILD_IS_WARP3()>
 #if MODULE_AUTOMATION_AVAILABLE()
           , public IAutomationBackend
 #endif
@@ -82,6 +81,8 @@ public:
 #endif
 
 private:
+    Config seen_tags_prototype;
+    Config config_authorized_tags_prototype;
     ConfigRoot config;
     ConfigRoot auth_info;
 
@@ -100,3 +101,5 @@ public:
     tag_info_t *old_tags = nullptr;
     tag_info_t *new_tags = nullptr;
 };
+
+#include "module_available_end.h"

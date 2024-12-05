@@ -42,6 +42,8 @@ public:
     bool has_triggered(const Config *conf, void *data) override;
 #endif
 
+    float get_energy_limit();
+
     ConfigRoot config;
     ConfigRoot config_in_use;
     ConfigRoot state;
@@ -49,9 +51,8 @@ public:
     ConfigRoot override_duration;
     ConfigRoot override_energy;
 
-    uint32_t duration_left;
-    uint32_t energy_left;
-
 private:
     bool was_triggered = false;
 };
+
+#include "module_available_end.h"

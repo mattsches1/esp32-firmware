@@ -90,6 +90,13 @@ public:
 
 private:
     httpd_req_t *req;
+    enum class ChunkedResponseState {
+        NotStarted,
+        Started,
+        Failed,
+        Ended
+    };
+    ChunkedResponseState chunkedResponseState = ChunkedResponseState::NotStarted;
 };
 
 using wshCallback = std::function<WebServerRequestReturnProtect(WebServerRequest request)>;
@@ -103,9 +110,9 @@ struct WebServerHandler {
                      wshUploadErrorCallback &&uploadErrorCallback) : //uri(uri),
                                                                      //method(method),
                                                                      callbackInMainThread(callbackInMainThread),
-                                                                     callback(std::forward<wshCallback>(callback)),
-                                                                     uploadCallback(std::forward<wshUploadCallback>(uploadCallback)),
-                                                                     uploadErrorCallback(std::forward<wshUploadErrorCallback>(uploadErrorCallback)) {}
+                                                                     callback(std::move(callback)),
+                                                                     uploadCallback(std::move(uploadCallback)),
+                                                                     uploadErrorCallback(std::move(uploadErrorCallback)) {}
 
     bool callbackInMainThread;
     wshCallback callback;
@@ -135,9 +142,9 @@ public:
     WebServerHandler *on_HTTPThread(const char *uri, httpd_method_t method, wshCallback &&callback, wshUploadCallback &&uploadCallback, wshUploadErrorCallback &&uploadErrorCallback);
     void onNotAuthorized_HTTPThread(wshCallback &&callback);
 
-    void onAuthenticate_HTTPThread(std::function<bool(WebServerRequest)> auth_fn)
+    void onAuthenticate_HTTPThread(std::function<bool(WebServerRequest)> &&auth_fn)
     {
-        this->auth_fn = auth_fn;
+        this->auth_fn = std::move(auth_fn);
     }
 
     httpd_handle_t httpd;

@@ -96,7 +96,7 @@ export class FirmwareUpdate extends Component<{}, FirmwareUpdateState> {
             await util.upload(f.slice(0xd000 - 0x1000, 0xd000), "check_firmware", () => {})
         }
         catch (error) {
-            let message = null;
+            let message = "";
 
             if (typeof error === "string") {
                 message = error;
@@ -109,10 +109,10 @@ export class FirmwareUpdate extends Component<{}, FirmwareUpdateState> {
                         const modal = util.async_modal_ref.current;
 
                         if (await modal.show({
-                                title: __("firmware_update.content.downgrade_title"),
-                                body: __("firmware_update.content.downgrade_body")(response.firmware_version, response.installed_version),
-                                no_text: __("firmware_update.content.abort_update"),
-                                yes_text: __("firmware_update.content.confirm_downgrade"),
+                                title: () => __("firmware_update.content.downgrade_title"),
+                                body: () => __("firmware_update.content.downgrade_body")(response.firmware_version, response.installed_version),
+                                no_text: () => __("firmware_update.content.abort_update"),
+                                yes_text: () => __("firmware_update.content.confirm_downgrade"),
                                 no_variant: "secondary",
                                 yes_variant: "danger",
                             })) {
@@ -128,8 +128,8 @@ export class FirmwareUpdate extends Component<{}, FirmwareUpdateState> {
                 }
             }
 
-            if (message != null) {
-                util.add_alert("firmware_update_failed", "danger", __("firmware_update.script.update_fail"), message);
+            if (message != "") {
+                util.add_alert("firmware_update_failed", "danger", () => __("firmware_update.script.update_fail"), () => message);
             }
 
             return false;
@@ -195,7 +195,11 @@ export class FirmwareUpdate extends Component<{}, FirmwareUpdateState> {
                                 return false;
                             }
 
-                            util.pauseWebSockets();
+                            if (util.remoteAccessMode) {
+                                util.pauseiFrameSocket();
+                            } else {
+                                util.pauseWebSockets();
+                            }
 
                             if (this.state.install_state == InstallState.InProgress) {
                                 this.setState({install_state: InstallState.Aborted, install_progress: 0});
@@ -205,7 +209,7 @@ export class FirmwareUpdate extends Component<{}, FirmwareUpdateState> {
                         }}
                         onUploadSuccess={() => util.postReboot(__("firmware_update.script.update_success"), __("util.reboot_text"))}
                         onUploadError={async (error) => {
-                            let message = null;
+                            let message = "";
 
                             if (typeof error === "string") {
                                 message = error;
@@ -218,15 +222,15 @@ export class FirmwareUpdate extends Component<{}, FirmwareUpdateState> {
                                         const modal = util.async_modal_ref.current;
 
                                         if (await modal.show({
-                                                title: __("firmware_update.content.signature_verify_failed_title"),
-                                                body: __("firmware_update.content.signature_verify_failed_body")(response.actual_publisher, response.expected_publisher),
-                                                no_text: __("firmware_update.content.abort_update"),
-                                                yes_text: __("firmware_update.content.confirm_override"),
+                                                title: () => __("firmware_update.content.signature_verify_failed_title"),
+                                                body: () => __("firmware_update.content.signature_verify_failed_body")(response.actual_publisher, response.expected_publisher),
+                                                no_text: () => __("firmware_update.content.abort_update"),
+                                                yes_text: () => __("firmware_update.content.confirm_override"),
                                                 no_variant: "secondary",
                                                 yes_variant: "danger",
                                             })) {
                                             try {
-                                                await API.call("firmware_update/override_signature", {cookie: response.cookie}, __("firmware_update.script.update_fail"));
+                                                await API.call("firmware_update/override_signature", {cookie: response.cookie}, () => __("firmware_update.script.update_fail"));
                                             }
                                             catch {
                                                 return;
@@ -244,8 +248,8 @@ export class FirmwareUpdate extends Component<{}, FirmwareUpdateState> {
                                 }
                             }
 
-                            if (message != null) {
-                                util.add_alert("firmware_update_failed", "danger", __("firmware_update.script.update_fail"), message);
+                            if (message != "") {
+                                util.add_alert("firmware_update_failed", "danger", () => __("firmware_update.script.update_fail"), () => message);
                             }
 
                             util.resumeWebSockets();
@@ -259,7 +263,7 @@ export class FirmwareUpdate extends Component<{}, FirmwareUpdateState> {
                         <FormRow label={__("firmware_update.content.check_for_update")}>
                             <Button variant="primary"
                                     className="form-control"
-                                    onClick={() => this.setState({check_state: CheckState.InProgress, install_state: InstallState.Idle, install_progress: 0}, () => API.call("firmware_update/check_for_update", null, ""))}
+                                    onClick={() => this.setState({check_state: CheckState.InProgress, install_state: InstallState.Idle, install_progress: 0}, () => API.call("firmware_update/check_for_update", null, () => ""))}
                                     disabled={this.state.check_state == CheckState.InProgress || this.state.install_state == InstallState.InProgress || this.state.manual_install_in_progress}>
                                 {__("firmware_update.content.check_for_update")}
                                 <span class="ml-2 spinner-border spinner-border-sm" role="status" style="vertical-align: middle;" hidden={this.state.check_state != CheckState.InProgress}></span>
@@ -285,7 +289,7 @@ export class FirmwareUpdate extends Component<{}, FirmwareUpdateState> {
                                             ? <div class="input-group-append">
                                                 <Button variant="primary"
                                                         type="button"
-                                                        onClick={() => this.setState({install_state: InstallState.InProgress, install_progress: 0}, () => API.call("firmware_update/install_firmware", {version: this.state.update_version}, __("firmware_update.script.install_failed")))}
+                                                        onClick={() => this.setState({install_state: InstallState.InProgress, install_progress: 0}, () => API.call("firmware_update/install_firmware", {version: this.state.update_version}, () => __("firmware_update.script.install_failed")))}
                                                         disabled={this.state.install_state == InstallState.InProgress || this.state.manual_install_in_progress}>{__("firmware_update.content.install_update")}</Button>
                                             </div>
                                             : undefined
@@ -299,7 +303,7 @@ export class FirmwareUpdate extends Component<{}, FirmwareUpdateState> {
                             {this.state.install_state == InstallState.InProgress
                                 ? <FormRow label={__("firmware_update.content.install_progress")}>
                                       <Progress class="mb-1" progress={this.state.install_progress / 100} />
-                                      <label class="mb-0">{__("firmware_update.content.installing_update")}</label>
+                                      <div class="mb-0">{__("firmware_update.content.installing_update")}</div>
                                   </FormRow>
                                 : <FormRow label={__("firmware_update.content.install_complete")}>
                                       <InputText value={translate_unchecked("firmware_update.script.install_state_" + this.state.install_state)} />

@@ -52,8 +52,8 @@ interface OcppState {
 export class Ocpp extends ConfigComponent<'ocpp/config', {status_ref?: RefObject<OcppStatus>}, OcppState> {
     constructor() {
         super('ocpp/config',
-              __("ocpp.script.save_failed"),
-              __("ocpp.script.reboot_content_changed"));
+              () => __("ocpp.script.save_failed"),
+              () => __("ocpp.script.reboot_content_changed"));
 
         util.addApiEventListener('ocpp/state', () => {
             this.setState({state: API.get('ocpp/state')});
@@ -65,12 +65,12 @@ export class Ocpp extends ConfigComponent<'ocpp/config', {status_ref?: RefObject
     }
 
     override async sendSave(t: "ocpp/config", cfg: OcppConfig) {
-        await API.save_unchecked('evse/ocpp_enabled', {enabled: this.state.enable}, __("evse.script.save_failed"));
+        await API.save_unchecked('evse/ocpp_enabled', {enabled: this.state.enable}, () => __("evse.script.save_failed"));
         await super.sendSave(t, cfg);
     }
 
     override async sendReset(t: "ocpp/config") {
-        await API.save_unchecked('evse/ocpp_enabled', {enabled: false}, __("evse.script.save_failed"));
+        await API.save_unchecked('evse/ocpp_enabled', {enabled: false}, () => __("evse.script.save_failed"));
         await super.sendReset(t);
     }
 
@@ -140,22 +140,22 @@ export class Ocpp extends ConfigComponent<'ocpp/config', {status_ref?: RefObject
                         <Button variant="danger" className="form-control" onClick={async () =>{
                             const modal = util.async_modal_ref.current;
                             if (!await modal.show({
-                                    title: __("ocpp.content.reset_title"),
-                                    body: __("ocpp.content.reset_title_text"),
-                                    no_text: __("ocpp.content.abort_reset"),
-                                    yes_text: __("ocpp.content.confirm_reset"),
+                                    title: () => __("ocpp.content.reset_title"),
+                                    body: () => __("ocpp.content.reset_title_text"),
+                                    no_text: () => __("ocpp.content.abort_reset"),
+                                    yes_text: () => __("ocpp.content.confirm_reset"),
                                     no_variant: "secondary",
                                     yes_variant: "danger"
                                 }))
                                 return;
 
-                            API.call("ocpp/reset", null, __("ocpp.content.reset_failed"), __("ocpp.script.reboot_content_changed"));
+                            API.call("ocpp/reset", null, () => __("ocpp.content.reset_failed"), () => __("ocpp.script.reboot_content_changed"));
                             }}>
                             {__("ocpp.content.reset")}
                         </Button>
                     </FormRow>
 
-                    <CollapsedSection label={__("ocpp.content.debug")}>
+                    <CollapsedSection>
                         <FormRow label={__("ocpp.content.charge_point_state")}>
                             <InputText value={translate_unchecked(`ocpp.content.charge_point_state_${state.state.charge_point_state}`)} />
                         </FormRow>
@@ -243,7 +243,7 @@ export class Ocpp extends ConfigComponent<'ocpp/config', {status_ref?: RefObject
                         </FormRow>
                     </CollapsedSection>
 
-                    <CollapsedSection label={__("ocpp.content.configuration")}>
+                    <CollapsedSection heading={__("ocpp.content.configuration")}>
                         {(Object.keys(state.configuration) as Array<keyof typeof state.configuration>).map((k, i) => (
                             ocpp_debug ?
                                 <FormRow label={k.replace(/([a-z])([A-Z])/g, "$1\u00AD$2")}>
@@ -252,7 +252,7 @@ export class Ocpp extends ConfigComponent<'ocpp/config', {status_ref?: RefObject
                                             onfocusout={() => API.call("ocpp/change_configuration", {
                                                     key: k,
                                                     value: state.configuration[k]
-                                            }, "lalala")} />
+                                            }, () => "")} />
                                 </FormRow> :
                                 <FormRow label={k.replace(/([a-z])([A-Z])/g, "$1\u00AD$2")}>
                                     <InputText value={state.configuration[k]} />

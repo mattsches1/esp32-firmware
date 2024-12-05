@@ -163,7 +163,7 @@ export class EventLog extends Component<{}, EventLogState> {
 
                 this.set_log(new_log);
             })
-            .catch(e => util.add_alert("event_log_load_failed", "danger", __("event_log.script.load_event_log_error"), e.message))
+            .catch(e => util.add_alert("event_log_load_failed", "danger", () => __("event_log.script.load_event_log_error"), () => e.message))
     }
 
     async download_debug_report() {
@@ -176,6 +176,14 @@ export class EventLog extends Component<{}, EventLogState> {
             debug_log += await util.download("/debug_report").then(blob => blob.text());
             debug_log += "\n\n";
             debug_log += this.state.log;
+
+            let trace_log = (await util.download("/trace_log").then(blob => blob.text())).replace(/\s+$/, "");
+
+            if (trace_log.length > 0) {
+                debug_log += "\n\n___TRACE_LOG_START___\n\n";
+                debug_log += trace_log + "\n";
+            }
+
             try {
                 let blob = await util.download("/coredump/coredump.elf");
                 let base64 = await blobToBase64(blob);
@@ -190,7 +198,7 @@ export class EventLog extends Component<{}, EventLogState> {
 
             util.downloadToFile(debug_log, __("event_log.content.debug_report_file"), "txt", "text/plain", timestamp);
         } catch (e) {
-            util.add_alert("debug_report_load_failed", "danger", __("event_log.script.load_debug_report_error"), e.message)
+            util.add_alert("debug_report_load_failed", "danger", () => __("event_log.script.load_debug_report_error"), () => e.message)
         } finally {
             window.clearTimeout(timeout);
             this.setState({show_spinner: false})

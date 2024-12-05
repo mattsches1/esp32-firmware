@@ -2,6 +2,7 @@
 .vscode
 default_wifi.json*
 build/
+build_latest/
 data/spiffs.json
 data/wifi_sta_config.json
 data/wifi_soft_ap_config.json
@@ -10,6 +11,7 @@ src/**/*.digest
 src/**/*.embedded.h
 src/**/*.embedded.cpp
 src/modules/*/module_available.h
+src/modules/*/module_available_end.h
 src/modules/*/module_dependencies.h
 src/modules/*/module.cpp
 src/modules/*/*.enum.h
@@ -18,8 +20,10 @@ src/modules.cpp
 src/build.h
 src/build.cpp
 src/main_available.h
+src/main_available_end.h
 src/main_dependencies.h
 src/modules/pwa/manifest.json
+src/modules/meters/meter_value_id.py
 web/**/*.digest
 web/node_modules/
 web/build/
@@ -33,6 +37,8 @@ web/src/ts/branding.ts
 web/src/ts/translation.tsx
 web/src/ts/translation.json
 web/src/modules/*/*.enum.ts
+web/src/modules/*/module_available.inc
+web/src_tfpp/
 web/**/*.embedded.ts
 coredump_py_gdb_cmds
 api_info.json

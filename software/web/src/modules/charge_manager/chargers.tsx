@@ -17,6 +17,8 @@
  * Boston, MA 02111-1307, USA.
  */
 
+//#include "module_available.inc"
+
 import * as util from "../../ts/util";
 import * as API from "../../ts/api";
 import { h, Fragment, RefObject } from "preact";
@@ -26,12 +28,12 @@ import { ConfigForm } from "../../ts/components/config_form";
 import { FormRow } from "../../ts/components/form_row";
 import { InputText } from "../../ts/components/input_text";
 import { Collapse, ListGroup, ListGroupItem } from "react-bootstrap";
+import { IndicatorGroup } from "../../ts/components/indicator_group";
 import { InputSelect } from "../../ts/components/input_select";
 import { SubPage } from "../../ts/components/sub_page";
 import { Table } from "../../ts/components/table";
-
 import type { ChargeManagerStatus } from "./main"
-import { InputFloat } from "src/ts/components/input_float";
+import { InputFloat } from "../../ts/components/input_float";
 
 type ChargeManagerConfig = API.getType["charge_manager/config"];
 type ChargerConfig = ChargeManagerConfig["chargers"][0];
@@ -43,15 +45,28 @@ interface ChargersState {
     managementEnabled: boolean
     showExpert: boolean
     scanResult: Readonly<ScanCharger[]>
+//#if MODULE_EM_PHASE_SWITCHER_AVAILABLE
+    emCharger: API.getType['em_phase_switcher/charger_config']
+    emConfig: API.getType['energy_manager/config']
+//#endif
 }
+
+export function get_managed_chargers(): [string, string][] {
+    if (!API.get("charge_manager/config").enable_charge_manager) {
+        return [];
+    }
+
+    return API.get("charge_manager/config").chargers.map((charger, index) => [index.toString(), charger.name])
+}
+
 
 export class ChargeManagerChargers extends ConfigComponent<'charge_manager/config', {status_ref?: RefObject<ChargeManagerStatus>}, ChargersState> {
     intervalID: number = null;
 
     constructor() {
         super('charge_manager/config',
-              __("charge_manager.script.save_failed"),
-              __("charge_manager.script.reboot_content_changed"), {
+              () => __("charge_manager.script.save_failed"),
+              () => __("charge_manager.script.reboot_content_changed"), {
                   addCharger: {host: "", name: "", rot: -1},
                   editCharger: {host: "", name: "", rot: -1},
                   managementEnabled: false,
@@ -70,26 +85,38 @@ export class ChargeManagerChargers extends ConfigComponent<'charge_manager/confi
         util.addApiEventListener('charge_manager/scan_result', () => {
             this.addScanResults(API.get('charge_manager/scan_result') as ScanCharger[]);
         });
+
+//#if MODULE_EM_PHASE_SWITCHER_AVAILABLE
+        util.addApiEventListener('em_phase_switcher/charger_config', (ev) => {
+            this.setState({emCharger: ev.data});
+            this.setState({managementEnabled: ev.data.proxy_mode});
+        });
+
+        util.addApiEventListener('energy_manager/config', (ev) => {
+            this.setState({emConfig: ev.data});
+        });
+//#endif
     }
 
     addScanResults(result: ScanCharger[]) {
         // Copy to remove signals.
-        let newResult: ScanCharger[] = result.filter(c => c).map(c => ({
+        let copy: ScanCharger[] = result.filter(c => c).map(c => ({
             display_name: c.display_name,
             error: c.error,
             hostname: c.hostname,
             ip: c.ip,
+            proxy_of: c.proxy_of,
         }));
 
         for (let oldC of this.state.scanResult) {
-            let i = newResult.findIndex(c => c.hostname == oldC.hostname);
+            let i = copy.findIndex(c => c.hostname == oldC.hostname);
             if (i == -1)
-                newResult.push(oldC);
-            else if (newResult[i].ip == "[no_address]")
-                newResult[i].ip = oldC.ip;
+                copy.push(oldC);
+            else if (copy[i].ip == "[no_address]")
+                copy[i].ip = oldC.ip;
         }
 
-        newResult.sort((a, b) => {
+        copy.sort((a, b) => {
             if (a.error == 0 && b.error != 0)
                 return -1;
             if (a.error != 0 && b.error == 0)
@@ -97,7 +124,25 @@ export class ChargeManagerChargers extends ConfigComponent<'charge_manager/confi
             return a.display_name.localeCompare(b.display_name);
         });
 
-        this.setState({scanResult: newResult});
+        let filtered: ScanCharger[] = [];
+
+        // Don't show devices that are proxied by another device.
+        // Patch the proxy's display name instead.
+        for (let c of copy) {
+            let found = false;
+            for (let p of copy) {
+                if (p.proxy_of == c.hostname + ".local") {
+                    p.display_name += " & " + c.display_name;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                filtered.push(c);
+            }
+        }
+
+        this.setState({scanResult: filtered});
     }
 
     setCharger (i: number, val: Partial<ChargerConfig>){
@@ -107,6 +152,11 @@ export class ChargeManagerChargers extends ConfigComponent<'charge_manager/confi
     }
 
     override async isSaveAllowed(cfg: ChargeManagerConfig): Promise<boolean> {
+        if (API.hasModule("em_phase_switcher") && this.state.managementEnabled && cfg.chargers.length != 1) {
+            return false;
+        }
+
+        // Check for duplicat host entries
         for (let i = 0; i < cfg.chargers.length; i++)
             for (let a = i + 1; a < cfg.chargers.length; a++)
                 if (cfg.chargers[a].host == cfg.chargers[i].host)
@@ -123,18 +173,41 @@ export class ChargeManagerChargers extends ConfigComponent<'charge_manager/confi
         }
 
         if (illegal_chargers != "" && !await modal.show({
-            title: __("charge_manager.content.multi_broadcast_modal_title"),
-            body: __("charge_manager.content.multi_broadcast_modal_body") + "<br><br>" + illegal_chargers + "<br>" + __("charge_manager.content.multi_broadcast_modal_body_end"),
-            no_text: __("charge_manager.content.multi_broadcast_modal_cancel"),
-            yes_text: __("charge_manager.content.multi_broadcast_modal_save"),
+            title: () => __("charge_manager.content.multi_broadcast_modal_title"),
+            body: () => __("charge_manager.content.multi_broadcast_modal_body") + "<br><br>" + illegal_chargers + "<br>" + __("charge_manager.content.multi_broadcast_modal_body_end"),
+            no_text: () => __("charge_manager.content.multi_broadcast_modal_cancel"),
+            yes_text: () => __("charge_manager.content.multi_broadcast_modal_save"),
             no_variant: "secondary",
             yes_variant: "danger"
         }))
             return;
 
-        let energyManagerMode = API.hasModule("em_common") && !(API.hasModule("evse_v2") || API.hasModule("evse"));
-        if (!energyManagerMode)
-            await API.save_unchecked('evse/management_enabled', {"enabled": this.state.managementEnabled}, translate_unchecked("charge_manager.script.save_failed"));
+        if (API.hasModule("evse_common"))
+            await API.save_unchecked('evse/management_enabled', {"enabled": this.state.managementEnabled}, () => translate_unchecked("charge_manager.script.save_failed"));
+
+//#if MODULE_EM_PHASE_SWITCHER_AVAILABLE
+        let emCharger_copy = this.state.emCharger;
+        let emConfig_copy  = this.state.emConfig;
+
+        if (this.state.enable_charge_manager) {
+            emCharger_copy.proxy_mode = false;
+            emConfig_copy.contactor_installed = emCharger_copy.idx < 254;
+        } else if (this.state.managementEnabled) { // Proxy mode
+            if (this.state.chargers.length != 1) {
+                throw new Error("Not exactly one charger for proxy mode");
+            }
+            emCharger_copy.idx = 0;
+            emCharger_copy.host = this.state.chargers[0].host;
+            emCharger_copy.proxy_mode = true;
+            emConfig_copy.contactor_installed = true;
+        } else {
+            emCharger_copy.proxy_mode = false;
+            emConfig_copy.contactor_installed = false;
+        }
+
+        await API.save_unchecked('em_phase_switcher/charger_config', emCharger_copy, () => __("charge_manager.script.save_failed"));
+        await API.save_unchecked('energy_manager/config',            emConfig_copy,  () => __("charge_manager.script.save_failed"));
+//#endif
 
         let new_cfg: ChargeManagerConfig = {...API.get("charge_manager/config"),
             enable_charge_manager: cfg.enable_charge_manager,
@@ -152,18 +225,20 @@ export class ChargeManagerChargers extends ConfigComponent<'charge_manager/confi
     override async sendReset(t: "charge_manager/config"){
         const modal = util.async_modal_ref.current;
         if (!await modal.show({
-            title:__("reset.reset_modal"),
-                body: __("charge_manager.content.charge_manager_chargers_reset_modal_text"),
-                no_text: __("reset.reset_modal_abort"),
-                yes_text: __("reset.reset_modal_confirm"),
+                title: () => __("reset.reset_modal"),
+                body: () => __("charge_manager.content.charge_manager_chargers_reset_modal_text"),
+                no_text:() =>  __("reset.reset_modal_abort"),
+                yes_text: () => __("reset.reset_modal_confirm"),
                 no_variant: "secondary",
                 yes_variant: "danger"
             }))
             return;
 
-        let energyManagerMode = API.hasModule("em_common") && !(API.hasModule("evse_v2") || API.hasModule("evse"));
-        if (!energyManagerMode)
-            await API.save_unchecked('evse/management_enabled', {"enabled": false}, translate_unchecked("charge_manager.script.save_failed"));
+        if (API.hasModule("evse_common"))
+            await API.save_unchecked('evse/management_enabled', {"enabled": false}, () => translate_unchecked("charge_manager.script.save_failed"));
+
+        await API.reset_unchecked('em_phase_switcher/charger_config', () => __("charge_manager.script.save_failed"));
+        await API.reset_unchecked('energy_manager/config',            () => __("charge_manager.script.save_failed"));
 
         await super.sendReset(t);
     }
@@ -191,7 +266,7 @@ export class ChargeManagerChargers extends ConfigComponent<'charge_manager/confi
 
     async scan_services() {
         try {
-            await API.call('charge_manager/scan', {}, __("charge_manager.script.scan_failed"))
+            await API.call('charge_manager/scan', {}, () => __("charge_manager.script.scan_failed"))
         } catch {
             return;
         }
@@ -245,7 +320,7 @@ export class ChargeManagerChargers extends ConfigComponent<'charge_manager/confi
         if (!util.render_allowed())
             return <SubPage name="charge_manager_chargers" />;
 
-        const MAX_CONTROLLED_CHARGERS = API.hasModule("esp32_ethernet_brick") ? 32 : 10;
+        const MAX_CONTROLLED_CHARGERS = API.hasModule("em_phase_switcher") && state.managementEnabled ? 1 : API.hasModule("esp32_ethernet_brick") ? 64 : 10;
 
         let energyManagerMode = API.hasModule("em_common") && !(API.hasModule("evse_v2") || API.hasModule("evse"));
 
@@ -266,25 +341,45 @@ export class ChargeManagerChargers extends ConfigComponent<'charge_manager/confi
             return ret;
         }
 
+        const charge_manager_mode_suffix = API.hasModule("em_phase_switcher") ? "_em_with_ps" : "";
+        const charge_manager_mode_explainer_suffix = API.hasModule("em_common") ? API.hasModule("em_phase_switcher") ? "_em_with_ps" : "_em" : "";
+
+        let modes: [string, string][] = [
+            ["0", __("charge_manager.content.mode_disabled")],
+            ["2", translate_unchecked("charge_manager.content.mode_manager" + charge_manager_mode_suffix)],
+        ];
+
+        if (API.hasModule("evse_common") || API.hasModule("em_phase_switcher")) {
+            modes.splice(1, 0, ["1", translate_unchecked("charge_manager.content.mode_managed" + charge_manager_mode_suffix)]);
+        }
+
         let charge_manager_mode = <FormRow label={__("charge_manager.content.enable_charge_manager")} label_muted={__("charge_manager.content.enable_charge_manager_muted")}>
-             <InputSelect
-                    items={[
-                        ["0",__("charge_manager.content.mode_disabled")],
-                        ["1",__("charge_manager.content.mode_managed")],
-                        ["2",__("charge_manager.content.mode_manager")],
-                    ]}
+            <InputSelect
+                    items={modes}
                     value={state.enable_charge_manager ? "2" : state.managementEnabled ? "1" : "0"}
                     onValue={(v) => {
-                        if (v == "2") {
-                            this.insertLocalHost();
+                        let mgmt_en;
+                        if (API.hasModule("evse_common")) {
+                            if (v == "2") {
+                                this.insertLocalHost();
+                            }
+                            mgmt_en = v != "0"; // EVSE managed
+                        } else {
+//#if MODULE_EM_PHASE_SWITCHER_AVAILABLE
+                            if (v == "2") {
+                                // Reset charger for phase switching when changing from proxy mode to charge manager.
+                                this.setState({emCharger: {...state.emCharger, idx: 254, host: ""}});
+                            }
+//#endif
+                            mgmt_en = v == "1"; // WEM proxy
                         }
-                        this.setState({enable_charge_manager: v == "2", managementEnabled: v != "0"})
+                        this.setState({enable_charge_manager: v == "2", managementEnabled: mgmt_en})
                     }}
                 />
                 <div class="pt-3 pb-4">
-                    {translate_unchecked(`charge_manager.script.mode_explainer_${state.enable_charge_manager ? "2" : state.managementEnabled ? "1" : "0"}`)}
+                    {translate_unchecked(`charge_manager.script.mode_explainer_${state.enable_charge_manager ? "2" : state.managementEnabled ? "1" : "0"}${charge_manager_mode_explainer_suffix}`)}
                 </div>
-            </FormRow>;
+            </FormRow>
 
         let chargers = <FormRow label={__("charge_manager.content.managed_boxes")}>
                     <Table
@@ -430,29 +525,83 @@ export class ChargeManagerChargers extends ConfigComponent<'charge_manager/confi
                 }}
                 digits={3}
                 min={state.enable_charge_manager ? 6000 : 0}
-                max={1000000}
+                max={999999}
+                required={state.enable_charge_manager}
                 />
             </FormRow>
+
+        let show_charger_settings = state.enable_charge_manager;
+        let show_available_current = true;
+
+        //#if MODULE_EM_PHASE_SWITCHER_AVAILABLE
+        if (state.managementEnabled) {
+            show_charger_settings = true;
+            show_available_current = false;
+        }
+        //#endif
+
+        let em_charger = null;
+
+//#if MODULE_EM_PHASE_SWITCHER_AVAILABLE
+        let em_charger_list: [string, string][] = [["255", __("charge_manager.content.em_no_ps_charger")]];
+
+        for (let i in state.chargers) {
+            em_charger_list.push([i.toString(), state.chargers[i].name]);
+        }
+
+        if (this.state.emCharger.idx < 254 && this.state.chargers[this.state.emCharger.idx].host != this.state.emCharger.host) {
+            this.setState({emCharger: {...state.emCharger, idx: 254, host: ""}});
+        }
+
+        em_charger = <>
+            <Collapse in={state.enable_charge_manager}>
+                <div>
+                    <FormRow label={__("charge_manager.content.em_controlled_charger")} label_muted={__("charge_manager.content.em_controlled_charger_muted")}>
+                        <InputSelect items={em_charger_list}
+                            value={state.emCharger.idx}
+                            onValue={(v) => {
+                                const chg_idx = parseInt(v);
+                                const host = chg_idx < 254 ? state.chargers[chg_idx].host.toLowerCase() : "";
+                                this.setState({emCharger: {...state.emCharger, idx: chg_idx, host: host}});
+                            }}
+                            required={state.enable_charge_manager}
+                            placeholder={__("charge_manager.content.add_charger_rotation_select")}
+                        />
+                    </FormRow>
+                </div>
+            </Collapse>
+
+            <Collapse in={state.managementEnabled && state.chargers.length != 1}>
+                <div>
+                    <FormRow label="">
+                        <IndicatorGroup
+                            value={0}
+                            items={[
+                                state.chargers.length < 1 ? ["warning", __("charge_manager.content.em_proxy_warning_not_enough")] : ["danger", __("charge_manager.content.em_proxy_warning_too_many")],
+                            ]}
+                        />
+                    </FormRow>
+                </div>
+            </Collapse>
+        </>
+//#endif
 
         return (
             <SubPage name="charge_manager_chargers">
                 <ConfigForm id="chargers_config_form" title={__("charge_manager.content.charge_manager_chargers")} isModified={this.isModified()} isDirty={this.isDirty()} onSave={this.save} onReset={this.reset} onDirtyChange={this.setDirty}>
-                    {energyManagerMode ?
-                        <>
-                            {available_current}
-                            {chargers}
-                        </>
-                        : <>
-                            {charge_manager_mode}
+                    {charge_manager_mode}
 
+                    <Collapse in={show_charger_settings}>
+                        <div>
                             <Collapse in={state.enable_charge_manager}>
                                 <div>
                                     {available_current}
-                                    {chargers}
                                 </div>
                             </Collapse>
-                        </>
-                    }
+                            {chargers}
+                            {em_charger}
+                        </div>
+                    </Collapse>
                 </ConfigForm>
             </SubPage>
         )

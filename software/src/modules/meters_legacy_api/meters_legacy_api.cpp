@@ -76,6 +76,9 @@ void MetersLegacyAPI::setup()
 
     legacy_api_enabled = true;
 
+    const Config *config_prototype_float_nan  = Config::get_prototype_float_nan();
+    const Config *config_prototype_bool_false = Config::get_prototype_bool_false();
+
     // BEGIN from old meter.cpp pre_setup()
     legacy_state = Config::Object({
         {"state", Config::Uint8(0)}, // 0 - no energy meter, 1 - initialization error, 2 - meter available
@@ -90,15 +93,15 @@ void MetersLegacyAPI::setup()
 
     legacy_phases = Config::Object({
         {"phases_connected", Config::Array({Config::Bool(false),Config::Bool(false),Config::Bool(false)},
-            meters.get_config_bool_false_prototype(),
+            config_prototype_bool_false,
             3, 3, Config::type_id<Config::ConfBool>())},
         {"phases_active", Config::Array({Config::Bool(false),Config::Bool(false),Config::Bool(false)},
-            meters.get_config_bool_false_prototype(),
+            config_prototype_bool_false,
             3, 3, Config::type_id<Config::ConfBool>())}
     });
 
     legacy_all_values = Config::Array({},
-        meters.get_config_float_nan_prototype(),
+        config_prototype_float_nan,
         0, METER_ALL_VALUES_LEGACY_COUNT, Config::type_id<Config::ConfFloat>()
     );
 
@@ -121,21 +124,21 @@ void MetersLegacyAPI::setup()
 
     legacy_phases_update = Config::Object({
         {"phases_connected", Config::Array({Config::Bool(false),Config::Bool(false),Config::Bool(false)},
-            meters.get_config_bool_false_prototype(),
+            config_prototype_bool_false,
             3, 3, Config::type_id<Config::ConfBool>())},
         {"phases_active", Config::Array({Config::Bool(false),Config::Bool(false),Config::Bool(false)},
-            meters.get_config_bool_false_prototype(),
+            config_prototype_bool_false,
             3, 3, Config::type_id<Config::ConfBool>())}
     });
 
     legacy_all_values_update = Config::Array({},
-        meters.get_config_float_nan_prototype(),
+        config_prototype_float_nan,
         METER_ALL_VALUES_LEGACY_COUNT, METER_ALL_VALUES_LEGACY_COUNT, Config::type_id<Config::ConfFloat>());
     // END from old api_meter.cpp pre_setup()
 
     task_scheduler.scheduleOnce([this]() {
         this->show_blank_value_id_update_warnings = true;
-    }, 250);
+    }, 250_ms);
 }
 
 void MetersLegacyAPI::register_urls()
@@ -153,13 +156,11 @@ void MetersLegacyAPI::register_urls()
     api.addState("meter/last_reset", &legacy_last_reset);
     // meter/error_counters registered in meters module
 
-    api.addCommand("meter/reset", Config::Null(), {}, [this](){
-        String err = api.callCommand(meters.get_path(this->linked_meter_slot, Meters::PathType::Reset).c_str(), nullptr);
-        if (!err.isEmpty())
-            logger.printfln("Cannot reset meter %u (%s)", this->linked_meter_slot, err.c_str());
+    api.addCommand("meter/reset", Config::Null(), {}, [this](String &errmsg) {
+        errmsg = api.callCommand(meters.get_path(this->linked_meter_slot, Meters::PathType::Reset).c_str(), nullptr);
     }, true);
 
-    api.addCommand("meter/state_update", &legacy_state_update, {}, [this](){
+    api.addCommand("meter/state_update", &legacy_state_update, {}, [this](String &/*errmsg*/) {
         if (!this->meter_writable) {
             logger.printfln("Meter %u cannot be updated via the API. Only an API meter can be updated.", this->linked_meter_slot);
             return;
@@ -167,14 +168,14 @@ void MetersLegacyAPI::register_urls()
         logger.printfln("Meter %u state cannot be updated. Change the meter's configuration instead.", this->linked_meter_slot);
     }, false);
 
-    api.addCommand("meter/values_update", &legacy_values_update, {}, [this](){
+    api.addCommand("meter/values_update", &legacy_values_update, {}, [this](String &/*errmsg*/) {
         if (!this->meter_writable) {
             logger.printfln("Meter %u cannot be updated via the API. Only an API meter can be updated.", this->linked_meter_slot);
             return;
         }
 
-        for (uint32_t i = 0; i < 3; i++) {
-            uint16_t target_index = value_indices_legacy_values_to_linked_meter[i];
+        for (size_t i = 0; i < 3; i++) {
+            size_t target_index = value_indices_legacy_values_to_linked_meter[i];
             if (target_index >= this->linked_meter_value_count) {
                 // Value not present in target.
                 continue;
@@ -187,7 +188,7 @@ void MetersLegacyAPI::register_urls()
         meters.finish_update(this->linked_meter_slot);
     }, false);
 
-    api.addCommand("meter/phases_update", &legacy_phases_update, {}, [this](){
+    api.addCommand("meter/phases_update", &legacy_phases_update, {}, [this](String &/*errmsg*/) {
         if (!this->meter_writable) {
             logger.printfln("Meter %u cannot be updated via the API. Only an API meter can be updated.", this->linked_meter_slot);
             return;
@@ -200,18 +201,18 @@ void MetersLegacyAPI::register_urls()
 
         Config *conf_in  = static_cast<Config *>(legacy_phases_update.get("phases_active"));
         Config *conf_out = static_cast<Config *>(legacy_phases.get("phases_active"));
-        for (uint16_t i = 0; i < 3; ++i) {
+        for (size_t i = 0; i < 3; ++i) {
             conf_out->get(i)->updateBool(conf_in->get(i)->asBool());
         }
 
         conf_in  = static_cast<Config *>(legacy_phases_update.get("phases_connected"));
         conf_out = static_cast<Config *>(legacy_phases.get("phases_connected"));
-        for (uint16_t i = 0; i < 3; ++i) {
+        for (size_t i = 0; i < 3; ++i) {
             conf_out->get(i)->updateBool(conf_in->get(i)->asBool());
         }
     }, false);
 
-    api.addCommand("meter/all_values_update", &legacy_all_values_update, {}, [this](){
+    api.addCommand("meter/all_values_update", &legacy_all_values_update, {}, [this](String &/*errmsg*/) {
         if (!this->meter_writable) {
             logger.printfln("Meter %u cannot be updated via the API. Only an API meter can be updated.", this->linked_meter_slot);
             return;
@@ -235,8 +236,8 @@ void MetersLegacyAPI::register_urls()
             *--values_end = NAN;
         } while (values_end > values);
 
-        for (uint16_t source_index = 0; source_index < METER_ALL_VALUES_LEGACY_COUNT; source_index++) {
-            uint16_t target_index = this->value_indices_legacy_all_values_to_linked_meter[source_index];
+        for (size_t source_index = 0; source_index < METER_ALL_VALUES_LEGACY_COUNT; source_index++) {
+            size_t target_index = this->value_indices_legacy_all_values_to_linked_meter[source_index];
             if (target_index >= this->linked_meter_value_count) {
                 // Value not present in target.
                 continue;
@@ -290,7 +291,7 @@ static void fill_index_array(uint16_t *indices, const MeterValueID *needles, uin
 
 static bool is_values_value(MeterValueID value_id)
 {
-    for (uint32_t i = 0; i < ARRAY_SIZE(legacy_values_ids); i++) {
+    for (size_t i = 0; i < ARRAY_SIZE(legacy_values_ids); i++) {
         if (value_id == legacy_values_ids[i])
             return true;
     }
@@ -336,7 +337,7 @@ EventResult MetersLegacyAPI::on_value_ids_change(const Config *value_ids)
     }
 
     MeterValueID meter_value_ids[METERS_MAX_VALUES_PER_METER]; // Always allocate max size to avoid VLA.
-    for (uint16_t i = 0; i < linked_meter_value_count; i++) {
+    for (size_t i = 0; i < linked_meter_value_count; i++) {
         meter_value_ids[i] = static_cast<MeterValueID>(value_ids->get(i)->asUint());
     }
 
@@ -370,6 +371,11 @@ EventResult MetersLegacyAPI::on_value_ids_change(const Config *value_ids)
             value_indices_legacy_values_to_linked_meter[2] = value_indices_import_imex[1];
     }
 
+    if (value_indices_legacy_values_to_linked_meter[2] == UINT16_MAX && value_indices_legacy_values_to_linked_meter[1] != UINT16_MAX) {
+        value_indices_legacy_values_to_linked_meter[2] = value_indices_legacy_values_to_linked_meter[1];
+        logger.printfln("Meter in slot %u doesn't provide energy_abs; copying energy_rel instead.", linked_meter_slot);
+    }
+
 
     // ==== Meter type detection ====
 
@@ -380,7 +386,7 @@ EventResult MetersLegacyAPI::on_value_ids_change(const Config *value_ids)
     uint32_t can_be_sdm630;
 
     for (uint32_t i = 0; i < METER_ALL_VALUES_LEGACY_COUNT; i++) {
-        uint16_t value_index = value_indices_legacy_all_values_to_linked_meter[i];
+        size_t value_index = value_indices_legacy_all_values_to_linked_meter[i];
         if (value_index >= linked_meter_value_count) {
             // Linked meter doesn't have this value.
             all_values_present[i] = false;
@@ -522,16 +528,16 @@ static void update_config_values(uint16_t *indices, uint16_t index_count, const 
 {
     bool needs_values_helper = target_values->is<Config::ConfObject>() && index_count == 3;
 
-    uint16_t source_count = static_cast<uint16_t>(source_values->count());
-    uint16_t target_count = needs_values_helper ? 3 : static_cast<uint16_t>(target_values->count());
+    size_t source_count = source_values->count();
+    size_t target_count = needs_values_helper ? 3 : target_values->count();
 
     if (target_count != index_count) {
-        logger.printfln("Cannot update config values, count mismatch: %i vs %i", target_count, index_count);
+        logger.printfln("Cannot update config values, count mismatch: %zu vs %zu", target_count, index_count);
         return;
     }
 
-    for (uint16_t target_index = 0; target_index < target_count; target_index++) {
-        uint16_t source_index = indices[target_index];
+    for (size_t target_index = 0; target_index < target_count; target_index++) {
+        size_t source_index = indices[target_index];
         if (source_index >= source_count) {
             // Value not available in source.
             continue;
@@ -561,12 +567,12 @@ void MetersLegacyAPI::on_values_change(const Config *values)
 
     if (has_phases && !phases_overridden) {
         auto *phases_connected = static_cast<Config *>(legacy_phases.get("phases_connected"));
-        for (uint16_t i = 0; i < 3; i++) {
+        for (size_t i = 0; i < 3; i++) {
             float value = values->get(value_indices_legacy_all_values_to_linked_meter[METER_ALL_VALUES_LINE_TO_NEUTRAL_VOLTS_L1 + i])->asFloat();
             phases_connected->get(i)->updateBool(value > PHASE_CONNECTED_VOLTAGE_THRES);
         }
         auto *phases_active = static_cast<Config *>(legacy_phases.get("phases_active"));
-        for (uint16_t i = 0; i < 3; i++) {
+        for (size_t i = 0; i < 3; i++) {
             float value = values->get(value_indices_legacy_all_values_to_linked_meter[METER_ALL_VALUES_CURRENT_L1_A + i])->asFloat();
             phases_active->get(i)->updateBool(value > PHASE_ACTIVE_CURRENT_THRES);
         }

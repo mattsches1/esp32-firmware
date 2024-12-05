@@ -47,7 +47,7 @@ public:
 
     void start_manager_task();
     void check_watchdog();
-    bool get_charger_count();
+    size_t get_charger_count();
     bool seen_all_chargers();
     bool is_charging_stopped(uint32_t last_update_cutoff);
     void set_all_control_pilot_disconnect(bool disconnect);
@@ -55,6 +55,7 @@ public:
     bool is_control_pilot_disconnect_supported(uint32_t last_update_cutoff);
     void set_allocated_current_callback(std::function<void(uint32_t)> &&callback);
 
+    const String &get_charger_host(uint8_t idx);
     const char *get_charger_name(uint8_t idx);
 
 #if MODULE_AUTOMATION_AVAILABLE()
@@ -79,6 +80,10 @@ public:
     size_t charger_count = 0;
     ChargerState *charger_state = nullptr;
 
+    size_t trace_buffer_index;
+
+    uint32_t get_maximum_available_current();
+
     CurrentLimits *get_limits() {
         // TODO: Maybe add separate function for this?
         static_cm = false;
@@ -87,8 +92,13 @@ public:
     const Cost *get_allocated_currents() {return &allocated_currents;}
 
     void trigger_allocator_run() {next_allocation = 0_us;}
+    void skip_global_hysteresis();
 
 private:
+    Config config_chargers_prototype;
+    Config state_chargers_prototype;
+    Config low_level_state_chargers_prototype;
+
     CurrentLimits limits, limits_post_allocation;
     Cost allocated_currents;
 
@@ -98,7 +108,6 @@ private:
     bool all_chargers_seen = false;
 
     std::unique_ptr<const char *[]> hosts;
-    uint32_t default_available_current;
     uint16_t requested_current_threshold;
     uint16_t requested_current_margin;
 
@@ -106,3 +115,5 @@ private:
     CurrentAllocatorConfig *ca_config = nullptr;
     CurrentAllocatorState *ca_state = nullptr;
 };
+
+#include "module_available_end.h"

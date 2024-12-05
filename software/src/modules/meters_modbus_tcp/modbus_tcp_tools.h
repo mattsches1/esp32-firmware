@@ -21,15 +21,11 @@
 
 #include <stdint.h>
 #include <stdlib.h>
-#include <ModbusTCP.h>
 
 #if defined(__GNUC__)
     #pragma GCC diagnostic push
     #include "gcc_warnings.h"
-    //#pragma GCC diagnostic ignored "-Weffc++"
 #endif
-
-[[gnu::const]] const char* get_modbus_result_code_name(Modbus::ResultCode event);
 
 void modbus_bswap_registers(uint16_t *register_start, size_t register_count);
 

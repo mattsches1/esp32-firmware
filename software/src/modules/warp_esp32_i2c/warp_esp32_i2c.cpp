@@ -31,7 +31,7 @@
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wold-style-cast"
 // portTICK_PERIOD_MS expands to an old style cast.
-static TickType_t i2c_timeout = 1000 / portTICK_PERIOD_MS;
+static TickType_t i2c_timeout = 6 / portTICK_PERIOD_MS;
 #pragma GCC diagnostic pop
 
 static uint8_t tmp_cmd_buf[I2C_LINK_RECOMMENDED_SIZE(2)] = {};
@@ -74,7 +74,7 @@ void WarpEsp32I2c::setup()
         temp = temp * 25 / 4; // equivalent to * 6.25 centicelsius per LSB
 
         state.get("temperature")->updateInt(temp);
-    }, 1000, 1000);
+    }, 1_s, 1_s);
 }
 
 void WarpEsp32I2c::register_urls()

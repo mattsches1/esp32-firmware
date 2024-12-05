@@ -34,7 +34,7 @@ static size_t suffix_len = strlen(suffix);
 
 // Also change mqtt.cpp MQTT_RECV_BUFFER_SIZE when changing WS_SEND_BUFFER_SIZE here!
 #if defined(BOARD_HAS_PSRAM)
-#define WS_SEND_BUFFER_SIZE 6144U
+#define WS_SEND_BUFFER_SIZE 10240U
 #else
 #define WS_SEND_BUFFER_SIZE 4096U
 #endif
@@ -122,14 +122,14 @@ void WS::register_urls()
         }
     });
 
-    web_sockets.start("/ws");
+    web_sockets.start("/ws", "info/ws", server.httpd);
 
     task_scheduler.scheduleWithFixedDelay([this](){
         char *payload;
-        int len = asprintf(&payload, "{\"topic\": \"info/keep_alive\", \"payload\": {\"uptime\": %lu}}\n", millis());
+        int len = asprintf(&payload, "{\"topic\":\"info/keep_alive\",\"payload\":{\"uptime\":%lu}}\n", millis());
         if (len > 0)
             web_sockets.sendToAllOwned(payload, len);
-    }, 1000, 1000);
+    }, 1_s, 1_s);
 }
 
 void WS::addCommand(size_t commandIdx, const CommandRegistration &reg)

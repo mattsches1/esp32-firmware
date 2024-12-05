@@ -56,7 +56,39 @@ Config::ConfUnion::Slot *union_buf = nullptr;
 size_t union_buf_size = 0;
 
 static ConfigRoot nullconf = Config{Config::ConfVariant{}};
-static ConfigRoot *confirmconf;
+static ConfigRoot confirmconf;
+
+[[gnu::noinline]]
+[[gnu::noreturn]]
+void config_main_thread_assertion_fail()
+{
+    esp_system_abort("Accessing the config is only allowed in the main thread!");
+}
+
+[[gnu::noinline]]
+[[gnu::noreturn]]
+void config_abort_on_type_error(const char *fn_name, const Config *config_is, const char *t_name_wanted, const String *content_new)
+{
+#ifdef DEBUG_FS_ENABLE
+    char msg[256];
+#else
+    char msg[88];
+#endif
+
+    size_t len = snprintf_u(msg, ARRAY_SIZE(msg), "%s: Config has wrong type. This is a %s, not a %s.", fn_name, config_is->value.getVariantName(), t_name_wanted);
+
+#ifdef DEBUG_FS_ENABLE
+    len += snprintf(msg + len, ARRAY_SIZE(msg) - len, " Content is %s.", config_is->to_string().c_str());
+
+    if (content_new) {
+        len += snprintf(msg + len, ARRAY_SIZE(msg) - len, " New value is %s.", content_new->c_str());
+    }
+#else
+    (void)len;
+#endif
+
+    esp_system_abort(msg);
+}
 
 bool Config::containsNull(const ConfUpdate *update)
 {
@@ -68,12 +100,28 @@ bool Config::is_null() const
     return value.tag == ConfVariant::Tag::EMPTY;
 }
 
+Config Config::Str(const char *s, uint16_t minChars, uint16_t maxChars)
+{
+    if (boot_stage < BootStage::PRE_SETUP)
+        esp_system_abort("constructing configs before the pre_setup is not allowed!");
+
+    return Config{ConfString{s, minChars, maxChars}};
+}
+
 Config Config::Str(const String &s, uint16_t minChars, uint16_t maxChars)
 {
     if (boot_stage < BootStage::PRE_SETUP)
         esp_system_abort("constructing configs before the pre_setup is not allowed!");
 
-    return Config{ConfString{CoolString(s), minChars, maxChars}};
+    return Config{ConfString{s, minChars, maxChars}};
+}
+
+Config Config::Str(String &&s, uint16_t minChars, uint16_t maxChars)
+{
+    if (boot_stage < BootStage::PRE_SETUP)
+        esp_system_abort("constructing configs before the pre_setup is not allowed!");
+
+    return Config{ConfString{std::move(s), minChars, maxChars}};
 }
 
 Config Config::Float(float d, float min, float max)
@@ -148,18 +196,13 @@ ConfigRoot *Config::Confirm()
     if (boot_stage < BootStage::PRE_SETUP)
         esp_system_abort("constructing configs before the pre_setup is not allowed!");
 
-    if (confirmconf == nullptr) {
-        confirmconf = new ConfigRoot{Config::Object({
+    if (confirmconf.is_null()) {
+        confirmconf = ConfigRoot{Config::Object({
             {Config::confirm_key, Config::Bool(false)}
         })};
     }
 
-    return confirmconf;
-}
-
-String Config::ConfirmKey()
-{
-    return Config::confirm_key;
+    return &confirmconf;
 }
 
 Config Config::Uint8(uint8_t u)
@@ -192,11 +235,18 @@ Config Config::Int32(int32_t i)
     return Config::Int(i, std::numeric_limits<int32_t>::lowest(), std::numeric_limits<int32_t>::max());
 }
 
+[[gnu::noreturn]]
+[[gnu::noinline]]
+static void abort_on_union_get_failure()
+{
+    esp_system_abort("Config is not a union!");
+}
+
 Config::Wrap Config::get()
 {
     ASSERT_MAIN_THREAD();
     if (!this->is<Config::ConfUnion>()) {
-        esp_system_abort("Config is not a union!");
+        abort_on_union_get_failure();
     }
     Wrap wrap(value.val.un.getVal());
 
@@ -207,59 +257,92 @@ const Config::ConstWrap Config::get() const
 {
     ASSERT_MAIN_THREAD();
     if (!this->is<Config::ConfUnion>()) {
-        esp_system_abort("Config is not a union!");
+        abort_on_union_get_failure();
     }
     ConstWrap wrap(value.val.un.getVal());
 
     return wrap;
 }
 
-Config::Wrap Config::get(const String &s)
+[[gnu::noinline]]
+[[gnu::noreturn]]
+static void abort_on_object_get_failure(const Config *conf, const char *key)
+{
+    char msg[64];
+    snprintf(msg, ARRAY_SIZE(msg), "%s is not a ConfObject! Tried to get '%s'.", conf->value.getVariantName(), key);
+    esp_system_abort(msg);
+}
+
+Config::Wrap Config::get(const char *s, size_t s_len)
 {
     ASSERT_MAIN_THREAD();
     if (!this->is<Config::ConfObject>()) {
-        char *message;
-        esp_system_abort(asprintf(&message, "Config key %s not in this node: is not an object!", s.c_str()) < 0 ? "" : message);
+        abort_on_object_get_failure(this, s);
     }
-    Wrap wrap(value.val.o.get(s));
+    Wrap wrap(value.val.o.get(s, s_len));
 
     return wrap;
 }
 
-Config::Wrap Config::get(uint16_t i)
+const Config::ConstWrap Config::get(const char *s, size_t s_len) const
+{
+    ASSERT_MAIN_THREAD();
+    if (!this->is<Config::ConfObject>()) {
+        abort_on_object_get_failure(this, s);
+    }
+    ConstWrap wrap(value.val.o.get(s, s_len));
+
+    return wrap;
+}
+
+Config::Wrap Config::get(const String &s)
+{
+    return get(s.c_str(), s.length());
+}
+
+const Config::ConstWrap Config::get(const String &s) const
+{
+    return get(s.c_str(), s.length());
+}
+
+[[gnu::noinline]]
+[[gnu::noreturn]]
+static void abort_on_array_get_failure(const Config *conf, size_t i)
+{
+    char msg[48];
+    snprintf(msg, ARRAY_SIZE(msg), "%s not a ConfArray! Tried to get %zu.", conf->value.getVariantName(), i);
+    esp_system_abort(msg);
+}
+
+Config::Wrap Config::get(size_t i)
 {
     ASSERT_MAIN_THREAD();
     if (!this->is<Config::ConfArray>()) {
-        char *message;
-        esp_system_abort(asprintf(&message, "Config index %u not in this node: is not an array!", i) < 0 ? "" : message);
+        abort_on_array_get_failure(this, i);
     }
     Wrap wrap(value.val.a.get(i));
 
     return wrap;
 }
 
-const Config::ConstWrap Config::get(const String &s) const
-{
-    ASSERT_MAIN_THREAD();
-    if (!this->is<Config::ConfObject>()) {
-        char *message;
-        esp_system_abort(asprintf(&message, "Config key %s not in this node: is not an object!", s.c_str()) < 0 ? "" : message);
-    }
-    ConstWrap wrap(value.val.o.get(s));
-
-    return wrap;
-}
-
-const Config::ConstWrap Config::get(uint16_t i) const
+const Config::ConstWrap Config::get(size_t i) const
 {
     ASSERT_MAIN_THREAD();
     if (!this->is<Config::ConfArray>()) {
-        char *message;
-        esp_system_abort(asprintf(&message, "Config index %u not in this node: is not an array!", i) < 0 ? "" : message);
+        abort_on_array_get_failure(this, i);
     }
     ConstWrap wrap(value.val.a.get(i));
 
     return wrap;
+}
+
+[[gnu::noinline]]
+[[gnu::noreturn]]
+static void abort_on_array_add_max_failure(size_t max_elements)
+{
+    char msg[96];
+    snprintf(msg, ARRAY_SIZE(msg), "Tried to add to an ConfArray that already has the max allowed number of elements (%zu).", max_elements);
+    esp_system_abort(msg);
 }
 
 Config::Wrap Config::add()
@@ -276,8 +359,7 @@ Config::Wrap Config::add()
 
     const auto max_elements = slot->maxElements;
     if (children.size() >= max_elements) {
-        char *message;
-        esp_system_abort(asprintf(&message, "Tried to add to an ConfArray that already has the max allowed number of elements (%u).", max_elements) < 0 ? "" : message);
+        abort_on_array_add_max_failure(max_elements);
     }
 
     auto copy = *slot->prototype;
@@ -446,17 +528,12 @@ template<>
 inline bool Config::update_value<float, Config::ConfFloat>(float value, const char *value_type) {
     ASSERT_MAIN_THREAD();
     if (!this->is<ConfFloat>()) {
-        char *message;
-        int result = -1;
-#ifndef DEBUG_FS_ENABLE
-        result = asprintf(&message, "update_value: Config has wrong type. This is a %s. new value is a %s", this->value.getVariantName(), value_type);
-#else
-        result = asprintf(&message, "update_value: Config has wrong type. This is a %s. new value is a %s\nContent is %s\nvalue is %s", this->value.getVariantName(), value_type, this->to_string().c_str(), String(value).c_str());
-#endif
-        esp_system_abort(result < 0 ? "" : message);
+        String value_string(value);
+        config_abort_on_type_error("update_value", this, value_type, &value_string);
     }
-    float old_value = get<ConfFloat>()->getVal();
-    get<ConfFloat>()->setVal(value);
+    ConfFloat *conf = get<ConfFloat>();
+    float old_value = conf->getVal();
+    conf->setVal(value);
 
     if (old_value != value)
         this->value.updated = 0xFF;
@@ -589,9 +666,15 @@ void Config::save_to_file(File &file)
             logger.printfln("JSON doc overflow while writing file %s! Doc capacity is zero but needed %u.", file.name(), json_size(false));
         } else {
             logger.printfln("JSON doc overflow while writing file %s! Doc capacity is %u. Truncated doc follows.", file.name(), capacity);
+
             String str;
             serializeJson(doc, str);
-            logger.write(str.c_str(), str.length());
+            char *wbuffer = str.begin();
+            size_t len = str.length();
+
+            // Overwrite zero-termination with newline. This is safe because print_plain doen't require termination and the container String is discarded afterwards.
+            wbuffer[len] = '\n';
+            logger.print_plain(wbuffer, len + 1);
         }
     }
     serializeJson(doc, file);
@@ -612,9 +695,15 @@ void Config::write_to_stream_except(Print &output, const char *const *keys_to_ce
             logger.printfln("JSON doc overflow while writing to stream! Doc capacity is zero but needed %u.", json_size(false));
         } else {
             logger.printfln("JSON doc overflow while writing to stream! Doc capacity is %u. Truncated doc follows.", capacity);
+
             String str;
             serializeJson(doc, str);
-            logger.write(str.c_str(), str.length());
+            char *wbuffer = str.begin();
+            size_t len = str.length();
+
+            // Overwrite zero-termination with newline. This is safe because print_plain doen't require termination and the container String is discarded afterwards.
+            wbuffer[len] = '\n';
+            logger.print_plain(wbuffer, len + 1);
         }
     }
     serializeJson(doc, output);
@@ -639,7 +728,14 @@ String Config::to_string_except(const char *const *keys_to_censor, size_t keys_t
             logger.printfln("JSON doc overflow while converting to string! Doc capacity is zero but needed %u.", json_size(false));
         } else {
             logger.printfln("JSON doc overflow while converting to string! Doc capacity is %u. Truncated doc follows.", capacity);
-            logger.write(result.c_str(), result.length());
+
+            char *wbuffer = result.begin();
+            size_t len = result.length();
+
+            // Temporarily overwrite zero-termination with newline, to avoid copying the whole string to add the newline. This is safe because print_plain doesn't require termination.
+            wbuffer[len] = '\n';
+            logger.print_plain(wbuffer, len + 1);
+            wbuffer[len] = 0;
         }
     }
     return result;
@@ -659,8 +755,15 @@ void Config::to_string_except(const char *const *keys_to_censor, size_t keys_to_
             logger.printfln("JSON doc overflow while converting to string! Doc capacity is zero but needed %u.", json_size(false));
         } else {
             logger.printfln("JSON doc overflow while converting to string! Doc capacity is %u. Truncated doc follows.", capacity);
-            logger.write(ptr, written);
+            logger.print_plain(ptr, written);
+            logger.print_plain("\n", 1);
         }
+    }
+
+    if (sb->getRemainingLength() == 0) {
+        logger.printfln("StringBuilder overflow while converting JSON to string! Doc size is %zu. Truncated string follows.", doc.size());
+        logger.print_plain(ptr, written);
+        logger.print_plain("\n", 1);
     }
 }
 

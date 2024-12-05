@@ -11,8 +11,8 @@ let x = {
             "full_access": "Read/write access",
             "table": "Register table",
             "tf": "WARP Charger",
-            "bender_emulate": "Bender CC613 compatible",
-            "keba_emulate": "Keba C-series compatible",
+            "bender_emulate": "Open Modbus Charge Control Interface (OMCCI); Bender CC613 compatible",
+            "keba_emulate": "Keba P30 C-series compatible",
             "modbus_tcp": "Modbus/TCP",
             "enable": "Modbus/TCP mode",
             "port": "Port",
@@ -39,7 +39,7 @@ let x = {
                         <td>Modbus table version</td>
                         <td>uint32</td>
                         <td>---</td>
-                        <td>Current version: 2</td>
+                        <td>Current version: 3</td>
                     </tr>
                     <tr>
                         <td>2</td>
@@ -206,11 +206,25 @@ let x = {
                         <td>See <a href="https://docs.warp-charger.com/docs/mqtt_http/api_reference/meter/#meter_all_values_any">API Documentation</a></td>
                     </tr>
                     <tr>
-                        <td>3000</td>
-                        <td>CP-State</td>
+                        <td>3100</td>
+                        <td>Phases connected</td>
                         <td>uint32</td>
-                        <td>cp_disc</td>
-                        <td>Not implemented yet!</td>
+                        <td>phase_switch</td>
+                        <td>The number of phases connected to the vehicle</td>
+                    </tr>
+                    <tr>
+                        <td>3102</td>
+                        <td>Phase switch state</td>
+                        <td>uint32</td>
+                        <td>phase_switch</td>
+                        <td>The current state of the phase switch control:
+                            <ul>
+                                <li>0: Ready to switch phases.</li>
+                                <li>1: Phase switch disabled in settings.</li>
+                                <li>2: Phase switch enabled, but currently not available.</li>
+                                <li>3: Currently switching phases. Commands will be ignored.</li>
+                            </ul>
+                        </td>
                     </tr>
                     <tr>
                         <td>4000 to 4009</td>
@@ -226,6 +240,22 @@ let x = {
                         <td>nfc</td>
                         <td>Time in milliseconds since the last NFC tag was seen. An age less than 1000 ms usually indicates that the
                             tag is currently held to the charger.</td>
+                    </tr>
+                    <tr>
+                        <td>4012 bis 4013</td>
+                        <td>Type of the last NFC tag</td>
+                        <td>uint8 (4x)</td>
+                        <td>nfc</td>
+                        <td>Type of the last seen NFC tag as ASCII coded hex string.
+                            <ul>
+                                <li>"0000": Mifare Classic</li>
+                                <li>"0001": NFC Forum Typ 1</li>
+                                <li>"0002": NFC Forum Typ 2</li>
+                                <li>"0003": NFC Forum Typ 3</li>
+                                <li>"0004": NFC Forum Typ 4</li>
+                                <li>"0005": NFC Forum Typ 5</li>
+                            </ul>
+                        </td>
                     </tr>
                 </tbody>
                 <thead>
@@ -264,8 +294,14 @@ let x = {
                         <td>evse</td>
                         <td>
                             Controls the LED in the charger's front button.
+                            <strong>
+                            Blink pattern and duration must be written with a single modbus command!
+                            To also set the blink color (only WARP3), registers 1004 to and including 1013 must be written with a single command.
+                            </strong>
+                            The setting "Status LED control" must be enabled to be able to control the LED.
+
                             <ul>
-                                <li>-1: EVSE controls LED</li>
+                                <li>0xFFFFFFFF: EVSE controls LED</li>
                                 <li>0: LED off</li>
                                 <li>1 to 254: LED dimmed</li>
                                 <li>255: LED on</li>
@@ -285,6 +321,27 @@ let x = {
                             are supported.</td>
                     </tr>
                     <tr>
+                        <td>1008</td>
+                        <td>Front LED blink hue</td>
+                        <td>uint32</td>
+                        <td>evse</td>
+                        <td>Hue of the color (in the <a href="https://en.wikipedia.org/wiki/HSL_and_HSV">HSV color representation</a>) that the blink pattern set in register 1004 should be shown in. Only values between 0 and 359 (°) are allowed. The color can only be set for a WARP3 charger. WARP and WARP2 Charger use a blue LED.</td>
+                    </tr>
+                    <tr>
+                        <td>1010</td>
+                        <td>Front LED blink saturation</td>
+                        <td>uint32</td>
+                        <td>evse</td>
+                        <td>Saturation of the color (in the <a href="https://en.wikipedia.org/wiki/HSL_and_HSV">HSV color representation</a>) that the blink pattern set in register 1004 should be shown in. Only values between 0 and 255 are allowed. The color can only be set for a WARP3 charger. WARP and WARP2 Charger use a blue LED.</td>
+                    </tr>
+                    <tr>
+                        <td>1012</td>
+                        <td>Front LED blink value</td>
+                        <td>uint32</td>
+                        <td>evse</td>
+                        <td>Value of the color (in the <a href="https://en.wikipedia.org/wiki/HSL_and_HSV">HSV color representation</a>) that the blink pattern set in register 1004 should be shown in. Only values between 0 and 255 are allowed. The color can only be set for a WARP3 charger. WARP and WARP2 Charger use a blue LED.</td>
+                    </tr>
+                    <tr>
                         <td>2000</td>
                         <td>Reset relative energy</td>
                         <td>uint32</td>
@@ -292,11 +349,57 @@ let x = {
                         <td>Resets the relative energy value (input register 2006). Password: 0x3E12E5E7</td>
                     </tr>
                     <tr>
-                        <td>3000</td>
-                        <td>Trigger CP disconnect</td>
+                        <td>3100</td>
+                        <td>Trigger phase switch</td>
                         <td>uint32</td>
-                        <td>cp_disc</td>
-                        <td>Not implemented yet!</td>
+                        <td>phase_switch</td>
+                        <td>1 for single-phase charging. 3 for three-phase charging.</td>
+                    </tr>
+                    <tr>
+                        <td>4000 to 4009</td>
+                        <td>ID of the NFC tag to inject</td>
+                        <td>uint8 (20x)</td>
+                        <td>nfc</td>
+                        <td>By writing the registers 4000 up to and including 4013 a NFC tag can be injected (as if using the API nfc/inject_tag):
+                            <ul>
+                                <li>Register 4000 to 4009: The tag's ID as ASCII coded hex string.</li>
+                                <li>Register 4010 and 4011:
+                                    <ul>
+                                        <li>"0001": The injected tag can only a start charge (as if using the API nfc/inject_tag_start)</li>
+                                        <li>"0002": The injected tag can only a stop charge (as if using the API nfc/inject_tag_stop)</li>
+                                        <li>all other values: The injected tag can start and stop a charge (as if using the API nfc/inject_tag)</li>
+                                    </ul>
+                                </li>
+                                <li>Register 4012 and 4013: The tag's type as ASCII coded hex string:
+                                    <ul>
+                                        <li>"0000": Mifare Classic</li>
+                                        <li>"0001": NFC Forum Typ 1</li>
+                                        <li>"0002": NFC Forum Typ 2</li>
+                                        <li>"0003": NFC Forum Typ 3</li>
+                                        <li>"0004": NFC Forum Typ 4</li>
+                                        <li>"0005": NFC Forum Typ 5</li>
+                                    </ul>
+                                </li>
+                            </ul>
+                            <br/>
+                            <strong>Writing registers 4012 and 4013 starts the tag injection. Holding Registers 4000 to 4013 will be cleared afterwards!</strong>
+                            The data format of holding registers 4000 to 4013 is identical to the one of input registers 4000 to 4013 (that contain the last seen NFC tag).
+                            A physically existing tag can later be (re-)injected by presenting it to the charger and copying the values read from input registers 4000 to 4013 into holding registers 4000 to 4013.
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>4010 to 4011</td>
+                        <td>Usage of the NFC tag to inject</td>
+                        <td>uint8 (4x)</td>
+                        <td>nfc</td>
+                        <td>See description of holding registers 4000 to 4009.</td>
+                    </tr>
+                    <tr>
+                        <td>4012 to 4013</td>
+                        <td>Type of the NFC tag to inject</td>
+                        <td>uint8 (4x)</td>
+                        <td>nfc</td>
+                        <td>See description of holding registers 4000 to 4009.</td>
                     </tr>
                 </tbody>
                 <thead>
@@ -337,10 +440,10 @@ let x = {
                     </tr>
                     <tr>
                         <td>4</td>
-                        <td>Feature "cp_disc" available</td>
+                        <td>Feature "phase_switch" available</td>
                         <td>bool</td>
                         <td>---</td>
-                        <td>Not implemented yet!</td>
+                        <td>Hardware and configuration support switching between single- and three-phase charging.</td>
                     </tr>
                     <tr>
                         <td>5</td>
@@ -348,6 +451,41 @@ let x = {
                         <td>bool</td>
                         <td>---</td>
                         <td>A NFC Bricklet is connected and active.</td>
+                    </tr>
+                    <tr>
+                        <td>6</td>
+                        <td>Feature "evse_sd_input" available</td>
+                        <td>bool</td>
+                        <td>---</td>
+                        <td>The charge controller has a shutdown input.</td>
+                    </tr>
+                    <tr>
+                        <td>7</td>
+                        <td>Feature "evse_gp_input" available</td>
+                        <td>bool</td>
+                        <td>---</td>
+                        <td>The charge controller has a general purpose input.</td>
+                    </tr>
+                    <tr>
+                        <td>8</td>
+                        <td>Feature "evse_gp_output" available</td>
+                        <td>bool</td>
+                        <td>---</td>
+                        <td>The charge controller has a general purpose output.</td>
+                    </tr>
+                    <tr>
+                        <td>1100</td>
+                        <td>State of the shutdown input</td>
+                        <td>bool</td>
+                        <td>evse_sd_input</td>
+                        <td>0 - closed, 1 - open</td>
+                    </tr>
+                    <tr>
+                        <td>1101</td>
+                        <td>State of the general purpose input</td>
+                        <td>bool</td>
+                        <td>evse_gp_input</td>
+                        <td>0 - closed, 1 - open</td>
                     </tr>
                     <tr>
                         <td>2100</td>
@@ -413,11 +551,18 @@ let x = {
                         <td>false or 0 to block charging. true or 1 to allow charging. Sets the same charge release that is used via the
                             web interface, the API or (depending on the button configuration) the button.</td>
                     </tr>
+                    <tr>
+                        <td>1100</td>
+                        <td>Sets the state of the general purpose output</td>
+                        <td>bool</td>
+                        <td>evse_gp_output</td>
+                        <td>0 - connected to ground, 1 - high impedance</td>
+                    </tr>
                 </tbody>
             </>
         },
         "script": {
-            "save_failed": "Failed to save the Modbus/TCP configuration.",
+            "save_failed": "Failed to save the Modbus/TCP settings.",
             "reboot_content_changed": "Modbus/TCP settings"
         }
     }

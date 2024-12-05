@@ -22,7 +22,7 @@
 
 ConfigRoot::ConfigRoot(Config cfg) : Config(cfg), validator(nullptr) {}
 
-ConfigRoot::ConfigRoot(Config cfg, Validator &&validator) : Config(cfg), validator(new Validator(std::forward<Validator>(validator))) {}
+ConfigRoot::ConfigRoot(Config cfg, Validator &&validator) : Config(cfg), validator(new Validator(std::move(validator))) {}
 
 String ConfigRoot::update_from_file(File &&file)
 {
@@ -96,12 +96,14 @@ template<typename T>
 String ConfigRoot::get_updated_copy(T visitor, Config *out_config, ConfigSource source) {
     ASSERT_MAIN_THREAD();
     *out_config = *this;
-    String err = Config::apply_visitor(visitor, out_config->value);
+    UpdateResult res = Config::apply_visitor(visitor, out_config->value);
 
-    if (!err.isEmpty())
-        return err;
+    if (!res.message.isEmpty())
+        return res.message;
 
-    err = Config::apply_visitor(default_validator{}, out_config->value);
+    out_config->set_updated(res.changed ? 0xFF : 0);
+
+    String err = Config::apply_visitor(default_validator{}, out_config->value);
 
     if (!err.isEmpty())
         return err;
@@ -150,7 +152,6 @@ void ConfigRoot::update_from_copy(Config *copy)
 {
     ASSERT_MAIN_THREAD();
     this->value = copy->value;
-    this->value.updated = 0xFF;
 }
 
 OwnedConfig ConfigRoot::get_owned_copy()

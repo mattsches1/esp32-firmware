@@ -27,17 +27,26 @@ class Heating final : public IModule
 {
 private:
     void update();
+
+    ConfigRoot config;
+    ConfigRoot state;
     uint32_t last_sg_ready_change = 0;
 
+    size_t trace_buffer_index;
+
 public:
+    enum class Status : uint8_t {
+        Idle,
+        Blocking,
+        Extended,
+        BlockingP14
+    };
+
     Heating(){}
     void pre_setup() override;
     void setup() override;
     void register_urls() override;
     bool is_active();
-    bool is_sg_ready_output0_closed();
-    bool is_sg_ready_output1_closed();
-
-    ConfigRoot config;
-    ConfigRoot state;
+    bool is_p14enwg_active();
+    Status get_status();
 };

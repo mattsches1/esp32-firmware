@@ -1,3 +1,5 @@
+# This is the same register table as Hailei
+
 specs = [
     {
         'name': 'Alpha ESS Hybrid Inverter',
@@ -322,10 +324,10 @@ specs = [
             },
             {
                 'name': 'Battery power [W]',
-                'value_id': 'PowerDC',
+                'value_id': 'PowerDCChaDisDiff',
                 'start_address': 0x0126,
                 'value_type': 'S16',
-                'scale_factor': -1.0,
+                'scale_factor': -1.0,  # FIXME: sign?
             },
         ],
     },

@@ -19,6 +19,8 @@
 
 #include "modbus_meter_simulator.h"
 
+#include <math.h>
+
 #include "event_log_prefix.h"
 #include "module_dependencies.h"
 #include "bindings/hal_common.h"
@@ -89,7 +91,7 @@ void ModbusMeterSimulator::setup()
 
     task_scheduler.scheduleWithFixedDelay([this](){
         this->checkRS485State();
-    }, 10 * 1000, 10 * 1000);
+    }, 10_s, 10_s);
 }
 
 void ModbusMeterSimulator::register_urls()
@@ -143,19 +145,19 @@ void ModbusMeterSimulator::setupRS485()
     tf_rs485_register_modbus_slave_write_multiple_registers_request_callback(&bricklet, [](struct TF_RS485 *rs485, uint8_t request_id, uint32_t starting_address, uint16_t *registers, uint16_t registers_length, void *user_data) {
         task_scheduler.scheduleOnce([request_id, starting_address, registers, registers_length, user_data]() {
             static_cast<ModbusMeterSimulator *>(user_data)->modbus_slave_write_multiple_registers_request_handler(request_id, starting_address, registers, registers_length);
-        }, 0);
+        });
     }, write_registers_callback_buffer, this);
 
     tf_rs485_register_modbus_slave_read_holding_registers_request_callback(&bricklet, [](TF_RS485 *rs485, uint8_t request_id, uint32_t starting_address, uint16_t count, void *user_data) {
         task_scheduler.scheduleOnce([request_id, starting_address, count, user_data]() {
             static_cast<ModbusMeterSimulator *>(user_data)->modbus_slave_read_holding_registers_request_handler(request_id, starting_address, count);
-        }, 0);
+        });
     }, this);
 
     tf_rs485_register_modbus_slave_read_input_registers_request_callback(&bricklet, [](TF_RS485 *rs485, uint8_t request_id, uint32_t starting_address, uint16_t count, void *user_data) {
         task_scheduler.scheduleOnce([request_id, starting_address, count, user_data]() {
             static_cast<ModbusMeterSimulator *>(user_data)->modbus_slave_read_input_registers_request_handler(request_id, starting_address, count);
-        }, 0);
+        });
     }, this);
 
     // Unused callbacks
@@ -274,14 +276,24 @@ void ModbusMeterSimulator::modbus_slave_read_input_registers_request_handler(uin
         return;
     }
 
+    bool at_least_one_fresh = false;
+
     for (uint32_t offset = 0; offset < count; offset += 2) {
         uint32_t cached_index = register_address2cached_index(starting_address + offset);
         float float_val;
-        meters.get_value_by_index(source_meter_slot, cached_index, &float_val);
+        MeterValueAvailability avl = meters.get_value_by_index(source_meter_slot, cached_index, &float_val, 2500_ms);
+        if (avl == MeterValueAvailability::Fresh) {
+            at_least_one_fresh = true;
+        } else {
+            float_val = NAN;
+        }
         convert_float_to_regs(regs + offset, float_val);
     }
 
-    int rc = tf_rs485_modbus_slave_answer_read_input_registers_request(&bricklet, request_id, regs, count);
-    if (rc != TF_E_OK)
-        logger.printfln("Answering read input registers request failed with code %i", rc);
+    if (at_least_one_fresh) {
+        int rc = tf_rs485_modbus_slave_answer_read_input_registers_request(&bricklet, request_id, regs, count);
+        if (rc != TF_E_OK) {
+            logger.printfln("Answering read input registers request failed with code %i", rc);
+        }
+    }
 }

@@ -173,11 +173,11 @@ void Meters::pre_setup()
 {
     for (MeterSlot &meter_slot : meter_slots) {
         meter_slot.value_ids = Config::Array({},
-            get_config_uint_max_prototype(),
+            Config::get_prototype_uint32_0(),
             0, METERS_MAX_VALUES_PER_METER, Config::type_id<Config::ConfUint>()
         );
         meter_slot.values = Config::Array({},
-            get_config_float_nan_prototype(),
+            Config::get_prototype_float_nan(),
             0, METERS_MAX_VALUES_PER_METER, Config::type_id<Config::ConfFloat>()
         );
 
@@ -191,10 +191,6 @@ void Meters::pre_setup()
     generators.reserve(METER_CLASS_ID_COUNT);
     register_meter_generator(MeterClassID::None, &meter_generator_none);
 
-    last_reset_prototype = Config::Object({
-        {"last_reset", Config::Uint32(0)}
-    });
-
 
 #if MODULE_AUTOMATION_AVAILABLE()
     automation.register_action(
@@ -203,7 +199,11 @@ void Meters::pre_setup()
             {"meter_slot", Config::Uint(0, 0, METERS_SLOTS - 1)}
         }),
         [this](const Config *config) {
-            api.callCommand(get_path(config->get("meter_slot")->asUint(), Meters::PathType::Reset).c_str(), {});
+            uint32_t meter_slot = config->get("meter_slot")->asUint();
+            const String err = api.callCommand(get_path(meter_slot, Meters::PathType::Reset).c_str(), {});
+            if (!err.isEmpty()) {
+                logger.printfln("Automation couldn't reset meter %u: %s", meter_slot, err.c_str());
+            }
         }
     );
 #endif
@@ -223,6 +223,10 @@ void Meters::setup()
         auto meter_generator = std::get<1>(generator_tuple);
         config_prototypes[i] = {meter_class, *meter_generator->get_config_prototype()};
     }
+
+    const Config last_reset_prototype = Config::Object({
+        {"last_reset", Config::Uint32(0)}
+    });
 
     for (uint32_t slot = 0; slot < METERS_SLOTS; slot++) {
         MeterSlot &meter_slot = meter_slots[slot];
@@ -375,7 +379,7 @@ void Meters::setup()
         }
 
         last_history_slot = current_history_slot;
-    }, 0, 500);
+    }, 500_ms);
 
     initialized = true;
 }
@@ -395,7 +399,7 @@ void Meters::register_urls()
         api.addState(get_path(slot, Meters::PathType::State),    &meter_slot.state);
         api.addState(get_path(slot, Meters::PathType::Errors),   &meter_slot.errors);
         api.addState(get_path(slot, Meters::PathType::ValueIDs), &meter_slot.value_ids);
-        api.addState(get_path(slot, Meters::PathType::Values),   &meter_slot.values, {}, METERS_VALUES_LOW_LATENCY);
+        api.addState(get_path(slot, Meters::PathType::Values),   &meter_slot.values, {}, {}, METERS_VALUES_LOW_LATENCY);
 
         const String base_path = get_path(slot, Meters::PathType::Base);
 
@@ -406,13 +410,13 @@ void Meters::register_urls()
         }
 
         if (meter_slot.meter->supports_reset()) {
-            api.addCommand(get_path(slot, Meters::PathType::Reset), Config::Null(), {}, [this, &meter_slot, slot]() mutable {
+            api.addCommand(get_path(slot, Meters::PathType::Reset), Config::Null(), {}, [this, &meter_slot, slot](String &/*errmsg*/) mutable {
                 if (!meter_slot.meter->reset())
                     return;
 
                 struct timeval tv_now;
 
-                if (clock_synced(&tv_now)) {
+                if (rtc.clock_synced(&tv_now)) {
                     //FIXME not Y2038-safe
                     meter_slot.last_reset.get("last_reset")->updateUint(static_cast<uint32_t>(tv_now.tv_sec));
                 } else {
@@ -498,6 +502,13 @@ void Meters::register_urls()
         meter_slots[meters_legacy_api.get_linked_meter_slot()].power_history.register_urls("meter/");
     }
 #endif
+}
+
+void Meters::register_events()
+{
+    for (uint32_t slot = 0; slot < METERS_SLOTS; slot++) {
+        meter_slots[slot].meter->register_events();
+    }
 }
 
 void Meters::pre_reboot()
@@ -616,7 +627,7 @@ MeterValueAvailability Meters::get_value_by_index(uint32_t slot, uint32_t index,
 
     const MeterSlot &meter_slot = meter_slots[slot];
 
-    *value_out = meter_slot.values.get(static_cast<uint16_t>(index))->asFloat();
+    *value_out = meter_slot.values.get(index)->asFloat();
 
     if (!this->meter_is_fresh(slot, max_age)) {
         return MeterValueAvailability::Stale;
@@ -645,8 +656,7 @@ MeterValueAvailability Meters::get_single_value(uint32_t slot, uint32_t kind, fl
         // Meter hasn't declared its values yet, ask the configured meter.
         bool supported;
         switch (kind) {
-            case INDEX_CACHE_POWER_REAL:     // fallthrough
-            case INDEX_CACHE_POWER_VIRTUAL:  supported = meter_slot.meter->supports_power();  break;
+            case INDEX_CACHE_POWER:          supported = meter_slot.meter->supports_power();  break;
             case INDEX_CACHE_ENERGY_IMPORT:  supported = meter_slot.meter->supports_energy_import(); break;
             case INDEX_CACHE_ENERGY_IMEXSUM: supported = meter_slot.meter->supports_energy_imexsum(); break;
             case INDEX_CACHE_ENERGY_EXPORT:  supported = meter_slot.meter->supports_energy_export(); break;
@@ -659,7 +669,7 @@ MeterValueAvailability Meters::get_single_value(uint32_t slot, uint32_t kind, fl
         }
     }
 
-    *value_out = meter_slot.values.get(static_cast<uint16_t>(cached_index))->asFloat();
+    *value_out = meter_slot.values.get(cached_index)->asFloat();
 
     if (!this->meter_is_fresh(slot, max_age)) {
         return MeterValueAvailability::Stale;
@@ -668,14 +678,9 @@ MeterValueAvailability Meters::get_single_value(uint32_t slot, uint32_t kind, fl
     }
 }
 
-MeterValueAvailability Meters::get_power_real(uint32_t slot, float *power, micros_t max_age)
+MeterValueAvailability Meters::get_power(uint32_t slot, float *power, micros_t max_age)
 {
-    return get_single_value(slot, INDEX_CACHE_POWER_REAL, power, max_age);
-}
-
-MeterValueAvailability Meters::get_power_virtual(uint32_t slot, float *power, micros_t max_age)
-{
-    return get_single_value(slot, INDEX_CACHE_POWER_VIRTUAL, power, max_age);
+    return get_single_value(slot, INDEX_CACHE_POWER, power, max_age);
 }
 
 MeterValueAvailability Meters::get_energy_import(uint32_t slot, float *total_import_kwh, micros_t max_age)
@@ -702,23 +707,24 @@ MeterValueAvailability Meters::get_currents(uint32_t slot, float currents[INDEX_
     const MeterSlot &meter_slot = meter_slots[slot];
     const ConfigRoot &values = meter_slot.values;
 
-    uint32_t currents_unavailable = 0;
+    uint32_t currents_available = 0;
     for (uint32_t i = 0; i < INDEX_CACHE_CURRENT_COUNT; i++) {
         uint32_t cached_index = meter_slot.index_cache_currents[i];
 
         if (cached_index == UINT32_MAX) {
-            currents_unavailable++;
             currents[i] = NAN;
         } else {
-            currents[i] = values.get(static_cast<uint16_t>(cached_index))->asFloat();
+            currents_available++;
+            currents[i] = values.get(cached_index)->asFloat();
         }
     }
 
-    if (currents_unavailable > 0) {
-        if (meter_slot.meter->supports_currents()) {
-            return MeterValueAvailability::CurrentlyUnknown;
-        } else {
+    if (currents_available == 0) {
+        // If the meter already declared its values but we didn't find any currents, we know they're not supported.
+        if (meter_slot.values_declared || !meter_slot.meter->supports_currents()) {
             return MeterValueAvailability::Unavailable;
+        } else {
+            return MeterValueAvailability::CurrentlyUnknown;
         }
     }
 
@@ -754,7 +760,7 @@ void Meters::apply_filters(MeterSlot &meter_slot, size_t base_value_count, const
     for (size_t i = 0; i < extra_value_count; i++) {
         float value = extra_values[i];
         if (!isnan(value)) {
-            values.get(static_cast<uint16_t>(base_value_count + i))->updateFloat(value);
+            values.get(base_value_count + i)->updateFloat(value);
         }
     }
 }
@@ -777,7 +783,7 @@ void Meters::update_value(uint32_t slot, uint32_t index, float new_value)
     MeterSlot &meter_slot = meter_slots[slot];
 
     Config &values = meter_slot.values;
-    Config *conf_val = static_cast<Config *>(values.get(static_cast<uint16_t>(index)));
+    Config *conf_val = static_cast<Config *>(values.get(index));
     micros_t t_now = now_us();
 
     // Think about ordering and short-circuting issues before changing this!
@@ -791,7 +797,7 @@ void Meters::update_value(uint32_t slot, uint32_t index, float new_value)
         float base_values[METERS_MAX_VALUES_PER_METER];
         size_t base_value_count = meter_slot.base_value_count;
 
-        for (uint16_t i = 0; i < base_value_count; i++) {
+        for (size_t i = 0; i < base_value_count; i++) {
             base_values[i] = values.get(i)->asFloat();
         }
 
@@ -809,11 +815,11 @@ void Meters::update_all_values(uint32_t slot, const float new_values[])
     MeterSlot &meter_slot = meter_slots[slot];
 
     Config &values = meter_slot.values;
-    auto base_value_count = meter_slot.base_value_count;
+    size_t base_value_count = meter_slot.base_value_count;
     bool updated_any_value = false;
     bool changed_any_value = false;
 
-    for (uint16_t i = 0; i < base_value_count; i++) {
+    for (size_t i = 0; i < base_value_count; i++) {
         float new_value = new_values[i];
         if (!isnan(new_value)) {
             Config *conf_val = static_cast<Config *>(values.get(i));
@@ -849,7 +855,7 @@ void Meters::update_all_values(uint32_t slot, const Config *new_values)
         return;
     }
 
-    auto value_count = meter_slots[slot].base_value_count;
+    size_t value_count = meter_slots[slot].base_value_count;
 
     if (new_values->count() != value_count) {
         logger.printfln("Update all values element count mismatch: %u != %u", new_values->count(), value_count);
@@ -857,7 +863,7 @@ void Meters::update_all_values(uint32_t slot, const Config *new_values)
     }
 
     float float_values[METERS_MAX_VALUES_PER_METER];
-    for (uint16_t i = 0; i < value_count; i++) {
+    for (size_t i = 0; i < value_count; i++) {
         float_values[i] = new_values->get(i)->asFloat();
     }
 
@@ -874,7 +880,7 @@ void Meters::finish_update(uint32_t slot)
     MeterSlot &meter_slot = meter_slots[slot];
     float power;
 
-    if (get_power_real(slot, &power) == MeterValueAvailability::Fresh) {
+    if (get_power(slot, &power) == MeterValueAvailability::Fresh) {
         meter_slot.power_history.add_sample(power);
     }
 }
@@ -902,7 +908,7 @@ void Meters::declare_value_ids(uint32_t slot, const MeterValueID new_value_ids[]
     }
 
     MeterValueID total_value_ids[METERS_MAX_VALUES_PER_METER];
-    mempcpy(total_value_ids, new_value_ids, sizeof(MeterValueID) * value_id_count);
+    memcpy(total_value_ids, new_value_ids, sizeof(MeterValueID) * value_id_count);
 
     uint32_t total_value_id_count = value_id_count;
     meter_slot.base_value_count = value_id_count;
@@ -982,7 +988,7 @@ void Meters::declare_value_ids(uint32_t slot, const MeterValueID new_value_ids[]
     }
     meter_slot.value_combiner_filters_data = filter_data_compact;
 
-    for (uint16_t i = 0; i < static_cast<uint16_t>(total_value_id_count); i++) {
+    for (uint32_t i = 0; i < total_value_id_count; i++) {
         auto val = value_ids.add();
         val->updateUint(static_cast<uint32_t>(total_value_ids[i]));
 
@@ -992,8 +998,7 @@ void Meters::declare_value_ids(uint32_t slot, const MeterValueID new_value_ids[]
     uint32_t index_power_ac            = meters_find_id_index(total_value_ids, total_value_id_count, MeterValueID::PowerActiveLSumImExDiff);
     uint32_t index_power_dc            = meters_find_id_index(total_value_ids, total_value_id_count, MeterValueID::PowerDCImExDiff);
     uint32_t index_power_dc_battery    = meters_find_id_index(total_value_ids, total_value_id_count, MeterValueID::PowerDCChaDisDiff);
-    uint32_t index_power_real          = std::min({index_power_ac, index_power_dc, index_power_dc_battery});
-    uint32_t index_power_virtual       = meters_find_id_index(total_value_ids, total_value_id_count, MeterValueID::PowerActiveLSumImExDiffVirtual);
+    uint32_t index_power               = index_power_ac != UINT32_MAX ? index_power_ac : (index_power_dc != UINT32_MAX ? index_power_dc : index_power_dc_battery);
     uint32_t index_energy_ac_import    = meters_find_id_index(total_value_ids, total_value_id_count, MeterValueID::EnergyActiveLSumImport);
     uint32_t index_energy_ac_imexsum   = meters_find_id_index(total_value_ids, total_value_id_count, MeterValueID::EnergyActiveLSumImExSum);
     uint32_t index_energy_ac_export    = meters_find_id_index(total_value_ids, total_value_id_count, MeterValueID::EnergyActiveLSumExport);
@@ -1004,8 +1009,7 @@ void Meters::declare_value_ids(uint32_t slot, const MeterValueID new_value_ids[]
     uint32_t index_energy_dc_chadissum = meters_find_id_index(total_value_ids, total_value_id_count, MeterValueID::EnergyDCChaDisSum);
     uint32_t index_energy_dc_discharge = meters_find_id_index(total_value_ids, total_value_id_count, MeterValueID::EnergyDCDischarge);
 
-    meter_slot.index_cache_single_values[INDEX_CACHE_POWER_REAL]     = index_power_real;
-    meter_slot.index_cache_single_values[INDEX_CACHE_POWER_VIRTUAL]  = index_power_virtual != UINT32_MAX ? index_power_virtual : index_power_real;
+    meter_slot.index_cache_single_values[INDEX_CACHE_POWER]          = index_power;
     meter_slot.index_cache_single_values[INDEX_CACHE_ENERGY_IMPORT]  = std::min({index_energy_ac_import,  index_energy_dc_import,  index_energy_dc_charge});
     meter_slot.index_cache_single_values[INDEX_CACHE_ENERGY_IMEXSUM] = std::min({index_energy_ac_imexsum, index_energy_dc_imexsum, index_energy_dc_chadissum});
     meter_slot.index_cache_single_values[INDEX_CACHE_ENERGY_EXPORT]  = std::min({index_energy_ac_export,  index_energy_dc_export,  index_energy_dc_discharge});
@@ -1027,9 +1031,9 @@ void Meters::declare_value_ids(uint32_t slot, const MeterValueID new_value_ids[]
     }
 }
 
-bool Meters::get_cached_real_power_index(uint32_t slot, uint32_t *index)
+bool Meters::get_cached_power_index(uint32_t slot, uint32_t *index)
 {
-    *index = meter_slots[slot].index_cache_single_values[INDEX_CACHE_POWER_REAL];
+    *index = meter_slots[slot].index_cache_single_values[INDEX_CACHE_POWER];
     return *index != UINT32_MAX;
 }
 
@@ -1042,9 +1046,9 @@ void Meters::fill_index_cache(uint32_t slot, size_t find_value_count, const Mete
 
     Config &value_ids = meter_slots[slot].value_ids;
 
-    uint16_t value_id_count = static_cast<uint16_t>(value_ids.count());
+    size_t value_id_count = value_ids.count();
     MeterValueID *value_ids_arr = static_cast<MeterValueID *>(malloc(value_id_count * sizeof(MeterValueID)));
-    for (uint16_t i = 0; i < value_id_count; i++) {
+    for (size_t i = 0; i < value_id_count; i++) {
         value_ids_arr[i] = static_cast<MeterValueID>(value_ids.get(i)->asUint());
     }
 
@@ -1066,30 +1070,6 @@ String Meters::get_path(uint32_t slot, Meters::PathType path_type)
     path.concat(meters_path_postfixes[static_cast<uint32_t>(path_type)]);
 
     return path;
-}
-
-[[gnu::const]]
-const Config *Meters::get_config_bool_false_prototype() const
-{
-    return &config_bool_false_prototype;
-}
-
-[[gnu::const]]
-const Config *Meters::get_config_float_nan_prototype()
-{
-    if (config_float_nan_prototype.is_null()) {
-        config_float_nan_prototype = Config::Float(NAN);
-    }
-    return &config_float_nan_prototype;
-}
-
-[[gnu::const]]
-const Config *Meters::get_config_uint_max_prototype()
-{
-    if (config_uint_max_prototype.is_null()) {
-        config_uint_max_prototype = Config::Uint32(UINT32_MAX);
-    }
-    return &config_uint_max_prototype;
 }
 
 uint32_t meters_find_id_index(const MeterValueID value_ids[], uint32_t value_id_count, MeterValueID id)

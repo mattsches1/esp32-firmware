@@ -37,12 +37,11 @@
 
 #define METERS_MAX_FILTER_VALUES 7
 
-#define INDEX_CACHE_POWER_REAL     0
-#define INDEX_CACHE_POWER_VIRTUAL  1
-#define INDEX_CACHE_ENERGY_IMPORT  2
-#define INDEX_CACHE_ENERGY_IMEXSUM 3
-#define INDEX_CACHE_ENERGY_EXPORT  4
-#define INDEX_CACHE_SINGLE_VALUES_COUNT 5
+#define INDEX_CACHE_POWER          0
+#define INDEX_CACHE_ENERGY_IMPORT  1
+#define INDEX_CACHE_ENERGY_IMEXSUM 2
+#define INDEX_CACHE_ENERGY_EXPORT  3
+#define INDEX_CACHE_SINGLE_VALUES_COUNT 4
 
 #define INDEX_CACHE_CURRENT_L1 0
 #define INDEX_CACHE_CURRENT_L2 1
@@ -81,6 +80,7 @@ public:
     void pre_setup() override;
     void setup() override;
     void register_urls() override;
+    void register_events() override;
     void pre_reboot() override;
 
     void register_meter_generator(MeterClassID meter_class, MeterGenerator *generator);
@@ -92,8 +92,7 @@ public:
 
     MeterValueAvailability get_values(uint32_t slot, const Config **values, micros_t max_age = 0_us);
     MeterValueAvailability get_value_by_index(uint32_t slot, uint32_t index, float *value, micros_t max_age = 0_us);
-    MeterValueAvailability get_power_real(uint32_t slot, float *power_w, micros_t max_age = 0_us);
-    MeterValueAvailability get_power_virtual(uint32_t slot, float *power_w, micros_t max_age = 0_us);
+    MeterValueAvailability get_power(uint32_t slot, float *power_w, micros_t max_age = 0_us);
     MeterValueAvailability get_energy_import(uint32_t slot, float *total_import_kwh, micros_t max_age = 0_us);
     MeterValueAvailability get_energy_imexsum(uint32_t slot, float *total_imexsum_kwh, micros_t max_age = 0_us);
     MeterValueAvailability get_energy_export(uint32_t slot, float *total_export_kwh, micros_t max_age = 0_us);
@@ -105,15 +104,11 @@ public:
     void finish_update(uint32_t slot);
     void declare_value_ids(uint32_t slot, const MeterValueID value_ids[], uint32_t value_id_count);
 
-    bool get_cached_real_power_index(uint32_t slot, uint32_t *index);
+    bool get_cached_power_index(uint32_t slot, uint32_t *index);
 
     void fill_index_cache(uint32_t slot, size_t value_count, const MeterValueID value_ids[], uint32_t index_cache[]);
 
     String get_path(uint32_t slot, PathType path_type);
-
-    [[gnu::const]] const Config *get_config_bool_false_prototype() const;
-    [[gnu::const]] const Config *get_config_float_nan_prototype();
-    [[gnu::const]] const Config *get_config_uint_max_prototype();
 
 private:
     class MeterSlot final
@@ -155,11 +150,6 @@ private:
     MeterSlot meter_slots[METERS_SLOTS];
 
     bool meters_feature_declared = false;
-
-    Config config_bool_false_prototype = Config::Bool(false);
-    Config config_float_nan_prototype;
-    Config config_uint_max_prototype;
-    ConfigRoot last_reset_prototype;
 
     std::vector<std::tuple<MeterClassID, MeterGenerator *>> generators;
 

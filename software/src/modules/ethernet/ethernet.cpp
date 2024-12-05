@@ -42,7 +42,8 @@ void Ethernet::pre_setup()
         {"subnet", Config::Str("0.0.0.0", 7, 15)},
         {"dns", Config::Str("0.0.0.0", 7, 15)},
         {"dns2", Config::Str("0.0.0.0", 7, 15)},
-    }), [](Config &cfg, ConfigSource source) -> String {
+    }),
+    [](Config &cfg, ConfigSource source) -> String {
         IPAddress ip_addr, subnet_mask, gateway_addr, unused;
 
         if (!ip_addr.fromString(cfg.get("ip")->asEphemeralCStr()))
@@ -57,10 +58,10 @@ void Ethernet::pre_setup()
         if (!is_valid_subnet_mask(subnet_mask))
             return "Invalid subnet mask passed: Expected format is 255.255.255.0";
 
-        if (ip_addr != IPAddress(0,0,0,0) && is_in_subnet(ip_addr, subnet_mask, IPAddress(127,0,0,1)))
+        if (ip_addr != IPAddress(0, 0, 0, 0) && is_in_subnet(ip_addr, subnet_mask, IPAddress(127, 0, 0, 1)))
             return "Invalid IP or subnet mask passed: This configuration would route localhost (127.0.0.1) to the ethernet interface.";
 
-        if (gateway_addr != IPAddress(0,0,0,0) && !is_in_subnet(ip_addr, subnet_mask, gateway_addr))
+        if (gateway_addr != IPAddress(0, 0, 0, 0) && !is_in_subnet(ip_addr, subnet_mask, gateway_addr))
             return "Invalid IP, subnet mask, or gateway passed: IP and gateway are not in the same network according to the subnet mask.";
 
         if (!unused.fromString(cfg.get("dns")->asEphemeralCStr()))
@@ -73,7 +74,7 @@ void Ethernet::pre_setup()
     }};
 
     state = Config::Object({
-        {"connection_state", Config::Uint((uint)EthernetState::NotConfigured)},
+        {"connection_state", Config::Enum(EthernetState::NotConfigured, EthernetState::NotConfigured, EthernetState::Connected)},
         {"connection_start", Config::Uint(0)},
         {"connection_end", Config::Uint(0)},
         {"ip", Config::Str("0.0.0.0", 7, 15)},
@@ -129,7 +130,7 @@ void Ethernet::setup()
 
             task_scheduler.scheduleOnce([this](){
                 state.get("connection_state")->updateEnum(connection_state);
-            }, 0);
+            });
         },
         ARDUINO_EVENT_ETH_START);
 
@@ -164,10 +165,10 @@ void Ethernet::setup()
 #if MODULE_WIFI_AVAILABLE()
                 if (wifi.is_sta_enabled()) {
                     logger.printfln("Warning: Ethernet is connected and WiFi station is enabled at the same time.");
-                    logger.printfln_plain("         This can lead to connectivity issues and is not recommended.");
+                    logger.printfln_continue("     This can lead to connectivity issues and is not recommended.");
                 }
 #endif
-            }, 0);
+            });
         },
         ARDUINO_EVENT_ETH_CONNECTED);
 
@@ -187,7 +188,7 @@ void Ethernet::setup()
                 state.get("ip")->updateString(ip);
                 state.get("subnet")->updateString(subnet.toString());
                 state.get("connection_start")->updateUint(now);
-            }, 0);
+            });
         },
         ARDUINO_EVENT_ETH_GOT_IP);
 
@@ -209,7 +210,7 @@ void Ethernet::setup()
                 state.get("ip")->updateString("0.0.0.0");
                 state.get("subnet")->updateString("0.0.0.0");
                 state.get("connection_end")->updateUint(now);
-            }, 0);
+            });
         },
         ARDUINO_EVENT_ETH_LOST_IP);
 
@@ -226,7 +227,7 @@ void Ethernet::setup()
                 state.get("ip")->updateString("0.0.0.0");
                 state.get("subnet")->updateString("0.0.0.0");
                 state.get("connection_end")->updateUint(now);
-            }, 0);
+            });
         },
         ARDUINO_EVENT_ETH_DISCONNECTED);
 
@@ -241,7 +242,7 @@ void Ethernet::setup()
             task_scheduler.scheduleOnce([this, now](){
                 state.get("connection_state")->updateEnum(connection_state);
                 state.get("connection_end")->updateUint(now);
-            }, 0);
+            });
         },
         ARDUINO_EVENT_ETH_STOP);
 
@@ -252,7 +253,7 @@ void Ethernet::register_urls()
 {
     api.addPersistentConfig("ethernet/config", &config);
     api.addState("ethernet/state", &state);
-    api.addCommand("ethernet/force_reset", Config::Null(), {}, [this](){
+    api.addCommand("ethernet/force_reset", Config::Null(), {}, [this](String &/*errmsg*/) {
         esp_eth_stop(ETH.eth_handle);
         pinMode(5, OUTPUT);
         digitalWrite(5, LOW);

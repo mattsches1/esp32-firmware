@@ -31,9 +31,11 @@ public:
     void pre_setup() override;
     void setup() override;
     void register_urls() override;
+    void register_events() override;
 
     ConfigRoot config;
     ConfigRoot config_in_use;
+    void reschedule_announce_next_topic();
 
 private:
     // Necessary to not access config_in_use in MQTT thread.
@@ -47,6 +49,7 @@ private:
 
     CoolString device_info;
 
+    uint64_t task_id = 0;
     void announce_next_topic(uint32_t next_topic);
 
     void prepare_topics();

@@ -45,14 +45,14 @@ void EvseCommon::pre_setup()
         {"button_pressed", Config::Bool(false)},
     });
 
-    Config *evse_charging_slot = new Config{Config::Object({
+    slots_prototype = Config::Object({
         {"max_current", Config::Uint16(0)},
         {"active", Config::Bool(false)},
         {"clear_on_disconnect", Config::Bool(false)}
-    })};
+    });
 
     slots = Config::Array({},
-        evse_charging_slot,
+        &slots_prototype,
         CHARGING_SLOT_COUNT, CHARGING_SLOT_COUNT,
         Config::type_id<Config::ConfObject>());
 
@@ -145,9 +145,7 @@ void EvseCommon::pre_setup()
 
     automation.register_trigger(
         AutomationTriggerID::EVSEExternalCurrentWd,
-        *Config::Null(),
-        nullptr,
-        false
+        *Config::Null()
     );
 
     automation.register_action(
@@ -255,7 +253,20 @@ void EvseCommon::apply_defaults()
     if (this->apply_slot_default(CHARGING_SLOT_CHARGE_MANAGER, 0, cm_enabled, true))
         backend->set_charging_slot(CHARGING_SLOT_CHARGE_MANAGER, 0, cm_enabled, true);
 
-    // Slot 8 (external) is controlled via API, no need to change anything here
+    // Slot 8 (external) is controlled via API, but we want to enable it in any case.
+    uint16_t external_current;
+    bool external_enabled;
+    bool external_clear_on_disconnect;
+    rc = backend->get_charging_slot_default(CHARGING_SLOT_EXTERNAL, &external_current, &external_enabled, &external_clear_on_disconnect);
+    if (rc != TF_E_OK) {
+        backend->is_in_bootloader(rc);
+        logger.printfln("Failed to apply defaults (external read failed). rc %d", rc);
+        return;
+    }
+    if (!external_enabled) {
+        backend->set_charging_slot_default(CHARGING_SLOT_EXTERNAL, external_current, true, external_clear_on_disconnect);
+        backend->set_charging_slot(CHARGING_SLOT_EXTERNAL, external_current, true, external_clear_on_disconnect);
+    }
 
     // Disabling all unused charging slots.
     for (int i = CHARGING_SLOT_COUNT; i < CHARGING_SLOT_COUNT_SUPPORTED_BY_EVSE; i++) {
@@ -294,12 +305,12 @@ void EvseCommon::setup()
 #if MODULE_AUTOMATION_AVAILABLE()
     task_scheduler.scheduleOnce([this]() {
         automation.trigger(AutomationTriggerID::ChargerState, nullptr, this);
-    }, 0);
+    });
 #endif
 
     task_scheduler.scheduleWithFixedDelay([this](){
         backend->update_all_data();
-    }, 0, 250);
+    }, 250_ms);
 
 #if MODULE_POWER_MANAGER_AVAILABLE()
     power_manager.register_phase_switcher_backend(backend);
@@ -348,6 +359,37 @@ void EvseCommon::setup_evse()
     backend->set_initialized(true);
 }
 
+void EvseCommon::send_cm_client_update() {
+#if MODULE_CM_NETWORKING_AVAILABLE()
+    uint16_t supported_current = 32000;
+    for (size_t i = 0; i < CHARGING_SLOT_COUNT; ++i) {
+        if (i == CHARGING_SLOT_CHARGE_MANAGER)
+            continue;
+        if (!slots.get(i)->get("active")->asBool())
+            continue;
+        supported_current = min(supported_current, (uint16_t)slots.get(i)->get("max_current")->asUint());
+    }
+
+    const uint32_t phases = backend->get_phases();
+
+    cm_networking.send_client_update(
+        local_uid_num,
+        state.get("iec61851_state")->asUint(),
+        state.get("charger_state")->asUint(),
+        low_level_state.get("time_since_state_change")->asUint(),
+        state.get("error_state")->asUint(),
+        low_level_state.get("uptime")->asUint(),
+        low_level_state.get("charging_time")->asUint(),
+        slots.get(CHARGING_SLOT_CHARGE_MANAGER)->get("max_current")->asUint(),
+        supported_current,
+        management_enabled.get("enabled")->asBool(),
+        backend->get_control_pilot_disconnect(),
+        phases,
+        backend->phase_switching_capable() && backend->can_switch_phases_now(4 - phases)
+    );
+#endif
+}
+
 void EvseCommon::register_urls()
 {
 #if MODULE_CM_NETWORKING_AVAILABLE()
@@ -358,38 +400,27 @@ void EvseCommon::register_urls()
         set_managed_current(current);
 
         backend->set_control_pilot_disconnect(cp_disconnect_requested, nullptr);
-        auto phases = backend->get_is_3phase() ? 3 : 1;
-        if (phases_requested != 0 && phases != phases_requested) {
-            backend->switch_phases_3phase(phases_requested == 3);
+        uint32_t phases = backend->get_phases();
+        uint32_t phases_wanted = static_cast<uint32_t>(phases_requested);
+        if (phases_wanted != 0 && phases != phases_wanted) {
+            backend->switch_phases(phases_wanted);
         }
+
+        // Decouple send via deadline: If we would send a client update immediately,
+        // the sent data would be stale, because we have to read back with update_all_data first.
+        // Only update the deadline if it is more than 300_ms in the future:
+        // If for some reason we receive manager packets faster than one every 300_ms,
+        // we still have to send client updates.
+        next_cm_send_deadline = std::min(now_us() + 300_ms, next_cm_send_deadline);
     });
 
     task_scheduler.scheduleWithFixedDelay([this](){
-        uint16_t supported_current = 32000;
-        for (int i = 0; i < CHARGING_SLOT_COUNT; ++i) {
-            if (i == CHARGING_SLOT_CHARGE_MANAGER)
-                continue;
-            if (!slots.get(i)->get("active")->asBool())
-                continue;
-            supported_current = min(supported_current, (uint16_t)slots.get(i)->get("max_current")->asUint());
-        }
+        if (!deadline_elapsed(next_cm_send_deadline))
+            return;
 
-        cm_networking.send_client_update(
-            local_uid_num,
-            state.get("iec61851_state")->asUint(),
-            state.get("charger_state")->asUint(),
-            low_level_state.get("time_since_state_change")->asUint(),
-            state.get("error_state")->asUint(),
-            low_level_state.get("uptime")->asUint(),
-            low_level_state.get("charging_time")->asUint(),
-            slots.get(CHARGING_SLOT_CHARGE_MANAGER)->get("max_current")->asUint(),
-            supported_current,
-            management_enabled.get("enabled")->asBool(),
-            backend->get_control_pilot_disconnect(),
-            backend->get_is_3phase() ? 3 : 1,
-            backend->phase_switching_capable() && backend->can_switch_phases_now(!backend->get_is_3phase())
-        );
-    }, 1000, 1000);
+        send_cm_client_update();
+        next_cm_send_deadline = now_us() + 2500_ms;
+    }, 100_ms, 100_ms);
 
     task_scheduler.scheduleWithFixedDelay([this]() {
         if (!deadline_elapsed(last_current_update + 30000))
@@ -405,48 +436,52 @@ void EvseCommon::register_urls()
         }
         shutdown_logged = true;
         backend->set_charging_slot_max_current(CHARGING_SLOT_CHARGE_MANAGER, 0);
-    }, 1000, 1000);
+    }, 1_s, 1_s);
 #endif
 
     // States
     api.addState("evse/state", &state);
     api.addState("evse/hardware_configuration", &hardware_configuration);
     api.addState("evse/low_level_state", &low_level_state);
-    api.addState("evse/button_state", &button_state, {}, true);
+    api.addState("evse/button_state", &button_state, {}, {}, true);
     api.addState("evse/slots", &slots);
     api.addState("evse/indicator_led", &indicator_led);
 
     //Actions
-    api.addCommand("evse/stop_charging", Config::Null(), {}, [this](){
+    api.addCommand("evse/stop_charging", Config::Null(), {}, [this](String &/*errmsg*/) {
         if (state.get("iec61851_state")->asUint() != IEC_STATE_A)
             backend->set_charging_slot_max_current(CHARGING_SLOT_AUTOSTART_BUTTON, 0);
     }, true);
 
-    api.addCommand("evse/start_charging", Config::Null(), {}, [this](){
+    api.addCommand("evse/start_charging", Config::Null(), {}, [this](String &/*errmsg*/) {
         if (state.get("iec61851_state")->asUint() != IEC_STATE_A)
             backend->set_charging_slot_max_current(CHARGING_SLOT_AUTOSTART_BUTTON, 32000);
     }, true);
 
     api.addState("evse/external_current", &external_current);
-    api.addCommand("evse/external_current_update", &external_current_update, {}, [this](){
-        this->last_external_update = millis();
+    api.addCommand("evse/external_current_update", &external_current_update, {}, [this](String &/*errmsg*/) {
+        auto current = external_current_update.get("current")->asUint();
+        // Only reset the watchdog if this was a "valid" current.
+        // We don't want to return an error if this current is invalid to not break home automation UIs.
+        if (current == 0 || (current >= 6000 && current <= 32000))
+            this->last_external_update = millis();
         backend->set_charging_slot_max_current(CHARGING_SLOT_EXTERNAL, external_current_update.get("current")->asUint());
     }, false);
 
     api.addState("evse/external_clear_on_disconnect", &external_clear_on_disconnect);
-    api.addCommand("evse/external_clear_on_disconnect_update", &external_clear_on_disconnect_update, {}, [this](){
+    api.addCommand("evse/external_clear_on_disconnect_update", &external_clear_on_disconnect_update, {}, [this](String &/*errmsg*/) {
         backend->set_charging_slot_clear_on_disconnect(CHARGING_SLOT_EXTERNAL, external_clear_on_disconnect_update.get("clear_on_disconnect")->asBool());
     }, false);
 
     api.addState("evse/management_current", &management_current);
 
     api.addState("evse/boost_mode", &boost_mode);
-    api.addCommand("evse/boost_mode_update", &boost_mode_update, {}, [this](){
+    api.addCommand("evse/boost_mode_update", &boost_mode_update, {}, [this](String &/*errmsg*/) {
         backend->set_boost_mode(boost_mode_update.get("enabled")->asBool());
     }, true);
 
     api.addState("evse/auto_start_charging", &auto_start_charging);
-    api.addCommand("evse/auto_start_charging_update", &auto_start_charging_update, {}, [this](){
+    api.addCommand("evse/auto_start_charging_update", &auto_start_charging_update, {}, [this](String &/*errmsg*/) {
         // 1. set auto start
         // 2. make persistent
         // 3. fake a start/stop charging
@@ -473,14 +508,14 @@ void EvseCommon::register_urls()
     }, false);
 
     api.addState("evse/global_current", &global_current);
-    api.addCommand("evse/global_current_update", &global_current_update, {}, [this](){
+    api.addCommand("evse/global_current_update", &global_current_update, {}, [this](String &/*errmsg*/) {
         uint16_t current = global_current_update.get("current")->asUint();
         backend->set_charging_slot_max_current(CHARGING_SLOT_GLOBAL, current);
         apply_slot_default(CHARGING_SLOT_GLOBAL, current, true, false);
     }, false);
 
     api.addState("evse/management_enabled", &management_enabled);
-    api.addCommand("evse/management_enabled_update", &management_enabled_update, {}, [this](){
+    api.addCommand("evse/management_enabled_update", &management_enabled_update, {}, [this](String &/*errmsg*/) {
         bool enabled = management_enabled_update.get("enabled")->asBool();
 
         if (enabled == management_enabled.get("enabled")->asBool())
@@ -499,7 +534,7 @@ void EvseCommon::register_urls()
 
     api.addState("evse/user_current", &user_current);
     api.addState("evse/user_enabled", &user_enabled);
-    api.addCommand("evse/user_enabled_update", &user_enabled_update, {}, [this](){
+    api.addCommand("evse/user_enabled_update", &user_enabled_update, {}, [this](String &/*errmsg*/) {
         bool enabled = user_enabled_update.get("enabled")->asBool();
 
         if (enabled == user_enabled.get("enabled")->asBool())
@@ -522,26 +557,27 @@ void EvseCommon::register_urls()
             apply_slot_default(CHARGING_SLOT_USER, 32000, false, false);
     }, false);
 
+    // We don't allow to disable the external slot anymore.
+    // However removing the API is a breaking change and calling evse/external_enabled_update with false
+    // should set the slot to 32 A to unblock the charger.
     api.addState("evse/external_enabled", &external_enabled);
-    api.addCommand("evse/external_enabled_update", &external_enabled_update, {}, [this](){
+    api.addCommand("evse/external_enabled_update", &external_enabled_update, {}, [this](String &/*errmsg*/) {
         bool enabled = external_enabled_update.get("enabled")->asBool();
 
         if (enabled == external_enabled.get("enabled")->asBool())
             return;
 
-        backend->set_charging_slot(CHARGING_SLOT_EXTERNAL, 32000, enabled, false);
-        apply_slot_default(CHARGING_SLOT_EXTERNAL, 32000, enabled, false);
+        backend->set_charging_slot(CHARGING_SLOT_EXTERNAL, 32000, true, false);
+        apply_slot_default(CHARGING_SLOT_EXTERNAL, 32000, true, false);
     }, false);
 
     api.addState("evse/external_defaults", &external_defaults);
-    api.addCommand("evse/external_defaults_update", &external_defaults_update, {}, [this](){
-        bool enabled;
-        backend->get_charging_slot_default(CHARGING_SLOT_EXTERNAL, nullptr, &enabled, nullptr);
-        apply_slot_default(CHARGING_SLOT_EXTERNAL, external_defaults_update.get("current")->asUint(), enabled, external_defaults_update.get("clear_on_disconnect")->asBool());
+    api.addCommand("evse/external_defaults_update", &external_defaults_update, {}, [this](String &/*errmsg*/) {
+        apply_slot_default(CHARGING_SLOT_EXTERNAL, external_defaults_update.get("current")->asUint(), true, external_defaults_update.get("clear_on_disconnect")->asBool());
     }, false);
 
     api.addState("evse/modbus_tcp_enabled", &modbus_enabled);
-    api.addCommand("evse/modbus_tcp_enabled_update", &modbus_enabled_update, {}, [this](){
+    api.addCommand("evse/modbus_tcp_enabled_update", &modbus_enabled_update, {}, [this](String &/*errmsg*/) {
         bool enabled = modbus_enabled_update.get("enabled")->asBool();
 
         if (enabled == modbus_enabled.get("enabled")->asBool())
@@ -565,7 +601,7 @@ void EvseCommon::register_urls()
     }, false);
 
     api.addState("evse/ocpp_enabled", &ocpp_enabled);
-    api.addCommand("evse/ocpp_enabled_update", &ocpp_enabled_update, {}, [this](){
+    api.addCommand("evse/ocpp_enabled_update", &ocpp_enabled_update, {}, [this](String &/*errmsg*/) {
         bool enabled = ocpp_enabled_update.get("enabled")->asBool();
 
         if (enabled == ocpp_enabled.get("enabled")->asBool())
@@ -610,11 +646,11 @@ void EvseCommon::register_urls()
             } else if (!elapsed) {
                 was_triggered = false;
             }
-        }, 1000, 1000);
+        }, 1_s, 1_s);
     }
 
     api.addState("evse/automation_current", &automation_current);
-    api.addCommand("evse/automation_current_update", &automation_current_update, {}, [this](){
+    api.addCommand("evse/automation_current_update", &automation_current_update, {}, [this](String &/*errmsg*/) {
         backend->set_charging_slot_max_current(CHARGING_SLOT_AUTOMATION, automation_current_update.get("current")->asUint());
     }, false); //TODO: should this be an action?
 #endif
@@ -649,7 +685,7 @@ uint32_t EvseCommon::get_charger_meter()
 
 MeterValueAvailability EvseCommon::get_charger_meter_power(float *power, micros_t max_age)
 {
-    return meters.get_power_real(this->get_charger_meter(), power, max_age);
+    return meters.get_power(this->get_charger_meter(), power, max_age);
 }
 
 MeterValueAvailability EvseCommon::get_charger_meter_energy(float *energy, micros_t max_age)

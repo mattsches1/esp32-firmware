@@ -28,35 +28,10 @@
 #include <FS.h>
 #include <driver/i2c.h>
 #include <lwip/dns.h>
+#include <TFTools/Micros.h>
+#include <TFTools/Option.h>
 
 #include "bindings/hal_common.h"
-
-#include "strong_typedef.h"
-
-STRONG_INTEGER_TYPEDEF(int64_t, micros_t,
-    inline uint32_t millis() const {return (uint32_t)(t / 1000); }
-    explicit operator float  () const { return (float) t; }
-    explicit operator double () const { return (double)t; }
-)
-
-// These do not clash with the C++14 standard literals for durations:
-// https://en.cppreference.com/w/cpp/chrono/duration
-// because those don't start with a _
-// "ud-suffix must begin with the underscore _:
-// the suffixes that do not begin with the underscore
-// are reserved for the literal operators provided by the standard library."
-// Param type has to be unsigned long long, because:
-// "if the overload set includes a literal operator with the parameter type unsigned long long,
-// the user-defined literal expression is treated as a function call operator ""X(n ULL),
-// where n is the literal without ud-suffix;"
-constexpr micros_t operator""_us  (unsigned long long int i) { return micros_t{(int64_t)i}; }
-constexpr micros_t operator""_ms  (unsigned long long int i) { return micros_t{(int64_t)i * 1000}; }
-constexpr micros_t operator""_s   (unsigned long long int i) { return micros_t{(int64_t)i * 1000 * 1000}; }
-// _min would be nicer but confuses vscode
-// because Arduino.h defines _min to not
-// collide with std::min in case someone uses "using namespace std;" m(
-constexpr micros_t operator""_m   (unsigned long long int i) { return micros_t{(int64_t)i * 1000 * 1000 * 60}; }
-constexpr micros_t operator""_h   (unsigned long long int i) { return micros_t{(int64_t)i * 1000 * 1000 * 60 * 60}; }
 
 #define MACRO_NAME_TO_STRING(x) #x
 
@@ -67,9 +42,6 @@ const char *tf_reset_reason();
 
 bool a_after_b(uint32_t a, uint32_t b);
 bool deadline_elapsed(uint32_t deadline_ms);
-
-micros_t now_us();
-bool deadline_elapsed(micros_t deadline_us);
 
 void read_efuses(uint32_t *ret_uid_num, char *ret_uid_str, char *ret_passphrase);
 
@@ -82,10 +54,6 @@ int ensure_matching_firmware(TF_TFP *tfp, const char *name, const char *purpose,
 
 int compare_version(uint8_t left_major, uint8_t left_minor, uint8_t left_patch, uint8_t left_beta /* 255 == no beta */, uint32_t left_timestamp,
                     uint8_t right_major, uint8_t right_minor, uint8_t right_patch, uint8_t right_beta /* 255 == no beta */, uint32_t right_timestamp);
-
-bool clock_synced(struct timeval *out_tv_now);
-
-uint32_t timestamp_minutes();
 
 bool for_file_in(const char *dir, bool (*callback)(File *open_file), bool skip_directories = true);
 
@@ -126,21 +94,21 @@ void dns_gethostbyname_addrtype_lwip_ctx_async(const char *hostname,
 
 void poke_localhost();
 
-void trigger_reboot(const char *initiator, uint32_t delay_ms = 0);
+void trigger_reboot(const char *initiator, millis_t delay_ms = 0_ms);
 
 time_t ms_until_datetime(int *year, int *month, int *day, int *hour, int *minutes, int *seconds);
 time_t ms_until_time(int h, int m);
 
 // Unchecked snprintf that returns size_t
 [[gnu::format(__printf__, 2, 3)]]
-size_t sprintf_u(char *buf, const char *format, ...);
+size_t sprintf_u(char *buf, const char *fmt, ...);
 
 // Unchecked snprintf that returns size_t
 [[gnu::format(__printf__, 3, 4)]]
-size_t snprintf_u(char *buf, size_t len, const char *format, ...);
+size_t snprintf_u(char *buf, size_t len, const char *fmt, ...);
 
 // Unchecked vsnprintf that returns size_t
-size_t vsnprintf_u(char *buf, size_t len, const char *format, va_list args);
+size_t vsnprintf_u(char *buf, size_t len, const char *fmt, va_list args);
 
 class LogSilencer
 {
@@ -241,7 +209,7 @@ private:
 };
 
 // Remove seperator for nfc tags
-void remove_separator(const char *const in, char *out);
+int remove_separator(const char *const in, char *out);
 
 // minimal C++11 allocator with debug output
 template <class Tp>
@@ -323,11 +291,5 @@ i2c_cmd_handle_t i2c_master_prepare_write_read_device(uint8_t device_address,
                                                       const uint8_t* write_buffer, size_t write_size,
                                                       uint8_t* read_buffer, size_t read_size);
 
-time_t get_localtime_today_midnight();
-time_t get_localtime_today_midnight_in_utc();
-
-template <typename T>
-struct DataReturn {
-    bool data_available;
-    T data;
-};
+time_t get_localtime_midnight_in_utc(time_t timestamp);
+Option<time_t> get_localtime_today_midnight_in_utc();

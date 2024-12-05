@@ -30,18 +30,18 @@ import { PageHeader } from "../../ts/components/page_header";
 
 export class DeviceNameStatus extends ConfigComponent<"info/display_name"> {
     constructor() {
-        super('info/display_name', __("device_name.script.save_failed"));
+        super('info/display_name', () => __("device_name.script.save_failed"));
     }
 
     render(props: {}, state: Readonly<API.getType['info/display_name']>) {
         if (!util.render_allowed() || !API.hasModule("device_name"))
-            return <StatusSection name="device_name" class="sticky-under-top" />;
+            return <StatusSection name="device_name" class={util.is_native_median_app() ? "sticky-top-app" : "sticky-under-top"} />;
 
         document.title = API.get("info/display_name").display_name + " - " + __("main.title");
 
         const hide_save = state.display_name == API.get('info/display_name').display_name;
 
-        return <StatusSection name="device_name" class="sticky-under-top">
+        return <StatusSection name="device_name" class={util.is_native_median_app() ? "sticky-app" : "sticky-under-top"}>
             <PageHeader title={__("device_name.status.status")} titleClass="col-4" childrenClass="col-8">
                 <form onSubmit={(e: Event) => {
                     e.preventDefault();
@@ -49,7 +49,7 @@ export class DeviceNameStatus extends ConfigComponent<"info/display_name"> {
                     if (!(e.target as HTMLFormElement).checkValidity())
                         return;
 
-                    API.save("info/display_name", state, __("device_name.script.save_failed"));
+                    API.save("info/display_name", state, () => __("device_name.script.save_failed"));
                 }}>
                     <InputText class={hide_save ? "rounded-right" : undefined} maxLength={32} value={state.display_name} onValue={(v) => this.setState({display_name: v})} required>
                         <div class="input-group-append">

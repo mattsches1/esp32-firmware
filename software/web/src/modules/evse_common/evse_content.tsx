@@ -148,10 +148,10 @@ export class EVSE extends Component<{status_ref?: RefObject<EVSEStatus>}, {}> {
                                     onClick={async () => {
                                         const modal = util.async_modal_ref.current;
                                         if(!await modal.show({
-                                            title: __("evse.content.reset_dc_fault_title"),
-                                            body: __("evse.content.reset_dc_fault_content"),
-                                            no_text: __("evse.content.abort"),
-                                            yes_text: __("evse.content.reset"),
+                                            title: () => __("evse.content.reset_dc_fault_title"),
+                                            body: () => __("evse.content.reset_dc_fault_content"),
+                                            no_text: () => __("evse.content.abort"),
+                                            yes_text: () => __("evse.content.reset"),
                                             no_variant: "secondary",
                                             yes_variant: "danger",
                                         }))
@@ -159,7 +159,7 @@ export class EVSE extends Component<{status_ref?: RefObject<EVSEStatus>}, {}> {
 
                                         await API.call('evse/reset_dc_fault_current_state',
                                                     {"password": 0xDC42FA23},
-                                                    __("evse.script.reset_dc_fault_current_failed"));
+                                                    () => __("evse.script.reset_dc_fault_current_failed"));
                                     }}>
                                         {__("evse.content.dc_fault_current_reset")}
                                     </Button>
@@ -224,16 +224,16 @@ export class EVSE extends Component<{status_ref?: RefObject<EVSEStatus>}, {}> {
                                                         "current": 32000,
                                                         "clear_on_disconnect": false
                                                     },
-                                                    __("evse.script.reset_slot_failed"));
+                                                    () => __("evse.script.reset_slot_failed"));
 
 
                                                 API.save('evse/external_current',
                                                     {"current": 32000},
-                                                    __("evse.script.reset_slot_failed"));
+                                                    () => __("evse.script.reset_slot_failed"));
 
                                                 API.save('evse/external_clear_on_disconnect',
                                                     {"clear_on_disconnect": false},
-                                                    __("evse.script.reset_slot_failed"));
+                                                    () => __("evse.script.reset_slot_failed"));
                                             }
                                         }
                                         resetVariant="danger"
@@ -246,7 +246,7 @@ export class EVSE extends Component<{status_ref?: RefObject<EVSEStatus>}, {}> {
                                         onReset={
                                             () => API.save('evse/automation_current',
                                                     {"current": 32000},
-                                                    __("evse.script.reset_slot_failed"))
+                                                    () => __("evse.script.reset_slot_failed"))
                                         }
                                         resetVariant="danger"
                                         resetText={__("evse.content.reset_slot")}
@@ -308,7 +308,7 @@ export class EVSE extends Component<{status_ref?: RefObject<EVSEStatus>}, {}> {
                     <FormSeparator heading={__("evse.content.debug")}/>
                     <DebugLogger translationPrefix="evse" />
 
-                    <CollapsedSection label={__("evse.content.low_level_state")}>
+                    <CollapsedSection>
                         <FormRow label={__("evse.content.led_state")}>
                             <IndicatorGroup
                                 value={ll_state.led_state}
@@ -384,8 +384,13 @@ export class EVSE extends Component<{status_ref?: RefObject<EVSEStatus>}, {}> {
                                 </FormRow>))
                         }
 
-                        <FormRow label={__("evse.content.charging_time")}>
-                            <InputText value={util.format_timespan_ms(ll_state.charging_time)}/>
+                        <FormRow label={__("evse.content.car_stopped_charging")}>
+                            <IndicatorGroup
+                                value={ll_state.charging_time}
+                                items={[
+                                    ["secondary", __("evse.content.car_stopped_false")],
+                                    ["primary", __("evse.content.car_stopped_true")]
+                                ]}/>
                         </FormRow>
 
                         {!is_evse_v3 ? undefined :
@@ -426,11 +431,11 @@ export class EVSE extends Component<{status_ref?: RefObject<EVSEStatus>}, {}> {
 
                         <FormRow label={__("evse.content.reset_description")} label_muted={__("evse.content.reset_description_muted")}>
                             <div class="input-group pb-2">
-                                <Button variant="primary" className="form-control rounded-right mr-2" onClick={() => API.call('evse/reset', {}, "")}>{__("evse.content.reset_evse")}</Button>
-                                <Button variant="primary" className="form-control rounded-left" onClick={() => API.call('evse/reflash', {}, "")}>{__("evse.content.reflash_evse")}</Button>
+                                <Button variant="primary" className="form-control rounded-right mr-2" onClick={() => API.call('evse/reset', {}, () => "")}>{__("evse.content.reset_evse")}</Button>
+                                <Button variant="primary" className="form-control rounded-left" onClick={() => API.call('evse/reflash', {}, () => "")}>{__("evse.content.reflash_evse")}</Button>
                             </div>
                             {!is_evse_v2 ? undefined :
-                                <Button variant="primary" className="form-control" onClick={() => API.call('evse/trigger_dc_fault_test', {}, "")}>{__("evse.content.trigger_dc_fault_test")}</Button>
+                                <Button variant="primary" className="form-control" onClick={() => API.call('evse/trigger_dc_fault_test', {}, () => "")}>{__("evse.content.trigger_dc_fault_test")}</Button>
                             }
                         </FormRow>
 
@@ -457,7 +462,7 @@ export class EVSE extends Component<{status_ref?: RefObject<EVSEStatus>}, {}> {
                                                 "voltage_div": 0,
                                                 "resistance_2700": 0,
                                                 "resistance_880": [0,0,0,0,0,0,0,0,0,0,0,0,0,0]
-                                            }, __("evse.script.user_calibration_upload_failed"))
+                                            }, () => __("evse.script.user_calibration_upload_failed"))
                                         }>
                                         {__("evse.content.user_calibration_reset")}
                                     </Button>
@@ -471,7 +476,7 @@ export class EVSE extends Component<{status_ref?: RefObject<EVSEStatus>}, {}> {
                                         timeout_ms={10 * 1000}
                                         onUploadSuccess={() => {}}
                                         onUploadError={error => {
-                                            util.add_alert("firmware_update_failed", "danger", __("evse.script.user_calibration_upload_failed"), error.toString());
+                                            util.add_alert("firmware_update_failed", "danger", () => __("evse.script.user_calibration_upload_failed"), () => error.toString());
                                         }}/>
                             </FormRow>
 

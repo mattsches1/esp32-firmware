@@ -75,11 +75,12 @@ void Wifi::pre_setup()
         return "";
     }};
     state = Config::Object({
-        {"connection_state", Config::Uint((uint)WifiState::NotConfigured)},
+        {"connection_state", Config::Enum(WifiState::NotConfigured, WifiState::NotConfigured, WifiState::Connected)},
         {"connection_start", Config::Uint(0)},
         {"connection_end", Config::Uint(0)},
         {"ap_state", Config::Int(0)},
         {"ap_bssid", Config::Str("", 0, 20)},
+        {"ap_sta_count", Config::Uint(0)},
         {"sta_ip", Config::Str("0.0.0.0", 7, 15)},
         {"sta_subnet", Config::Str("0.0.0.0", 7, 15)},
         {"sta_rssi", Config::Int8(-127)},
@@ -122,7 +123,7 @@ void Wifi::pre_setup()
                 Config::Uint8(0),
                 Config::Uint8(0)
                 },
-                new Config{Config::Uint8(0)},
+                Config::get_prototype_uint8_0(),
                 6,
                 6,
                 Config::type_id<Config::ConfUint>()
@@ -215,7 +216,7 @@ void Wifi::apply_soft_ap_config_and_start()
             scan_start_time = millis();
             task_scheduler.scheduleOnce([this]() {
                 this->apply_soft_ap_config_and_start();
-            }, 500);
+            }, 500_ms);
             return;
         } else { // Scan already started
             int network_count = WiFi.scanComplete();
@@ -223,7 +224,7 @@ void Wifi::apply_soft_ap_config_and_start()
             if (network_count == WIFI_SCAN_RUNNING && !deadline_elapsed(scan_start_time + 10000)) {
                 task_scheduler.scheduleOnce([this]() {
                     this->apply_soft_ap_config_and_start();
-                }, 500);
+                }, 500_ms);
                 return;
             }
 
@@ -294,19 +295,14 @@ void Wifi::apply_soft_ap_config_and_start()
         logger.printfln("Had to configure soft AP IP address %d times.", ap_config_attempts);
     }
     logger.printfln("Soft AP started");
-    logger.printfln_plain("    SSID: %s", ap_config_in_use.get("ssid")->asEphemeralCStr());
-    logger.printfln_plain("    MAC address: %s", WiFi.softAPmacAddress().c_str());
-    logger.printfln_plain("    IP address: %s", ip.toString().c_str());
+    logger.printfln_continue("SSID: %s", ap_config_in_use.get("ssid")->asEphemeralCStr());
+    logger.printfln_continue("MAC address: %s", WiFi.softAPmacAddress().c_str());
+    logger.printfln_continue("IP address: %s", ip.toString().c_str());
 }
 
 bool Wifi::apply_sta_config_and_connect()
 {
-    return apply_sta_config_and_connect(get_connection_state());
-}
-
-bool Wifi::apply_sta_config_and_connect(WifiState current_state)
-{
-    if (current_state == WifiState::Connected) {
+    if (get_connection_state() == WifiState::Connected) {
         return false;
     }
 
@@ -504,14 +500,14 @@ void Wifi::setup()
 
                 task_scheduler.scheduleOnce([this, now](){
                     state.get("connection_end")->updateUint(now);
-                }, 0);
+                });
             }
 
             task_scheduler.scheduleOnce([this](){
                 state.get("sta_ip")->updateString("0.0.0.0");
                 state.get("sta_subnet")->updateString("0.0.0.0");
                 state.get("sta_bssid")->updateString("");
-            }, 0);
+            });
 
             this->was_connected = false;
         },
@@ -526,7 +522,7 @@ void Wifi::setup()
 
             task_scheduler.scheduleOnce([this, now](){
                 state.get("connection_start")->updateUint(now);
-            }, 0);
+            });
         },
         ARDUINO_EVENT_WIFI_STA_CONNECTED);
 
@@ -544,7 +540,7 @@ void Wifi::setup()
                 state.get("sta_ip")->updateString(ip);
                 state.get("sta_subnet")->updateString(subnet.toString());
                 state.get("sta_bssid")->updateString(WiFi.BSSIDstr());
-            }, 0);
+            });
         },
         ARDUINO_EVENT_WIFI_STA_GOT_IP);
 
@@ -566,9 +562,49 @@ void Wifi::setup()
                 state.get("sta_ip")->updateString("0.0.0.0");
                 state.get("sta_subnet")->updateString("0.0.0.0");
                 state.get("sta_bssid")->updateString("");
-            }, 0);
+            });
         },
         ARDUINO_EVENT_WIFI_STA_LOST_IP);
+
+    WiFi.onEvent([this](arduino_event_id_t event, arduino_event_info_t info) {
+            logger.printfln("STA with MAC address %02X:%02X:%02X:%02X:%02X:%02X connected to AP",
+                            info.wifi_ap_staconnected.mac[0],
+                            info.wifi_ap_staconnected.mac[1],
+                            info.wifi_ap_staconnected.mac[2],
+                            info.wifi_ap_staconnected.mac[3],
+                            info.wifi_ap_staconnected.mac[4],
+                            info.wifi_ap_staconnected.mac[5]);
+
+            task_scheduler.scheduleOnce([this]() {
+                auto ap_sta_count = state.get("ap_sta_count");
+                ap_sta_count->updateUint(ap_sta_count->asUint() + 1);
+            });
+
+        },
+        ARDUINO_EVENT_WIFI_AP_STACONNECTED);
+
+    WiFi.onEvent([this](arduino_event_id_t event, arduino_event_info_t info) {
+            logger.printfln("STA with MAC address %02X:%02X:%02X:%02X:%02X:%02X disconnected from AP",
+                            info.wifi_ap_staconnected.mac[0],
+                            info.wifi_ap_staconnected.mac[1],
+                            info.wifi_ap_staconnected.mac[2],
+                            info.wifi_ap_staconnected.mac[3],
+                            info.wifi_ap_staconnected.mac[4],
+                            info.wifi_ap_staconnected.mac[5]);
+
+            task_scheduler.scheduleOnce([this]() {
+                auto ap_sta_count = state.get("ap_sta_count");
+                uint32_t ap_sta_count_value = ap_sta_count->asUint();
+
+                if (ap_sta_count_value == 0) {
+                    logger.printfln("Unexpected disconnect from AP, STA count was already zero");
+                }
+                else {
+                    ap_sta_count->updateUint(ap_sta_count_value - 1);
+                }
+            });
+        },
+        ARDUINO_EVENT_WIFI_AP_STADISCONNECTED);
 
     bool enable_ap = ap_config_in_use.get("enable_ap")->asBool();
     bool enable_sta = sta_config_in_use.get("enable_sta")->asBool();
@@ -629,24 +665,25 @@ void Wifi::setup()
     if (enable_ap) {
         task_scheduler.scheduleWithFixedDelay([this]() {
             state.get("ap_state")->updateInt(get_ap_state());
-        }, 5000, 5000);
+        }, 5_s, 5_s);
     }
 
     if (enable_sta) {
         task_scheduler.scheduleWithFixedDelay([this]() {
-            WifiState connection_state = get_connection_state();
-            state.get("connection_state")->updateEnum(connection_state);
+            state.get("connection_state")->updateEnum(get_connection_state());
+        }, 1_s);
 
+        task_scheduler.scheduleWithFixedDelay([this]() {
             int rssi = -127;
             esp_wifi_sta_get_rssi(&rssi); // Ignore failure, rssi is still -127.
             state.get("sta_rssi")->updateInt(rssi);
 
             static int tries = 0;
             if (tries < 3 || tries % 3 == 2)
-                if (!apply_sta_config_and_connect(connection_state))
+                if (!apply_sta_config_and_connect())
                     tries = 0;
             tries++;
-        }, 0, 10000);
+        }, 10_s);
     }
 
     if (ap_fallback_only) {
@@ -681,7 +718,7 @@ void Wifi::setup()
 #if MODULE_ETHERNET_AVAILABLE()
         || (ethernet.is_enabled() && ethernet.get_connection_state() != EthernetState::NotConnected)
 #endif
-        ? 30 * 1000 : 1000, 10 * 1000);
+        ? 30_s : 1_s, 10_s);
     }
 
     EapConfigID eap_config_id = static_cast<EapConfigID>(sta_config_in_use.get("wpa_eap_config")->as<OwnedConfig::OwnedConfigUnion>()->tag);
@@ -755,7 +792,7 @@ void Wifi::check_for_scan_completion()
         logger.printfln("Scan in progress...");
         task_scheduler.scheduleOnce([this]() {
             this->check_for_scan_completion();
-        }, 500);
+        }, 500_ms);
         return;
     }
 
@@ -793,7 +830,7 @@ void Wifi::start_scan()
     if (WiFi.scanNetworks(true, true) != WIFI_SCAN_FAILED) {
         task_scheduler.scheduleOnce([this]() {
             this->check_for_scan_completion();
-        }, 2000);
+        }, 2_s);
         return;
     }
 
@@ -806,15 +843,15 @@ void Wifi::start_scan()
 
         task_scheduler.scheduleOnce([this]() {
             this->check_for_scan_completion();
-        }, 2000);
-    }, 6000);
+        }, 2_s);
+    }, 6_s);
 }
 
 void Wifi::register_urls()
 {
     api.addState("wifi/state", &state);
 
-    api.addCommand("wifi/scan", Config::Null(), {}, [this](){
+    api.addCommand("wifi/scan", Config::Null(), {}, [this](String &/*errmsg*/) {
         start_scan();
     }, true);
 

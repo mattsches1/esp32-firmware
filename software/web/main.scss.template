@@ -113,7 +113,19 @@ body {
 }
 
 .alert_placeholder {
-    position: fixed; top: $navbar-height; left: 0px; right: 0px; z-index: 9999;
+    position: fixed;
+    top: $navbar-height;
+    left: 0px;
+    right: 0px;
+    z-index: 9999;
+}
+
+.alert_placeholder-app {
+    position: fixed;
+    top: 0;
+    left: 0px;
+    right: 0px;
+    z-index: 9999;
 }
 
 .custom-alert {
@@ -151,6 +163,12 @@ body {
 }
 
 @supports (position: sticky) {
+    .sticky-top-app {
+        position: sticky;
+        top: 0;
+        z-index: 1010;
+        background: white;
+    }
   @media (max-width: 575.98px) {
         .sticky-under-top {
             position: sticky;
@@ -538,7 +556,11 @@ body {
     display: block;
 }
 
-.u-time-in-legend-alone .u-legend .u-marker {
+.u-hide-marker-in-legend .u-legend .u-marker {
+    display: none;
+}
+
+.u-hide-empty-legend .u-legend tbody:empty {
     display: none;
 }
 
@@ -614,4 +636,8 @@ table ul {
       height: subtract(100vh, $modal-dialog-margin-y-sm-up * 2);
       height: min-content;
     }
+}
+
+.form-row-help p:last-child {
+    margin-bottom: 0;
 }

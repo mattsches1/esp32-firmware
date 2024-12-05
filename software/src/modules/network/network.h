@@ -29,6 +29,19 @@ public:
     void pre_setup() override;
     void setup() override;
     void register_urls() override;
+    void register_events() override;
 
     ConfigRoot config;
+    ConfigRoot state;
+
+    inline bool is_connected() { return connected; }
+
+private:
+    void update_connected();
+
+    bool connected = false;
+
+    bool ethernet_connected = false;
+    bool wifi_sta_connected = false;
+    uint32_t wifi_ap_sta_count = 0;
 };

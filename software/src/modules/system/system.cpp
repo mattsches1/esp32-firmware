@@ -68,13 +68,30 @@ void System::factory_reset(bool restart_esp)
         ESP.restart();
 }
 
+Language System::get_system_language()
+{
+    return i18n_config.get("language")->asEnum<Language>();
+}
+
+void System::pre_setup()
+{
+    i18n_config = ConfigRoot{Config::Object({
+        {"language", Config::Enum(Language::German, Language::German, Language::English)},
+        {"detect_browser_language", Config::Bool(true)}
+    })};
+}
+
 void System::setup()
 {
+    api.restorePersistentConfig("system/i18n_config", &i18n_config);
+
     initialized = true;
 }
 
 void System::register_urls()
 {
+    api.addPersistentConfig("system/i18n_config", &i18n_config);
+
     server.on_HTTPThread("/recovery", HTTP_GET, [](WebServerRequest req) {
         req.addResponseHeader("Content-Encoding", "gzip");
         req.addResponseHeader("ETag", "dontcachemeplease");
@@ -83,9 +100,9 @@ void System::register_urls()
         return req.send(200, "text/html; charset=utf-8", recovery_html_data, recovery_html_length);
     });
 
-    api.addCommand("factory_reset", Config::Confirm(), {Config::confirm_key}, [this](String &result) {
+    api.addCommand("factory_reset", Config::Confirm(), {Config::confirm_key}, [this](String &errmsg) {
         if (!Config::Confirm()->get(Config::ConfirmKey())->asBool()) {
-            result = "Factory reset NOT requested";
+            errmsg = "Factory reset NOT requested";
             return;
         }
 
@@ -93,12 +110,12 @@ void System::register_urls()
 
         task_scheduler.scheduleOnce([this](){
             factory_reset();
-        }, 3000);
+        }, 3_s);
     }, true);
 
-    api.addCommand("config_reset", Config::Confirm(), {Config::confirm_key}, [this](String &result) {
+    api.addCommand("config_reset", Config::Confirm(), {Config::confirm_key}, [this](String &errmsg) {
         if (!Config::Confirm()->get(Config::ConfirmKey())->asBool()) {
-            result = "Config reset NOT requested";
+            errmsg = "Config reset NOT requested";
             return;
         }
 
@@ -110,8 +127,9 @@ void System::register_urls()
 #endif
 
 #if MODULE_USERS_AVAILABLE() && MODULE_CHARGE_TRACKER_AVAILABLE()
-            for(int i = 0; i < users.config.get("users")->count(); ++i) {
-                uint8_t id = users.config.get("users")->get(i)->get("id")->asUint();
+            Config *config_users = static_cast<Config *>(users.config.get("users"));
+            for (size_t i = 0; i < config_users->count(); ++i) {
+                uint8_t id = config_users->get(i)->get("id")->asUint();
                 if (id == 0) // skip anonymous user
                     continue;
                 if (!charge_tracker.is_user_tracked(id)) {
@@ -122,6 +140,6 @@ void System::register_urls()
 
             API::removeAllConfig();
             ESP.restart();
-        }, 3000);
+        }, 3_s);
     }, true);
 }

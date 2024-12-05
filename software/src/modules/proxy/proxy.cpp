@@ -29,14 +29,16 @@ extern TF_HAL hal;
 
 void Proxy::pre_setup()
 {
+    devices_prototype = Config::Object({
+        {"uid", Config::Str("", 0, 7)},
+        {"port", Config::Str("", 0, 1)},
+        {"name", Config::Str("", 0, 50)},
+        {"device_id", Config::Uint16(0)},
+    });
+
     devices = Config::Array(
         {},
-        new Config{Config::Object({
-            {"uid", Config::Str("", 0, 7)},
-            {"port", Config::Str("", 0, 1)},
-            {"name", Config::Str("", 0, 50)},
-            {"device_id", Config::Uint16(0)}
-        })},
+        &devices_prototype,
         0, 12, Config::type_id<Config::ConfObject>()
     );
 
@@ -121,12 +123,12 @@ void Proxy::setup()
     uint16_t device_id;
 
     while (tf_hal_get_device_info(&hal, i, uid, &port_name, &device_id) == TF_E_OK) {
-        devices.add();
+        auto last_device = devices.add();
 
-        devices.get(devices.count() - 1)->get("uid")->updateString(String(uid));
-        devices.get(devices.count() - 1)->get("port")->updateString(String(port_name));
-        devices.get(devices.count() - 1)->get("name")->updateString(String(tf_get_device_display_name(device_id)));
-        devices.get(devices.count() - 1)->get("device_id")->updateUint(device_id);
+        last_device->get("uid")->updateString(uid);
+        last_device->get("port")->updateString(String(port_name));
+        last_device->get("name")->updateString(tf_get_device_display_name(device_id));
+        last_device->get("device_id")->updateUint(device_id);
         ++i;
     }
 
@@ -139,16 +141,22 @@ void Proxy::register_urls()
     api.addState("proxy/devices", &devices);
     api.addPersistentConfig("proxy/config", &config, {"authentication_secret"});
 
-    task_scheduler.scheduleWithFixedDelay([this](){
+    task_scheduler.scheduleWithFixedDelay([this]() {
+        char char_str[2];
+        char_str[1] = 0;
+
         for(char c = 'A'; c <= 'F'; ++c) {
             uint32_t spitfp_checksum, spitfp_frame, tfp_frame, tfp_unexpected;
 
             tf_hal_get_error_counters(&hal, c, &spitfp_checksum, &spitfp_frame, &tfp_frame, &tfp_unexpected);
 
-            error_counters.get(String(c))->get("SpiTfpChecksum")->updateUint(spitfp_checksum);
-            error_counters.get(String(c))->get("SpiTfpFrame")->updateUint(spitfp_frame);
-            error_counters.get(String(c))->get("TfpFrame")->updateUint(tfp_frame);
-            error_counters.get(String(c))->get("TfpUnexpected")->updateUint(tfp_unexpected);
+            char_str[0] = c;
+            Config *port_error_counters = static_cast<Config *>(error_counters.get(char_str, 1));
+
+            port_error_counters->get("SpiTfpChecksum")->updateUint(spitfp_checksum);
+            port_error_counters->get("SpiTfpFrame"   )->updateUint(spitfp_frame);
+            port_error_counters->get("TfpFrame"      )->updateUint(tfp_frame);
+            port_error_counters->get("TfpUnexpected" )->updateUint(tfp_unexpected);
         }
-    }, 5000, 5000);
+    }, 5_s, 5_s);
 }

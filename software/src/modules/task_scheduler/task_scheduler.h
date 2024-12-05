@@ -33,13 +33,33 @@
 struct Task {
     std::function<void(void)> fn;
     uint64_t task_id;
-    uint32_t next_deadline_ms;
-    uint32_t delay_ms;
+    micros_t next_deadline;
+    micros_t delay;
     TaskHandle_t awaited_by;
+    const char *file;
+    int line;
     bool once;
     bool cancelled;
 
-    Task(std::function<void(void)> &&fn, uint64_t task_id, uint32_t first_run_delay_ms, uint32_t delay_ms, bool once);
+    Task(std::function<void(void)> &&fn, uint64_t task_id, micros_t first_run_delay, micros_t delay, const char *file, int line, bool once);
+};
+
+#define IS_WALL_CLOCK_TASK_ID(task_id) (task_id & (1ull << 63))
+
+struct WallClockTask {
+    // Is moved into the task queue to execute the WallClockTask.
+    std::unique_ptr<Task> runner_task;
+    // This is the runner_task's ID; duplicated to match currentTask against the WallClockTask IDs when moving the task back.
+    // All WallClockTask IDs have the highest bit set.
+    uint64_t task_id;
+
+    // A WallClockTask is executed at midnight (UTC) and then once every interval_minutes.
+    minutes_t interval_minutes;
+
+    // Additionally run this task when the system clock is synced for the first time.
+    bool run_on_first_sync;
+
+    WallClockTask(std::unique_ptr<Task> &&runner_task, uint64_t task_id, minutes_t interval_minutes, bool run_on_first_sync);
 };
 
 bool compare(const std::unique_ptr<Task> &a, const std::unique_ptr<Task> &b);
@@ -84,20 +104,49 @@ public:
     };
 
     CancelResult cancel(uint64_t task_id);
-    uint64_t scheduleOnce(std::function<void(void)> &&fn, uint32_t delay_ms);
-    uint64_t scheduleWithFixedDelay(std::function<void(void)> &&fn, uint32_t first_delay_ms, uint32_t delay_ms);
+
+    uint64_t scheduleOnce(std::function<void(void)> &&fn, millis_t delay_ms = 0_ms);
+
+    // TODO Remove deprecated function. Marked as deprecated on 2024-10-09.
+    [[gnu::deprecated("Use the millis_t overload of this function!")]]
+    inline uint64_t scheduleOnce(std::function<void(void)> &&fn, uint32_t delay_ms) {return this->scheduleOnce(std::move(fn), millis_t{delay_ms});}
+
+    inline uint64_t scheduleWithFixedDelay(std::function<void(void)> &&fn, millis_t delay_ms) {return this->scheduleWithFixedDelay(std::move(fn), millis_t{0}, delay_ms);}
+    uint64_t scheduleWithFixedDelay(std::function<void(void)> &&fn, millis_t first_delay_ms, millis_t delay_ms);
+
+    // TODO Remove deprecated function. Marked as deprecated on 2024-10-09.
+    [[gnu::deprecated("Use the millis_t overload of this function!")]]
+    inline uint64_t scheduleWithFixedDelay(std::function<void(void)> &&fn, uint32_t first_delay_ms, uint32_t delay_ms) {return this->scheduleWithFixedDelay(std::move(fn), millis_t{first_delay_ms}, millis_t{delay_ms});}
+
     uint64_t scheduleWhenClockSynced(std::function<void(void)> &&fn);
+
+    uint64_t scheduleWallClock(std::function<void(void)> &&fn, minutes_t interval_minutes, millis_t execution_delay_ms, bool run_on_first_sync);
 
     enum class AwaitResult {
         Done,
         Timeout,
         Error
     };
-    AwaitResult await(uint64_t task_id, uint32_t millis_to_wait = 10000);
+
     AwaitResult await(std::function<void(void)> &&fn, uint32_t millis_to_wait = 10000);
 
+    TaskScheduler *_task_scheduler_context(const char *f, int l);
+
 private:
+    AwaitResult await(uint64_t task_id, uint32_t millis_to_wait = 10000);
+
     std::mutex task_mutex;
     TaskQueue tasks;
     std::unique_ptr<Task> currentTask = nullptr;
+
+    std::vector<WallClockTask> wall_clock_tasks;
+    bool wall_clock_worker_started = false;
+    void wall_clock_worker();
+    void run_wall_clock_task(uint64_t task_id);
 };
+
+#define scheduleOnce _task_scheduler_context(__FILE__, __LINE__)->scheduleOnce
+#define scheduleWithFixedDelay _task_scheduler_context(__FILE__, __LINE__)->scheduleWithFixedDelay
+#define scheduleWhenClockSynced _task_scheduler_context(__FILE__, __LINE__)->scheduleWhenClockSynced
+#define scheduleWallClock _task_scheduler_context(__FILE__, __LINE__)->scheduleWallClock
+#define await _task_scheduler_context(__FILE__, __LINE__)->await

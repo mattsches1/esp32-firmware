@@ -40,6 +40,13 @@
 #include "shelly_em_monophase_channel.enum.h"
 #include "shelly_em_monophase_mapping.enum.h"
 #include "goodwe_hybrid_inverter_virtual_meter.enum.h"
+#include "solax_hybrid_inverter_virtual_meter.enum.h"
+#include "fronius_gen24_plus_hybrid_inverter_virtual_meter.enum.h"
+#include "hailei_hybrid_inverter_virtual_meter.enum.h"
+#include "fox_ess_h3_hybrid_inverter_virtual_meter.enum.h"
+#include "carlo_gavazzi_phase.enum.h"
+#include "carlo_gavazzi_em270_virtual_meter.enum.h"
+#include "carlo_gavazzi_em280_virtual_meter.enum.h"
 
 #if defined(__GNUC__)
     #pragma GCC diagnostic push
@@ -57,6 +64,7 @@ public:
         ModbusRegisterType register_type;
         size_t start_address;
         ModbusValueType value_type;
+        bool drop_sign;
         float offset;
         float scale_factor;
     };
@@ -69,10 +77,12 @@ public:
         const uint32_t *index;
     };
 
-    MeterModbusTCP(uint32_t slot_, Config *state_, Config *errors_, ModbusTCP *modbus_) : GenericModbusTCPClient(modbus_), slot(slot_), state(state_), errors(errors_) {}
+    MeterModbusTCP(uint32_t slot_, Config *state_, Config *errors_, TFModbusTCPClientPool *pool_) :
+        GenericModbusTCPClient("meters_mbtcp", pool_), slot(slot_), state(state_), errors(errors_) {}
 
     [[gnu::const]] MeterClassID get_class() const override;
     void setup(const Config &ephemeral_config) override;
+    void register_events() override;
     void pre_reboot() override;
 
     bool supports_power()         override {return true;}
@@ -94,6 +104,10 @@ private:
     bool is_victron_energy_gx_inverter_meter() const;
     bool is_victron_energy_gx_load_meter() const;
     bool is_deye_hybrid_inverter_battery_meter() const;
+    bool is_shelly_pro_xem_monophase() const;
+    bool is_fronius_gen24_plus_hybrid_inverter_battery_meter() const;
+    bool is_carlo_gavazzi_em100_or_et100() const;
+    bool is_carlo_gavazzi_em510() const;
 
     uint32_t slot;
     Config *state;
@@ -105,6 +119,7 @@ private:
     bool read_allowed = false;
     bool values_declared = false;
     size_t read_index = 0;
+    size_t max_register_count = METER_MODBUS_TCP_REGISTER_BUFFER_SIZE;
 
     uint16_t register_buffer[METER_MODBUS_TCP_REGISTER_BUFFER_SIZE];
     size_t register_buffer_index = METER_MODBUS_TCP_REGISTER_BUFFER_SIZE;
@@ -147,8 +162,49 @@ private:
     ShellyEMMonophaseChannel shelly_pro_3em_monophase_channel;
     ShellyEMMonophaseMapping shelly_pro_3em_monophase_mapping;
 
-    // GoodWe
+    // Goodwe
     GoodweHybridInverterVirtualMeter goodwe_hybrid_inverter_virtual_meter;
+
+    // Solax
+    SolaxHybridInverterVirtualMeter solax_hybrid_inverter_virtual_meter;
+
+    // Fronius
+    FroniusGEN24PlusHybridInverterVirtualMeter fronius_gen24_plus_hybrid_inverter_virtual_meter;
+    int16_t fronius_gen24_plus_hybrid_inverter_dca_sf;
+    int16_t fronius_gen24_plus_hybrid_inverter_dcv_sf;
+    int16_t fronius_gen24_plus_hybrid_inverter_dcw_sf;
+    int16_t fronius_gen24_plus_hybrid_inverter_dcwh_sf;
+    float fronius_gen24_plus_hybrid_inverter_charge_dca;
+    float fronius_gen24_plus_hybrid_inverter_charge_dcv;
+    float fronius_gen24_plus_hybrid_inverter_charge_dcw;
+    float fronius_gen24_plus_hybrid_inverter_charge_dcwh;
+    float fronius_gen24_plus_hybrid_inverter_discharge_dca;
+    float fronius_gen24_plus_hybrid_inverter_discharge_dcv;
+    float fronius_gen24_plus_hybrid_inverter_discharge_dcw;
+    float fronius_gen24_plus_hybrid_inverter_discharge_dcwh;
+    float fronius_gen24_plus_hybrid_inverter_chastate;
+    int16_t fronius_gen24_plus_hybrid_inverter_chastate_sf;
+
+    // Hailei
+    HaileiHybridInverterVirtualMeter hailei_hybrid_inverter_virtual_meter;
+
+    // Fox ESS H3
+    FoxESSH3HybridInverterVirtualMeter fox_ess_h3_hybrid_inverter_virtual_meter;
+
+    // Carlo Gavazzi EM100
+    CarloGavazziPhase carlo_gavazzi_em100_phase;
+
+    // Carlo Gavazzi ET100
+    CarloGavazziPhase carlo_gavazzi_et100_phase;
+
+    // Carlo Gavazzi EM270
+    CarloGavazziEM270VirtualMeter carlo_gavazzi_em270_virtual_meter;
+
+    // Carlo Gavazzi EM280
+    CarloGavazziEM280VirtualMeter carlo_gavazzi_em280_virtual_meter;
+
+    // Carlo Gavazzi EM510
+    CarloGavazziPhase carlo_gavazzi_em510_phase;
 };
 
 #if defined(__GNUC__)

@@ -19,19 +19,38 @@
 
 #include "task_scheduler.h"
 
+#undef scheduleOnce
+#undef scheduleWithFixedDelay
+#undef scheduleWhenClockSynced
+#undef scheduleWallClock
+#undef await
+
 #include "event_log_prefix.h"
-#include "main_dependencies.h"
+#include "module_dependencies.h"
 
 static uint64_t last_task_id = 0;
 
-Task::Task(std::function<void(void)> &&fn, uint64_t task_id, uint32_t first_run_delay_ms, uint32_t delay_ms, bool once) :
-          fn(std::forward<std::function<void(void)>>(fn)),
-          task_id(task_id),
-          next_deadline_ms(millis() + first_run_delay_ms),
-          delay_ms(delay_ms),
-          awaited_by(nullptr),
-          once(once),
-          cancelled(false) {
+thread_local const char *_task_scheduler_file;
+thread_local int _task_scheduler_line;
+
+Task::Task(std::function<void(void)> &&fn, uint64_t task_id, micros_t first_run_delay, micros_t delay, const char *file, int line, bool once) :
+        fn(std::move(fn)),
+        task_id(task_id),
+        next_deadline(now_us() + first_run_delay),
+        delay(delay),
+        awaited_by(nullptr),
+        file(file),
+        line(line),
+        once(once),
+        cancelled(false) {
+}
+
+WallClockTask::WallClockTask(std::unique_ptr<Task> &&runner_task, uint64_t task_id, minutes_t interval_minutes, bool run_on_first_sync) :
+        runner_task(std::move(runner_task)),
+        task_id(task_id),
+        interval_minutes(interval_minutes),
+        run_on_first_sync(run_on_first_sync) {
+
 }
 
 /*
@@ -47,17 +66,7 @@ according to the weak ordering imposed by Compare.
 */
 bool compare(const std::unique_ptr<Task> &a, const std::unique_ptr<Task> &b)
 {
-    if (millis() > 0x7FFFFFFF) {
-        // We are close to a timer overflow
-        if (a->next_deadline_ms <= 0x7FFFFFFF && b->next_deadline_ms > 0x7FFFFFFF)
-            // b is close to the overflow, a is behind the overflow
-            return true;
-        if (b->next_deadline_ms <= 0x7FFFFFFF && a->next_deadline_ms > 0x7FFFFFFF)
-            // b is behind to the overflow, a is close to the overflow
-            return false;
-    }
-
-    return a->next_deadline_ms >= b->next_deadline_ms;
+    return a->next_deadline >= b->next_deadline;
 }
 
 // https://stackoverflow.com/a/36711682
@@ -95,6 +104,9 @@ Task *TaskQueue::findByTaskID(uint64_t task_id)
     return it->get();
 }
 
+COREDUMP_RTC_DATA_ATTR const char *task_fn_file;
+COREDUMP_RTC_DATA_ATTR int task_fn_line;
+
 void TaskScheduler::custom_loop()
 {
     // We can't use defer to clean up currentTask on function level,
@@ -102,12 +114,12 @@ void TaskScheduler::custom_loop()
     // while the task_mutex is locked.
 
     {
-        std::lock_guard<std::mutex> l{this->task_mutex};
+        std::lock_guard<std::mutex> lock{this->task_mutex};
         if (tasks.empty()) {
             return;
         }
 
-        if (!deadline_elapsed(tasks.top()->next_deadline_ms)) {
+        if (!deadline_elapsed(tasks.top()->next_deadline)) {
             return;
         }
 
@@ -124,6 +136,9 @@ void TaskScheduler::custom_loop()
         }
     }
 
+    task_fn_file = this->currentTask->file;
+    task_fn_line = this->currentTask->line;
+
     // Run task without holding the lock.
     // This allows a task to schedule tasks (could also be done with a recursive mutex)
     // but also allows other threads to schedule tasks while one is executed.
@@ -133,8 +148,11 @@ void TaskScheduler::custom_loop()
         this->currentTask->fn();
     }
 
+    task_fn_file = nullptr;
+    task_fn_line = 0;
+
     {
-        std::lock_guard<std::mutex> l{this->task_mutex};
+        std::lock_guard<std::mutex> lock{this->task_mutex};
         defer {this->currentTask = nullptr;};
 
         if (this->currentTask->awaited_by != nullptr) {
@@ -143,6 +161,15 @@ void TaskScheduler::custom_loop()
         }
 
         if (this->currentTask->once) {
+            if (!IS_WALL_CLOCK_TASK_ID(this->currentTask->task_id))
+                return;
+
+            for (auto &wall_clock_task : this->wall_clock_tasks) {
+                if (wall_clock_task.task_id != this->currentTask->task_id)
+                    continue;
+                wall_clock_task.runner_task = std::move(this->currentTask);
+                return;
+            }
             return;
         }
 
@@ -151,25 +178,25 @@ void TaskScheduler::custom_loop()
             return;
         }
 
-        this->currentTask->next_deadline_ms = millis() + this->currentTask->delay_ms;
+        this->currentTask->next_deadline = now_us() + this->currentTask->delay;
 
         tasks.push(std::move(this->currentTask));
     }
 }
 
-uint64_t TaskScheduler::scheduleOnce(std::function<void(void)> &&fn, uint32_t delay_ms)
+uint64_t TaskScheduler::scheduleOnce(std::function<void(void)> &&fn, millis_t delay_ms)
 {
-    std::lock_guard<std::mutex> l{this->task_mutex};
+    std::lock_guard<std::mutex> lock{this->task_mutex};
     uint64_t task_id = ++last_task_id;
-    tasks.emplace(new Task(std::forward<std::function<void(void)>>(fn), task_id, delay_ms, 0, true));
+    tasks.emplace(new Task(std::move(fn), task_id, delay_ms, 0_us, _task_scheduler_file, _task_scheduler_line, true));
     return task_id;
 }
 
-uint64_t TaskScheduler::scheduleWithFixedDelay(std::function<void(void)> &&fn, uint32_t first_delay_ms, uint32_t delay_ms)
+uint64_t TaskScheduler::scheduleWithFixedDelay(std::function<void(void)> &&fn, millis_t first_delay_ms, millis_t delay_ms)
 {
-    std::lock_guard<std::mutex> l{this->task_mutex};
+    std::lock_guard<std::mutex> lock{this->task_mutex};
     uint64_t task_id = ++last_task_id;
-    tasks.emplace(new Task(std::forward<std::function<void(void)>>(fn), task_id, first_delay_ms, delay_ms, false));
+    tasks.emplace(new Task(std::move(fn), task_id, first_delay_ms, delay_ms, _task_scheduler_file, _task_scheduler_line, false));
     return task_id;
 }
 
@@ -180,16 +207,49 @@ uint64_t TaskScheduler::scheduleWhenClockSynced(std::function<void(void)> &&fn)
     // the user supplied function
     return this->scheduleWithFixedDelay([fn, this]() {
         struct timeval tv_now;
-        if (clock_synced(&tv_now)) {
+        if (rtc.clock_synced(&tv_now)) {
             this->cancel(this->currentTask->task_id);
             fn();
         }
-    }, 0, 1000);
+    }, 0_ms, 1_s);
+}
+
+uint64_t TaskScheduler::scheduleWallClock(std::function<void(void)> &&fn, minutes_t interval_minutes, millis_t execution_delay_ms, bool run_on_first_sync)
+{
+    uint64_t task_id;
+    {
+        std::lock_guard<std::mutex> lock{this->task_mutex};
+        task_id = ++last_task_id | (1ull << 63ull);
+        auto runner_task = std::unique_ptr<Task>(new Task(std::move(fn), task_id, 0_us, execution_delay_ms, _task_scheduler_file, _task_scheduler_line, true));
+
+        wall_clock_tasks.emplace_back(std::move(runner_task), task_id, interval_minutes, run_on_first_sync);
+    }
+
+    if (!wall_clock_worker_started) {
+        wall_clock_worker_started = true;
+        this->scheduleWithFixedDelay([this](){this->wall_clock_worker();}, 0_ms, 1_s); // TODO: measure how long the worker takes in the common case! Then decide oversampling interval.
+    }
+
+    return task_id;
 }
 
 TaskScheduler::CancelResult TaskScheduler::cancel(uint64_t task_id)
 {
-    std::lock_guard<std::mutex> l{this->task_mutex};
+    std::lock_guard<std::mutex> lock{this->task_mutex};
+    if (IS_WALL_CLOCK_TASK_ID(task_id)) {
+        size_t i = 0;
+        bool task_scheduled = false;
+        for (; i < wall_clock_tasks.size(); ++i) {
+            if (wall_clock_tasks[i].task_id != task_id)
+                continue;
+            task_scheduled = !(bool)(wall_clock_tasks[i].runner_task);
+            break;
+        }
+        wall_clock_tasks.erase(wall_clock_tasks.begin() + i);
+        if (!task_scheduled)
+            return TaskScheduler::CancelResult::Cancelled;
+    }
+
     if (this->currentTask && this->currentTask->task_id == task_id) {
         this->currentTask->cancelled = true;
         return TaskScheduler::CancelResult::WillBeCancelled;
@@ -207,7 +267,7 @@ uint64_t TaskScheduler::currentTaskId()
         return 0;
     }
 
-    std::lock_guard<std::mutex> l{this->task_mutex};
+    std::lock_guard<std::mutex> lock{this->task_mutex};
     if (this->currentTask != nullptr)
         return this->currentTask->task_id;
     return 0;
@@ -228,7 +288,7 @@ TaskScheduler::AwaitResult TaskScheduler::await(uint64_t task_id, uint32_t milli
     }
 
     {
-        std::lock_guard<std::mutex> l{this->task_mutex};
+        std::lock_guard<std::mutex> lock{this->task_mutex};
         // The awaited task either
         // - is in the queue
         // - is currently running, i.e. not in the queue but in this->currentTask
@@ -275,5 +335,49 @@ TaskScheduler::AwaitResult TaskScheduler::await(uint64_t task_id, uint32_t milli
 
 TaskScheduler::AwaitResult TaskScheduler::await(std::function<void(void)> &&fn, uint32_t millis_to_wait)
 {
-    return await(scheduleOnce(std::forward<std::function<void(void)>>(fn), 0), millis_to_wait);
+    return await(scheduleOnce(std::move(fn), 0_ms), millis_to_wait);
+}
+
+void TaskScheduler::wall_clock_worker() {
+    static int last_minute = -1;
+
+    timeval tv;
+    if (!rtc.clock_synced(&tv))
+        return;
+
+    tm time_struct;
+    gmtime_r(&tv.tv_sec, &time_struct);
+
+    if (time_struct.tm_min == last_minute)
+        return;
+
+    auto minutes_since_midnight = minutes_t{time_struct.tm_hour * 60 + time_struct.tm_min};
+
+    std::lock_guard<std::mutex> lock{this->task_mutex};
+    auto now = now_us();
+
+    for (auto &task : wall_clock_tasks) {
+        if (last_minute == -1 && !task.run_on_first_sync)
+            continue;
+
+        if (last_minute != -1 && (minutes_since_midnight % task.interval_minutes) != 0_m)
+            continue;
+
+        if(!task.runner_task) {
+            logger.printfln("Attempted to schedule WallClockTask execution but runner_task is invalid. Is this task still enqueued?");
+            logger.printfln("    task_id=%llu interval_minutes=%u run_on_first_sync=%d", task.task_id, (uint32_t)(int64_t)task.interval_minutes, task.run_on_first_sync);
+            continue;
+        }
+
+        task.runner_task->next_deadline = now + task.runner_task->delay;
+        tasks.emplace(std::move(task.runner_task));
+    }
+
+    last_minute = time_struct.tm_min;
+}
+
+TaskScheduler *TaskScheduler::_task_scheduler_context(const char *f, int l) {
+    _task_scheduler_file = f;
+    _task_scheduler_line = l;
+    return this;
 }

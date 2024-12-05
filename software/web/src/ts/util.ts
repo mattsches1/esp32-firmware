@@ -25,21 +25,22 @@ import { AsyncModal } from "./components/async_modal";
 import { api_cache } from "./api_defs";
 import { batch, signal, Signal } from "@preact/signals-core";
 import { deepSignal, DeepSignal } from "deepsignal";
+import Median from "median-js-bridge";
 
 export function reboot() {
-    API.call("reboot", null, "").then(() => postReboot(__("util.reboot_title"), __("util.reboot_text")));
+    API.call("reboot", null, () => "").then(() => postReboot(__("util.reboot_title"), __("util.reboot_text")));
 }
 
 // react-bootstrap's Variant adds | string as the last union variant m(
 type StrictVariant = 'primary' | 'secondary' | 'success' | 'danger' | 'warning' | 'info' | 'dark' | 'light';
 
-let alerts: DeepSignal<Array<{id: string, variant: StrictVariant, title: string, text: string}>> = deepSignal([]);
+let alerts: DeepSignal<Array<{id: string, variant: StrictVariant, title: () => string, text: () => string}>> = deepSignal([]);
 
 export function get_alerts() {
     return alerts;
 }
 
-export function add_alert(id: string, variant: StrictVariant, title: string, text: string) {
+export function add_alert(id: string, variant: StrictVariant, title: () => string, text: () => string) {
     let idx = alerts.findIndex((alert) => alert.id == id);
     let alert = {id: id, variant: variant, title: title, text: text};
 
@@ -184,6 +185,13 @@ export function capsLockActive() {
     return caps_active.value;
 }
 
+let date_now: Signal<number> = signal(Date.now());
+window.setInterval(() => date_now.value = Date.now(), 1000*60);
+
+export function get_date_now_1m_update_rate() {
+    return date_now.value;
+}
+
 function checkCapsLock(e: MouseEvent | KeyboardEvent) {
     let active = e.getModifierState("CapsLock");
     if (caps_active.value && e instanceof KeyboardEvent && e.type == "keyup" && e.key == "CapsLock")
@@ -200,7 +208,7 @@ export let remoteAccessMode = window.top !== window.self;
 const path = location.origin;
 export let connection_id = "";
 let iframe_timeout: number = null;
-let iframe_timeout_ms = 100;
+let iframe_timeout_ms = 1500;
 
 window.addEventListener("message", (e) => {
     if (iframe_timeout != null) {
@@ -211,7 +219,7 @@ window.addEventListener("message", (e) => {
         if (iFrameSocketCb) {
             iFrameSocketCb(e);
         }
-    } else {
+    } else if (e.data && e.data.connection_id) {
         connection_id = e.data.connection_id;
     }
 });
@@ -231,7 +239,7 @@ let iFrameSocketCb: (data: any) => void = null;
 
 function iFrameSocketInit(first: boolean, keep_as_first: boolean, continuation: (ws: WebSocket | undefined, eventTarget: API.APIEventTarget) => void) {
     if (!first) {
-        add_alert("event_connection_lost", "warning",  __("util.event_connection_lost_title"), __("util.event_connection_lost"))
+        add_alert("event_connection_lost", "warning",  () => __("util.event_connection_lost_title"),() =>  __("util.event_connection_lost"))
     }
     if (wsReconnectTimeout != null) {
         clearTimeout(wsReconnectTimeout);
@@ -301,7 +309,7 @@ export function setupEventSource(first: boolean, keep_as_first: boolean, continu
     }
 
     if (!first) {
-        add_alert("event_connection_lost", "warning",  __("util.event_connection_lost_title"), __("util.event_connection_lost"))
+        add_alert("event_connection_lost", "warning",  () => __("util.event_connection_lost_title"), () => __("util.event_connection_lost"))
     }
     console.log("Connecting to web socket");
     if (ws != null) {
@@ -318,6 +326,14 @@ export function setupEventSource(first: boolean, keep_as_first: boolean, continu
     ws.onmessage = wsOnMessageCallback;
 
     continuation(ws, eventTarget);
+}
+
+export function pauseiFrameSocket() {
+    window.parent.postMessage("pauseWS");
+    if (wsReconnectTimeout != null) {
+        clearTimeout(wsReconnectTimeout);
+        wsReconnectTimeout = null;
+    }
 }
 
 export function pauseWebSockets() {
@@ -339,7 +355,7 @@ export function postReboot(alert_title: string, alert_text: string) {
         ws.close();
     }
     clearTimeout(wsReconnectTimeout);
-    add_alert("reboot", "success", alert_title, alert_text);
+    add_alert("reboot", "success", () => alert_title, () => alert_text);
     // Wait 5 seconds before starting the reload/reconnect logic, to make sure the reboot has actually started yet.
     // Else it sometimes happens, that we reconnect _before_ the reboot starts.
     window.setTimeout(() => whenLoggedInElseReload(() =>
@@ -482,9 +498,15 @@ export function downloadToFile(content: BlobPart, fileType: string, extension: s
     let filename = name + "-" + fileType + "-" + timestamp_str + "." + extension;
     filename = removeUnicodeHacks(filename);
 
-    a.href= URL.createObjectURL(file);
-    a.download = filename;
-    a.click();
+    const url = URL.createObjectURL(file);
+
+    if (is_native_median_app()) {
+        Median.share.downloadFile({url: url});
+    } else {
+        a.href = url
+        a.download = filename;
+        a.click();
+    }
 
     URL.revokeObjectURL(a.href);
 }
@@ -833,4 +855,32 @@ export function blobToBase64(blob: Blob): Promise<string> {
         reader.onloadend = () => resolve(reader.result as string);
         reader.readAsDataURL(blob);
     });
+}
+
+export function get_value_with_unit(value: number, unit: string, digits: number = 2, divisor: number = 1, value_not_ok: string = __("util.not_yet_known")) {
+	if (isNaN(value)) {
+		return value_not_ok;
+	}
+
+	return toLocaleFixed(value / divisor, digits) + " " + unit;
+}
+
+export function is_native_median_app(): boolean {
+    // Put fake_native_median_app = true in developer console to
+    // get native app behavior in normal browser
+
+    // @ts-ignore
+    if (globalThis.fake_native_median_app !== 'undefined' && globalThis.fake_native_median_app) {
+        return true;
+    }
+
+    return Median.isNativeApp();
+}
+
+export function is_date_today(date: Date): boolean {
+    const today = new Date()
+
+    return date.getDate() == today.getDate() &&
+           date.getMonth() == today.getMonth() &&
+           date.getFullYear() == today.getFullYear();
 }

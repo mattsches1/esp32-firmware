@@ -17,14 +17,15 @@
  * Boston, MA 02111-1307, USA.
  */
 
-#include "bricklet_bindings_constants.h"
 #include "em_common.h"
-#include "module_dependencies.h"
 
+#include "event_log_prefix.h"
+#include "bricklet_bindings_constants.h"
 #include "bindings/errors.h"
 #include "build.h"
-#include "event_log_prefix.h"
 #include "musl_libc_timegm.h"
+
+#include "module_dependencies.h"
 
 EMCommon::EMCommon()
 {
@@ -106,12 +107,6 @@ timeval EMCommon::get_time()
     date_time.tm_year = tm_year + 100;
 
     time.tv_sec = timegm(&date_time);
-
-    // Allow time to be 24h older than the build timestamp,
-    // in case the RTC is set by hand to test something.
-    //FIXME not Y2038-safe
-    if (time.tv_sec < static_cast<time_t>(build_timestamp() - 24 * 3600))
-        time.tv_sec = 0;
 
     return time;
 }
@@ -273,5 +268,5 @@ void EMCommon::start_network_check_task()
             if (is_error(ERROR_FLAGS_NETWORK_BIT_POS))
                 clr_error(ERROR_FLAGS_NETWORK_MASK);
         }
-    }, 0, 5000);
+    }, 5_s);
 }

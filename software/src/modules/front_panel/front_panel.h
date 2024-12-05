@@ -26,12 +26,13 @@
 #include "module_available.h"
 
 #define FRONT_PANEL_TILES 6
+#define TILE_TYPES 8
 
 class FrontPanel : public DeviceModule<TF_WARPFrontPanel,
-                                         tf_warp_front_panel_create,
-                                         tf_warp_front_panel_get_bootloader_mode,
-                                         tf_warp_front_panel_reset,
-                                         tf_warp_front_panel_destroy>
+                                       tf_warp_front_panel_create,
+                                       tf_warp_front_panel_get_bootloader_mode,
+                                       tf_warp_front_panel_reset,
+                                       tf_warp_front_panel_destroy>
 {
 public:
     enum class LEDPattern : uint8_t {
@@ -95,11 +96,16 @@ private:
     int update_front_page_heating_status(const uint8_t index, const TileType type, const uint8_t param);
     int set_display_front_page_icon_with_check(const uint32_t icon_index, bool active, const uint32_t sprite_index, const char *text_1, const uint8_t font_index_1, const char *text_2, const uint8_t font_index_2);
 
+    const char* get_i18n_string(const char *key_en, const char *key_de);
     void check_flash_metadata();
 
-    String watt_value_to_display_string(const int32_t watt);
-    String watt_hour_value_to_display_string(const uint32_t kilo_watt_hour);
+    String watt_value_to_display_string(const int32_t w);
+    String watt_hour_value_to_display_string(const uint32_t wh);
     String price_value_to_display_string(const int32_t price);
 
+    ConfUnionPrototype<TileType> tile_prototypes[TILE_TYPES];
+    Config config_tiles_prototype;
     ConfigRoot config;
 };
+
+#include "module_available_end.h"

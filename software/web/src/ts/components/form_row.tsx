@@ -35,6 +35,8 @@ import { InputText } from "./input_text";
 import { InputTime } from "./input_time";
 import { InputMonth } from "./input_month";
 import { OutputFloat } from "./output_float";
+import { SwitchableInputNumber } from "./switchable_input_number";
+import { useMemo } from "preact/hooks";
 
 export interface FormRowProps {
     label: ComponentChildren;
@@ -51,6 +53,7 @@ export interface FormRowProps {
     error?: ComponentChildren;
     small?: boolean;
     symbol?: h.JSX.Element;
+    class?: string;
 }
 
 let id_counter = 0;
@@ -70,7 +73,26 @@ const components_using_id_context: any = [
     OutputDatetime,
     OutputFloat,
     Switch,
+    SwitchableInputNumber,
 ];
+
+function walk(children: ComponentChildren): VNode<any> | null {
+    for (let c of toChildArray(children)) {
+        if (typeof(c) == "string" || typeof(c) == "number")
+            continue;
+
+        if (c.type == FormRow)
+            continue;
+
+        if (components_using_id_context.indexOf(c.type) >= 0)
+            return c;
+
+        let sub_result = walk(c.props.children)
+        if (sub_result != null)
+            return sub_result;
+    }
+    return null;
+}
 
 export class FormRow extends Component<FormRowProps, {help_expanded: boolean}> {
     idContext: Context<string>;
@@ -84,17 +106,20 @@ export class FormRow extends Component<FormRowProps, {help_expanded: boolean}> {
     }
 
     render(props: FormRowProps, state: {help_expanded: boolean}) {
-        let use_id_context = !toChildArray(props.children).every(c => typeof(c) == "string" || typeof(c) == "number" || components_using_id_context.indexOf(c.type) < 0)
+        let child_using_id_context = useMemo(() => walk(props.children), [props.children]);
+        if (child_using_id_context != null) {
+            child_using_id_context.props["idContext"] = this.idContext;
+        }
+        let inner = props.children;
 
-        let inner = use_id_context ? <>{(toChildArray(props.children) as VNode[]).map(c => cloneElement(c, {idContext: this.idContext}))}</> : props.children;
-        if (props.contentColClasses === undefined || props.contentColClasses !== "")
+        if (props.contentColClasses === undefined || props.contentColClasses !== "") {
             inner = <div class={props.contentColClasses === undefined ? "col-lg-8" : props.contentColClasses}>
                 {inner}
                 {props.error ? <div class="alert alert-danger mt-2 p-3">{props.error}</div> : <></>}
                 {props.help ? <Collapse in={state.help_expanded} >
                                 <div>{/*Empty div to fix choppy animation. See https://react-bootstrap-v4.netlify.app/utilities/transitions/#collapse*/}
                                     <div class="card mt-2">
-                                        <div class="card-body p-3" style="background: #ffffe7;">
+                                        <div class="card-body p-3 form-row-help" style="background: #ffffe7;">
                                             {props.help}
                                         </div>
                                     </div>
@@ -102,13 +127,9 @@ export class FormRow extends Component<FormRowProps, {help_expanded: boolean}> {
                               </Collapse>
                             : <></>}
             </div>
+        }
 
-        return (
-            <div class="form-group row" hidden={props.hidden == undefined ? false : props.hidden}>
-                <div class={(props.labelColClasses === undefined ? "col-lg-4" : props.labelColClasses)}>
-                    <div class="row">
-                        <label for={use_id_context ? this.id : undefined} class={"col col-form-label " + (props.small ? "col-form-label-sm " : "") + "pt-0 pt-lg-col-form-label"}>
-                            <div class="row mx-lg-0">
+        let label_content = <div class="row mx-lg-0">
                                 <div class={"col px-lg-0" + (props.symbol ? " d-flex-ni align-items-center" : "")}>
                                     {props.label_prefix ? props.label_prefix : undefined}
                                     {props.symbol ? <span class="col-auto px-1">{props.symbol}</span> : undefined}
@@ -118,7 +139,23 @@ export class FormRow extends Component<FormRowProps, {help_expanded: boolean}> {
                                     {props.label_suffix ? props.label_suffix : undefined}
                                 </div>
                             </div>
-                        </label>
+
+        let label = null;
+        if (child_using_id_context != null) {
+            label = <label for={child_using_id_context != null ? this.id : undefined} class={"col col-form-label " + (props.small ? "col-form-label-sm " : "") + "pt-0 pt-lg-col-form-label"}>
+                            {label_content}
+                    </label>
+        } else {
+            label = <div for={child_using_id_context != null ? this.id : undefined} class={"col col-form-label " + (props.small ? "col-form-label-sm " : "") + "pt-0 pt-lg-col-form-label"}>
+                            {label_content}
+                    </div>
+        }
+
+        return (
+            <div class={"form-group row " + (props.class === undefined ? "" : props.class)} hidden={props.hidden == undefined ? false : props.hidden}>
+                <div class={(props.labelColClasses === undefined ? "col-lg-4" : props.labelColClasses)}>
+                    <div class="row">
+                        {label}
                         {props.help ? <span class={"col-auto pt-lg-col-form-label"} onClick={() => this.setState({help_expanded: !state.help_expanded})}><HelpCircle {...{class:(state.help_expanded ? "btn-dark" : "btn-outline-secondary"), style:"border-radius: 50%; transition: .35s;"} as any}/></span> : undefined}
                     </div>
                 </div>

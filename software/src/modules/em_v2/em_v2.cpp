@@ -18,14 +18,17 @@
  */
 
 #include "em_v2.h"
-#include "module_dependencies.h"
 
 #include "bindings/errors.h"
 #include "event_log_prefix.h"
 #include "tools.h"
 #include "warp_energy_manager_v2_bricklet_firmware_bin.embedded.h"
 
+#include "module_dependencies.h"
+
 #include "gcc_warnings.h"
+
+static constexpr auto EM_TASK_DELAY = 250_ms;
 
 #if defined(__GNUC__)
     #pragma GCC diagnostic push
@@ -33,11 +36,11 @@
 #endif
 
 EMV2::EMV2() : DeviceModule(warp_energy_manager_v2_bricklet_firmware_bin_data,
-                                              warp_energy_manager_v2_bricklet_firmware_bin_length,
-                                              "energy_manager",
-                                              "WARP Energy Manager 2.0",
-                                              "Energy Manager V2",
-                                              [this](){this->setup_energy_manager();}) {}
+                            warp_energy_manager_v2_bricklet_firmware_bin_length,
+                            "energy_manager",
+                            "WARP Energy Manager 2.0",
+                            "Energy Manager V2",
+                            [this](){this->setup_energy_manager();}) {}
 
 #if defined(__GNUC__)
     #pragma GCC diagnostic pop
@@ -47,9 +50,8 @@ void EMV2::pre_setup()
 {
     this->DeviceModule::pre_setup();
 
-    const Config *prototype_bool_false = new Config{Config::Bool(false)};
+    const Config *prototype_bool_false = Config::get_prototype_bool_false();
 
-    // FIXME states and low_level_states are wrong
     // States
     em_common.state = Config::Object({
         // Common
@@ -86,57 +88,53 @@ void EMV2::pre_setup()
     //em_common.config = Config::Object({
     //});
 
-#if MODULE_AUTOMATION_AVAILABLE()
-//    automation.register_action(
-//        AutomationActionID::EMRelaySwitch,
-//        Config::Object({
-//            {"closed", Config::Bool(false)}
-//        }),
-//        [this](const Config *cfg) {
-//            this->set_output(cfg->get("closed")->asBool());
-//        }
-//    );
-//
-//    automation.register_trigger(
-//        AutomationTriggerID::EMInputThree,
-//        Config::Object({
-//            {"closed", Config::Bool(false)}
-//        }));
-#endif
-}
+    outputs_update = Config::Array(
+        {Config::Uint8(255), Config::Uint8(255), Config::Uint8(255), Config::Uint8(255)}, // 2x SG Ready, 2x Relay
+        Config::get_prototype_uint8_0(), // The prototype's default value can be 0 because the array cannot be extended.
+        4, 4, Config::type_id<Config::ConfUint>()
+    );
 
 #if MODULE_AUTOMATION_AVAILABLE()
-bool EMV2::has_triggered(const Config *conf, void *data)
-{
-    //const Config *cfg = static_cast<const Config *>(conf->get());
+    automation.register_trigger(
+        AutomationTriggerID::EMInput,
+        Config::Object({
+            {"index",  Config::Uint(0, 0, 3)},
+            {"closed", Config::Bool(false)},
+        })
+    );
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wswitch-enum"
+    automation.register_action(
+        AutomationActionID::EMRelaySwitch,
+        Config::Object({
+            {"index",  Config::Uint(0, 0, 1)},
+            {"closed", Config::Bool(false)}
+        }),
+        [this](const Config *cfg) {
+            const uint32_t index  = cfg->get("index" )->asUint();
+            const bool     closed = cfg->get("closed")->asBool();
+            this->set_relay_output(index, closed);
+        }
+    );
 
-    switch (conf->getTag<AutomationTriggerID>()) {
-//        case AutomationTriggerID::EMInputThree:
-//            if (cfg->get("closed")->asBool() == em_common.state.get("input3_state")->asBool()) {
-//                return true;
-//            }
-//            break;
+    automation.register_action(
+        AutomationActionID::EMSGReadySwitch,
+        Config::Object({
+            {"index",  Config::Uint(0, 0, 1)},
+            {"closed", Config::Bool(false)}
+        }),
+        [this](const Config *cfg) {
+            const uint32_t index  = cfg->get("index" )->asUint();
+            const bool     closed = cfg->get("closed")->asBool();
+            this->set_sg_ready_output(index, closed);
+        }
+    );
 
-        default:
-            break;
-    }
-#pragma GCC diagnostic pop
-
-    return false;
-}
 #endif
+}
 
 void EMV2::setup_energy_manager()
 {
-    if (!this->DeviceModule::setup_device()) {
-        logger.printfln("setup_device error. Reboot in 5 Minutes.");
-
-        task_scheduler.scheduleOnce([]() {
-            trigger_reboot("Energy Manager");
-        }, 5 * 60 * 1000);
+    if (!setup_device()) {
         return;
     }
 
@@ -164,12 +162,68 @@ void EMV2::setup()
     // Start this task even if a config error is set below: If only MeterEM::update_all_values runs, there will be 2.5 sec gaps in the meters data.
     task_scheduler.scheduleWithFixedDelay([this]() {
         this->update_all_data();
-    }, 0, EM_TASK_DELAY_MS);
+    }, EM_TASK_DELAY);
+
+#if MODULE_AUTOMATION_AVAILABLE()
+    task_scheduler.scheduleOnce([this]() {
+        for (size_t i = 0; i < ARRAY_SIZE(this->all_data.input); i++) {
+            uint32_t index = i;
+            automation.trigger(AutomationTriggerID::EMInput, &index, this);
+        }
+    });
+#endif
 }
 
 void EMV2::register_urls()
 {
     this->DeviceModule::register_urls();
+
+    api.addCommand("energy_manager/outputs_update", &outputs_update, {}, [this](String &error) {
+        // 2x SG Ready, 2x Relay
+        uint8_t new_values[4];
+        this->outputs_update.fillUint8Array(new_values, ARRAY_SIZE(new_values));
+
+        // Handle relays first because they switch slower.
+        for (size_t i = 0; i < 2; i++) {
+            uint8_t new_value = new_values[i + 2];
+            if (new_value != 255) {
+                if (new_value > 1) {
+                    error += "Relay output value out of range [0, 1].\n";
+                } else {
+                    set_relay_output(i, new_value);
+                }
+                // Reset update config entry
+                this->outputs_update.get(i + 2)->updateUint(255);
+            }
+        }
+
+        for (size_t i = 0; i < 2; i++) {
+            uint8_t new_value = new_values[i];
+            if (new_value != 255) {
+                if (new_value > 1) {
+                    error += "SG Ready output value out of range [0, 1].\n";
+                } else {
+                    bool switching_blocked = false;
+
+#if MODULE_HEATING_AVAILABLE()
+                    if (i == 0) { // Output 0 is §14EnWG shutdown.
+                        switching_blocked = heating.is_p14enwg_active();
+                    } else { // Output 1 is for elevated power.
+                        switching_blocked = heating.is_active();
+                    }
+#endif
+
+                    if (switching_blocked) {
+                        error += "Cannot control SG Ready output that is currently in use by heating control.\n";
+                    } else {
+                        set_sg_ready_output(i, new_value);
+                    }
+                }
+                // Reset update config entry
+                this->outputs_update.get(i)->updateUint(255);
+            }
+        }
+    }, true);
 }
 
 // for IEMBackend
@@ -209,10 +263,10 @@ void EMV2::get_input_output_states(bool *inputs, size_t *inputs_len, bool *outpu
     if (*outputs_len < 4) {
         *outputs_len = 0;
     } else {
-        outputs[0] = all_data.output_relay[0];
-        outputs[1] = all_data.output_relay[1];
-        outputs[2] = all_data.output_sg_ready[0];
-        outputs[3] = all_data.output_sg_ready[1];
+        outputs[0] = all_data.output_sg_ready[0];
+        outputs[1] = all_data.output_sg_ready[1];
+        outputs[2] = all_data.output_relay[0];
+        outputs[3] = all_data.output_relay[1];
         *outputs_len = 4;
     }
 }
@@ -242,7 +296,7 @@ int EMV2::wem_get_sd_information(uint32_t *ret_sd_status, uint32_t *ret_lfs_stat
     return tf_warp_energy_manager_v2_get_sd_information(&device, ret_sd_status, ret_lfs_status, ret_sector_size, ret_sector_count, ret_card_type, ret_product_rev, ret_product_name, ret_manufacturer_id);
 }
 
-int EMV2::wem_set_sd_wallbox_data_point(uint32_t wallbox_id, uint8_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute, uint8_t flags, uint16_t power, uint8_t *ret_status)
+int EMV2::wem_set_sd_wallbox_data_point(uint32_t wallbox_id, uint8_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute, uint16_t flags, uint16_t power, uint8_t *ret_status)
 {
     return tf_warp_energy_manager_v2_set_sd_wallbox_data_point(&device, wallbox_id, year, month, day, hour, minute, flags, power, ret_status);
 }
@@ -262,7 +316,7 @@ int EMV2::wem_get_sd_wallbox_daily_data_points(uint32_t wallbox_id, uint8_t year
     return tf_warp_energy_manager_v2_get_sd_wallbox_daily_data_points(&device, wallbox_id, year, month, day, amount, ret_status);
 }
 
-int EMV2::wem_set_sd_energy_manager_data_point(uint8_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute, uint8_t flags, int32_t power_grid, const int32_t power_general[6], uint32_t price, uint8_t *ret_status)
+int EMV2::wem_set_sd_energy_manager_data_point(uint8_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute, uint16_t flags, int32_t power_grid, const int32_t power_general[6], uint32_t price, uint8_t *ret_status)
 {
     return tf_warp_energy_manager_v2_set_sd_energy_manager_data_point(&device, year, month, day, hour, minute, flags, power_grid, power_general, price, ret_status);
 }
@@ -302,9 +356,9 @@ int EMV2::wem_set_data_storage(uint8_t page, const uint8_t data[63])
     return tf_warp_energy_manager_v2_set_data_storage(&device, page, data);
 }
 
-int EMV2::wem_get_data_storage(uint8_t page, uint8_t ret_data[63])
+int EMV2::wem_get_data_storage(uint8_t page, uint8_t *status, uint8_t ret_data[63])
 {
-    return tf_warp_energy_manager_v2_get_data_storage(&device, page, ret_data);
+    return tf_warp_energy_manager_v2_get_data_storage(&device, page, status, ret_data);
 }
 
 int EMV2::wem_reset_energy_meter_relative_energy()
@@ -317,6 +371,52 @@ int EMV2::wem_get_energy_meter_detailed_values(float *ret_values, uint16_t *ret_
     return tf_warp_energy_manager_v2_get_energy_meter_detailed_values(&device, ret_values, ret_values_length);
 }
 
+#if MODULE_AUTOMATION_AVAILABLE()
+bool EMV2::has_triggered(const Config *conf, void *data)
+{
+    const AutomationTriggerID trigger_id = conf->getTag<AutomationTriggerID>();
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wswitch-enum"
+
+    switch (trigger_id) {
+        case AutomationTriggerID::EMInput: {
+            const uint32_t triggered_index = *static_cast<uint32_t *>(data);
+            const Config *cfg = static_cast<const Config *>(conf->get());
+            const uint32_t cfg_index = cfg->get("index")->asUint();
+
+            if (triggered_index != cfg_index) {
+                return false;
+            }
+
+            const bool is_closed = this->all_data.input[triggered_index];
+            const bool want_closed = cfg->get("closed")->asBool();
+            return is_closed == want_closed;
+        }
+
+        default:
+            break;
+    }
+#pragma GCC diagnostic pop
+
+    logger.printfln("has_triggered called for unexpected trigger ID %u", static_cast<uint32_t>(trigger_id));
+    return false;
+}
+
+template<typename T>
+void EMV2::update_all_data_triggers(T id, void *data_)
+{
+    // Don't attempt to trigger actions during the setup stage because the automation rules are probably not loaded yet.
+    // Start-up triggers are dispatched from a task started in our setup().
+    if (boot_stage > BootStage::SETUP) {
+        automation.trigger(id, data_, this);
+    }
+}
+#define AUTOMATION_TRIGGER(TRIGGER_ID, DATA) update_all_data_triggers(AutomationTriggerID::TRIGGER_ID, DATA)
+#else // no MODULE_AUTOMATION_AVAILABLE()
+#define AUTOMATION_TRIGGER(TRIGGER_ID, DATA) do {(void)DATA;} while (0)
+#endif
+
 void EMV2::update_all_data()
 {
     update_all_data_struct();
@@ -326,17 +426,22 @@ void EMV2::update_all_data()
 
     Config *state_inputs = static_cast<Config *>(em_common.state.get("inputs"));
     bool *inputs = all_data.input;
-    for (uint16_t i = 0; i < ARRAY_SIZE(all_data.input); i++) {
-        state_inputs->get(i)->updateBool(inputs[i]);
+    for (size_t i = 0; i < ARRAY_SIZE(all_data.input); i++) {
+        if (state_inputs->get(i)->updateBool(inputs[i])) {
+            uint32_t index = i;
+            AUTOMATION_TRIGGER(EMInput, &index);
+        }
     }
 
     Config *state_sg_ready = static_cast<Config *>(em_common.state.get("sg_ready_outputs"));
-    state_sg_ready->get(0)->updateBool(all_data.output_sg_ready[0]);
-    state_sg_ready->get(1)->updateBool(all_data.output_sg_ready[1]);
+    for (size_t i = 0; i < ARRAY_SIZE(all_data.output_sg_ready); i++) {
+        state_sg_ready->get(i)->updateBool(all_data.output_sg_ready[i]);
+    }
 
     Config *state_relays = static_cast<Config *>(em_common.state.get("relays"));
-    state_relays->get(0)->updateBool(all_data.output_relay[0]);
-    state_relays->get(1)->updateBool(all_data.output_relay[1]);
+    for (size_t i = 0; i < ARRAY_SIZE(all_data.output_relay); i++) {
+        state_relays->get(i)->updateBool(all_data.output_relay[i]);
+    }
 
 #if MODULE_METERS_EM_AVAILABLE()
     meters_em.update_from_em_all_data(all_data.common);
@@ -366,64 +471,64 @@ void EMV2::update_all_data_struct()
     }
 }
 
-bool EMV2::get_input(uint8_t channel)
+bool EMV2::get_input(uint32_t index)
 {
-    if (channel > 3) {
-        logger.printfln("get_input channel out of range: %u > 3", channel);
+    if (index > 3) {
+        logger.printfln("get_input index out of range: %u > 3", index);
         return false;
     }
 
-    return all_data.input[channel];
+    return all_data.input[index];
 }
 
-void EMV2::set_sg_ready_output(uint8_t channel, bool value)
+void EMV2::set_sg_ready_output(uint32_t index, bool value)
 {
-    if (channel > 1) {
-        logger.printfln("set_sg_ready_output channel out of range: %u > 1", channel);
+    if (index > 1) {
+        logger.printfln("set_sg_ready_output index out of range: %u > 1", index);
         return;
     }
 
-    int rc = tf_warp_energy_manager_v2_set_sg_ready_output(&device, channel, value);
+    int rc = tf_warp_energy_manager_v2_set_sg_ready_output(&device, static_cast<uint8_t>(index), value);
 
     // Don't check if bricklet is reachable because the setter call won't tell us.
 
     if (rc != TF_E_OK) {
-        logger.printfln("Failed to set SG Ready output %u: error %i", channel, rc);
+        logger.printfln("Failed to set SG Ready output %u: error %i", index, rc);
     }
 }
 
-bool EMV2::get_sg_ready_output(uint8_t channel)
+bool EMV2::get_sg_ready_output(uint32_t index)
 {
-    if (channel > 1) {
-        logger.printfln("get_sg_ready_output channel out of range: %u > 1", channel);
+    if (index > 1) {
+        logger.printfln("get_sg_ready_output index out of range: %u > 1", index);
         return false;
     }
 
-    return all_data.output_sg_ready[channel];
+    return all_data.output_sg_ready[index];
 }
 
-void EMV2::set_relay_output(uint8_t channel, bool value)
+void EMV2::set_relay_output(uint32_t index, bool value)
 {
-    if (channel > 1) {
-        logger.printfln("set_relay_output channel out of range: %u > 1", channel);
+    if (index > 1) {
+        logger.printfln("set_relay_output index out of range: %u > 1", index);
         return;
     }
 
-    int rc = tf_warp_energy_manager_v2_set_relay_output(&device, channel, value);
+    int rc = tf_warp_energy_manager_v2_set_relay_output(&device, static_cast<uint8_t>(index), value);
 
     // Don't check if bricklet is reachable because the setter call won't tell us.
 
     if (rc != TF_E_OK) {
-        logger.printfln("Failed to set SG Ready output %u: error %i", channel, rc);
+        logger.printfln("Failed to set SG Ready output %u: error %i", index, rc);
     }
 }
 
-bool EMV2::get_relay_output(uint8_t channel)
+bool EMV2::get_relay_output(uint32_t index)
 {
-    if (channel > 1) {
-        logger.printfln("get_relay_output channel out of range: %u > 1", channel);
+    if (index > 1) {
+        logger.printfln("get_relay_output index out of range: %u > 1", index);
         return false;
     }
 
-    return all_data.output_relay[channel];
+    return all_data.output_relay[index];
 }

@@ -28,8 +28,31 @@
 #include "cool_string.h"
 #include "esp_httpd_priv.h"
 
-#define MAX_URI_HANDLERS 128
 
+#include "sdkconfig.h"
+#ifndef CONFIG_ESP_HTTPS_SERVER_ENABLE
+#define CONFIG_ESP_HTTPS_SERVER_ENABLE 0
+#endif
+#ifndef MODULE_CERTS_AVAILABLE
+#define MODULE_CERTS_AVAILABLE() 0
+#endif
+
+// HTTPS is available if
+// - the board has PSRAM,
+// - certificates are available and
+// - the HTTPS server is enabled in pio.
+#if (defined(BOARD_HAS_PSRAM) && MODULE_CERTS_AVAILABLE() && CONFIG_ESP_HTTPS_SERVER_ENABLE)
+#define HTTPS_AVAILABLE() 1
+#else
+#define HTTPS_AVAILABLE() 0
+#endif
+
+#if HTTPS_AVAILABLE()
+#include <esp_https_server.h>
+#endif
+
+
+#define MAX_URI_HANDLERS 128
 #define HTTPD_STACK_SIZE 7168
 
 void WebServer::post_setup()
@@ -38,33 +61,72 @@ void WebServer::post_setup()
         return;
     }
 
-    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.lru_purge_enable = true;
-    config.stack_size = HTTPD_STACK_SIZE;
-    config.max_uri_handlers = MAX_URI_HANDLERS;
-    config.global_user_ctx = this;
-    // httpd_stop calls free on the pointer passed as global_user_ctx if we don't override the free_fn.
-    config.global_user_ctx_free_fn = [](void *foo){};
-    config.max_open_sockets = 10;
+#if HTTPS_AVAILABLE()
+    httpd_ssl_config_t config = HTTPD_SSL_CONFIG_DEFAULT();
 
-    config.enable_so_linger = true;
-    config.linger_timeout = 100;
+    size_t cert_crt_len = 0;
+    auto cert_crt = certs.get_cert(0, &cert_crt_len); // TODO: Get cert ID from network config
+    if (cert_crt == nullptr) {
+        logger.printfln("Certificate with ID 0 is not available");
+        return;
+    }
+
+    size_t cert_key_len = 0;
+    auto cert_key = certs.get_cert(1, &cert_key_len); // TODO: Get cert ID from network config
+    if (cert_key == nullptr) {
+        logger.printfln("Certificate with ID 1 is not available");
+        return;
+    }
+
+    // SSL config
+    config.transport_mode = HTTPD_SSL_TRANSPORT_SECURE; // TODO: Get transport mode from network config
+    config.port_secure    = 443; // TODO: Get from network config
+    config.port_insecure  = 80; // TODO: Get from network config
+    config.cacert_pem     = cert_crt.release();
+    config.cacert_len     = cert_crt_len + 1; // +1 since the length must include the null terminator
+    config.prvtkey_pem    = cert_key.release();
+    config.prvtkey_len    = cert_key_len + 1; // +1 since the length must include the null terminator
+#else
+    // Use fake ssl_config_t to be able to reuse code
+    typedef struct {
+        httpd_config_t httpd;
+    } fake_ssl_config_t;
+
+    fake_ssl_config_t config = {
+        .httpd = HTTPD_DEFAULT_CONFIG()
+    };
+#endif
+
+    config.httpd.lru_purge_enable = true;
+    config.httpd.stack_size = HTTPD_STACK_SIZE;
+    config.httpd.max_uri_handlers = MAX_URI_HANDLERS;
+    config.httpd.global_user_ctx = this;
+    // httpd_stop calls free on the pointer passed as global_user_ctx if we don't override the free_fn.
+    config.httpd.global_user_ctx_free_fn = [](void *foo){};
+    config.httpd.max_open_sockets = 10;
+    config.httpd.enable_so_linger = true;
+    config.httpd.linger_timeout = 100;
+
 #if MODULE_NETWORK_AVAILABLE()
-    config.server_port = network.config.get("web_server_port")->asUint();
+    config.httpd.server_port = network.config.get("web_server_port")->asUint();
 #endif
 
 #if MODULE_HTTP_AVAILABLE()
-    config.uri_match_fn = custom_uri_match;
+    config.httpd.uri_match_fn = custom_uri_match;
 #endif
 
     /*config.task_priority = tskIDLE_PRIORITY+7;
-    config.core_id = 1;*/
+    config.httpd.core_id = 1;*/
 
     // Start the httpd server
-    auto result = httpd_start(&this->httpd, &config);
+#if HTTPS_AVAILABLE()
+    auto result = httpd_ssl_start(&this->httpd, &config);
+#else
+    auto result = httpd_start(&this->httpd, &config.httpd);
+#endif
     if (result != ESP_OK) {
         httpd = nullptr;
-        logger.printfln("Failed to start web server! %s (%d)", esp_err_to_name(result), result);
+        logger.printfln("Failed to start web server: %s (0x%X)", esp_err_to_name(result), result);
         return;
     }
 
@@ -207,7 +269,7 @@ WebServerHandler *WebServer::on(const char *uri,
     return addHandler(uri,
                       method,
                       true,
-                      std::forward<wshCallback>(callback),
+                      std::move(callback),
                       wshUploadCallback(),
                       wshUploadErrorCallback());
 }
@@ -221,9 +283,9 @@ WebServerHandler *WebServer::on(const char *uri,
     return addHandler(uri,
                       method,
                       true,
-                      std::forward<wshCallback>(callback),
-                      std::forward<wshUploadCallback>(uploadCallback),
-                      std::forward<wshUploadErrorCallback>(uploadErrorCallback));
+                      std::move(callback),
+                      std::move(uploadCallback),
+                      std::move(uploadErrorCallback));
 }
 
 WebServerHandler *WebServer::on_HTTPThread(const char *uri,
@@ -233,7 +295,7 @@ WebServerHandler *WebServer::on_HTTPThread(const char *uri,
     return addHandler(uri,
                       method,
                       false,
-                      std::forward<wshCallback>(callback),
+                      std::move(callback),
                       wshUploadCallback(),
                       wshUploadErrorCallback());
 }
@@ -247,14 +309,14 @@ WebServerHandler *WebServer::on_HTTPThread(const char *uri,
     return addHandler(uri,
                       method,
                       false,
-                      std::forward<wshCallback>(callback),
-                      std::forward<wshUploadCallback>(uploadCallback),
-                      std::forward<wshUploadErrorCallback>(uploadErrorCallback));
+                      std::move(callback),
+                      std::move(uploadCallback),
+                      std::move(uploadErrorCallback));
 }
 
 void WebServer::onNotAuthorized_HTTPThread(wshCallback &&callback)
 {
-    this->on_not_authorized = std::forward<wshCallback>(callback);
+    this->on_not_authorized = std::move(callback);
 }
 
 WebServerHandler *WebServer::addHandler(const char *uri,
@@ -276,9 +338,9 @@ WebServerHandler *WebServer::addHandler(const char *uri,
     ll_handler.handler   = uploadCallback == nullptr ? low_level_handler : low_level_upload_handler;
 
     handlers.emplace_front(callbackInMainThread,
-                           std::forward<wshCallback>(callback),
-                           std::forward<wshUploadCallback>(uploadCallback),
-                           std::forward<wshUploadErrorCallback>(uploadErrorCallback));
+                           std::move(callback),
+                           std::move(uploadCallback),
+                           std::move(uploadErrorCallback));
     ++handler_count;
 
     WebServerHandler *result = &handlers.front();
@@ -386,13 +448,13 @@ WebServerRequestReturnProtect WebServerRequest::send(uint16_t code, const char *
 {
     auto result = httpd_resp_set_type(req, content_type);
     if (result != ESP_OK) {
-        printf("Failed to set response type: %d\n", result);
+        printf("Failed to set response type: %s (0x%X)\n", esp_err_to_name(result), result);
         return WebServerRequestReturnProtect{};
     }
 
     result = httpd_resp_set_status(req, httpStatusCodeToString(code));
     if (result != ESP_OK) {
-        printf("Failed to set response status: %d\n", result);
+        printf("Failed to set response status: %s (0x%X)\n", esp_err_to_name(result), result);
         return WebServerRequestReturnProtect{};
     }
 
@@ -431,41 +493,95 @@ WebServerRequestReturnProtect WebServerRequest::send(uint16_t code, const char *
     }
 
     if (result != ESP_OK) {
-        printf("Failed to send response: %d\n", result);
+        printf("Failed to send response: %s (0x%X)\n", esp_err_to_name(result), result);
     }
     return WebServerRequestReturnProtect{};
 }
 
 void WebServerRequest::beginChunkedResponse(uint16_t code, const char *content_type)
 {
+    if (chunkedResponseState != ChunkedResponseState::NotStarted) {
+        // TODO: change this to esp_system_abort when 2.6.2 is released
+        logger.printfln("BUG: Multiple calls to beginChunkedResponse detected!");
+        chunkedResponseState = ChunkedResponseState::Failed;
+        return;
+    }
+
     auto result = httpd_resp_set_type(req, content_type);
     if (result != ESP_OK) {
-        printf("Failed to set response type: %d\n", result);
+        chunkedResponseState = ChunkedResponseState::Failed;
+        printf("Failed to set response type: %s (0x%X)\n", esp_err_to_name(result), result);
         return;
     }
 
     result = httpd_resp_set_status(req, httpStatusCodeToString(code));
     if (result != ESP_OK) {
-        printf("Failed to set response status: %d\n", result);
+        chunkedResponseState = ChunkedResponseState::Failed;
+        printf("Failed to set response status: %s (0x%X)\n", esp_err_to_name(result), result);
         return;
     }
+
+    chunkedResponseState = ChunkedResponseState::Started;
 }
 
 int WebServerRequest::sendChunk(const char *chunk, ssize_t chunk_len)
 {
+    switch (chunkedResponseState) {
+        case ChunkedResponseState::Failed:
+            return ESP_FAIL;
+        case ChunkedResponseState::NotStarted:
+            chunkedResponseState = ChunkedResponseState::Failed;
+            // TODO: change this to esp_system_abort when 2.6.2 is released
+            logger.printfln("BUG: sendChunk was called before beginChunkedResponse!");
+            return ESP_FAIL;
+        case ChunkedResponseState::Ended:
+            chunkedResponseState = ChunkedResponseState::Failed;
+            // TODO: change this to esp_system_abort when 2.6.2 is released
+            logger.printfln("BUG: sendChunk was called after endChunkedResponse");
+            return ESP_FAIL;
+        case ChunkedResponseState::Started:
+            break;
+    }
+
+    if (chunk_len == 0)
+        logger.printfln("BUG: sendChunk was called with chunk_len == 0! Use endChunkedResponse!");
+
     auto result = httpd_resp_send_chunk(req, chunk, chunk_len);
     if (result != ESP_OK) {
-        printf("Failed to send response chunk: %d\n", result);
+        chunkedResponseState = ChunkedResponseState::Failed;
+        printf("Failed to send response chunk: %s (0x%X)\n", esp_err_to_name(result), result);
+
+        // "When you are finished sending all your chunks, you must call this function with buf_len as 0."
+        httpd_resp_send_chunk(req, nullptr, 0);
     }
     return result;
 }
 
 WebServerRequestReturnProtect WebServerRequest::endChunkedResponse()
 {
+    switch (chunkedResponseState) {
+        case ChunkedResponseState::Failed:
+            return WebServerRequestReturnProtect{};
+        case ChunkedResponseState::NotStarted:
+            chunkedResponseState = ChunkedResponseState::Failed;
+            // TODO: change this to esp_system_abort when 2.6.2 is released
+            logger.printfln("BUG: endChunkedResponse was called before beginChunkedResponse!");
+            return this->send(500);
+        case ChunkedResponseState::Ended:
+            // TODO: change this to esp_system_abort when 2.6.2 is released
+            logger.printfln("BUG: endChunkedResponse was called twice!");
+            return WebServerRequestReturnProtect{};
+        case ChunkedResponseState::Started:
+            break;
+    }
+
     auto result = httpd_resp_send_chunk(req, nullptr, 0);
     if (result != ESP_OK) {
-        printf("Failed to end chunked response: %d\n", result);
+        chunkedResponseState = ChunkedResponseState::Failed;
+        printf("Failed to end chunked response: %s (0x%X)\n", esp_err_to_name(result), result);
     }
+
+    chunkedResponseState = ChunkedResponseState::Ended;
     return WebServerRequestReturnProtect{};
 }
 
@@ -473,7 +589,7 @@ void WebServerRequest::addResponseHeader(const char *field, const char *value)
 {
     auto result = httpd_resp_set_hdr(req, field, value);
     if (result != ESP_OK) {
-        printf("Failed to set response header: %d\n", result);
+        printf("Failed to set response header: %s (0x%X)\n", esp_err_to_name(result), result);
         return;
     }
 }
@@ -489,11 +605,15 @@ WebServerRequestReturnProtect WebServerRequest::requestAuthentication()
 String WebServerRequest::header(const char *header_name)
 {
     auto buf_len = httpd_req_get_hdr_value_len(req, header_name) + 1;
-    if (buf_len == 1)
+    if (buf_len == 1) {
         return "";
+    }
 
     CoolString result;
-    result.reserve(buf_len);
+    if (!result.reserve(buf_len)) {
+        return "";
+    }
+
     char *buf = result.begin();
     /* Copy null terminated value string into buffer */
     if (httpd_req_get_hdr_value_str(req, header_name, buf, buf_len) != ESP_OK) {

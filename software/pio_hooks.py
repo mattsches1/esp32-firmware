@@ -14,7 +14,7 @@ import time
 import re
 import json
 import glob
-from pathlib import PurePath
+import pathlib
 from base64 import b64encode
 from zlib import crc32
 from collections import namedtuple
@@ -25,8 +25,15 @@ from hyphenations import hyphenations, allowed_missing
 FrontendComponent = namedtuple('FrontendComponent', 'module component mode')
 FrontendStatusComponent = namedtuple('FrontendStatusComponent', 'module component')
 
+def check_call(*args, **kwargs):
+    try:
+        subprocess.check_call(*args, **kwargs)
+    except Exception as e:
+        print(f'Error: Command failed: {e}')
+        sys.exit(1)
+
 def get_changelog_version(name):
-    path = os.path.join('changelog_{}.txt'.format(name))
+    path = f'changelog_{name}.txt'
     versions = []
 
     with open(path, 'r', encoding='utf-8') as f:
@@ -95,32 +102,34 @@ def write_firmware_info(display_name, major, minor, patch, beta, build_time):
     buf[76] = int(beta) # since version 2
     buf[4092:4096] = crc32(buf[0:4092]).to_bytes(4, byteorder='little')
 
-    with open(os.path.join(env.subst("$BUILD_DIR"), "firmware_info.bin"), "wb") as f:
-        f.write(buf)
+    pathlib.Path(env.subst('$BUILD_DIR'), 'firmware_info.bin').write_bytes(buf)
 
-def generate_module_dependencies_header(info_path, header_path_prefix, backend_module, backend_modules, all_mods_upper, backend_module_instance_names):
-    if backend_module:
-        module_name = backend_module.space
+def generate_module_dependencies(info_path, module, modules, all_modules_upper):
+    if module:
+        module_name = module.space
     else:
         module_name = f'[{info_path}]'
 
     has_dependencies = False
+    wants_module_list = False
+    dep_modules = []
+    all_optional_modules_upper = []
 
     if os.path.exists(info_path):
         config = configparser.ConfigParser()
         config.read(info_path)
         if config.has_section('Dependencies'):
             has_dependencies = True
-            required_mods = []
-            available_optional_mods = []
-            all_optional_mods_upper = []
+            wants_module_list = config['Dependencies'].getboolean('ModuleList', False)
+            required_modules = []
+            available_optional_modules = []
 
             allow_nonexist = config['Dependencies'].getboolean('AllowNonexist', False)
 
             known_keys = set(['requires', 'optional', 'conflicts', 'after', 'before', 'modulelist'])
             unknown_keys = set(config['Dependencies'].keys()).difference(known_keys)
             if len(unknown_keys) > 0:
-                print(f"Dependency error: '{backend_module.under}/module.ini contains unknown keys {unknown_keys}  ", file=sys.stderr)
+                print(f"Dependency error: '{module.under}/module.ini contains unknown keys {unknown_keys}  ", file=sys.stderr)
                 sys.exit(1)
 
             requires = config['Dependencies'].get('Requires', "")
@@ -130,14 +139,14 @@ def generate_module_dependencies_header(info_path, header_path_prefix, backend_m
             if len(requires) != old_len:
                 print(f"List of required modules for module '{module_name}' contains duplicates.", file=sys.stderr)
             for req_name in requires:
-                req_module, _ = find_backend_module_space(backend_modules, req_name)
+                req_module, _ = find_module_space(modules, req_name)
                 if not req_module:
-                    if '_'.join(req_name.split(' ')).upper() in all_mods_upper:
+                    if '_'.join(req_name.split(' ')).upper() in all_modules_upper:
                         print(f"Dependency error: Module '{module_name}' requires module '{req_name}', which is available but not enabled for this environment.", file=sys.stderr)
                     else:
                         print(f"Dependency error: Module '{module_name}' requires module '{req_name}', which does not exist.", file=sys.stderr)
                     sys.exit(1)
-                required_mods.append(req_module)
+                required_modules.append(req_module)
 
             optional = config['Dependencies'].get('Optional')
             if optional is not None:
@@ -151,17 +160,17 @@ def generate_module_dependencies_header(info_path, header_path_prefix, backend_m
                         print(f"Dependency error: Module '{module_name}' cannot list itself as optional.", file=sys.stderr)
                         sys.exit(1)
                     opt_name_upper = '_'.join(opt_name.split(' ')).upper()
-                    opt_module, _ = find_backend_module_space(backend_modules, opt_name)
+                    opt_module, _ = find_module_space(modules, opt_name)
                     if not opt_module:
-                        if not allow_nonexist and opt_name_upper not in all_mods_upper:
+                        if not allow_nonexist and opt_name_upper not in all_modules_upper:
                             print(f"Dependency error: Optional module '{opt_name}' wanted by module '{module_name}' does not exist.", file=sys.stderr)
                             sys.exit(1)
                     else:
-                        if opt_module in required_mods:
+                        if opt_module in required_modules:
                             print(f"Dependency error: Optional module '{opt_name}' wanted by module '{module_name}' is already listed as required.", file=sys.stderr)
                             sys.exit(1)
-                        available_optional_mods.append(opt_module)
-                    all_optional_mods_upper.append(opt_name_upper)
+                        available_optional_modules.append(opt_module)
+                    all_optional_modules_upper.append(opt_name_upper)
 
             conflicts = config['Dependencies'].get('Conflicts')
             if conflicts is not None:
@@ -174,17 +183,17 @@ def generate_module_dependencies_header(info_path, header_path_prefix, backend_m
                     if conflict_name == module_name:
                         print(f"Dependency error: Module '{module_name}' cannot list itself as conflicting.", file=sys.stderr)
                         sys.exit(1)
-                    conflict_module, index = find_backend_module_space(backend_modules, conflict_name)
+                    conflict_module, index = find_module_space(modules, conflict_name)
                     if index < 0:
-                        if not allow_nonexist and '_'.join(conflict_name.split(' ')).upper() not in all_mods_upper:
+                        if not allow_nonexist and '_'.join(conflict_name.split(' ')).upper() not in all_modules_upper:
                             print(f"Dependency error: Module '{conflict_name}' in 'Conflicts' list of module '{module_name}' does not exist.", file=sys.stderr)
                             sys.exit(1)
                     elif conflict_module:
                         print(f"Dependency error: Module '{module_name}' conflicts with module '{conflict_name}'.", file=sys.stderr)
                         sys.exit(1)
 
-            if backend_module:
-                cur_module_index = backend_modules.index(backend_module)
+            if module:
+                cur_module_index = modules.index(module)
 
             after = config['Dependencies'].get('After')
             if after is not None:
@@ -197,9 +206,9 @@ def generate_module_dependencies_header(info_path, header_path_prefix, backend_m
                     if after_name == module_name:
                         print(f"Dependency error: Module '{module_name}' cannot require to be loaded after itself.", file=sys.stderr)
                         sys.exit(1)
-                    _, index = find_backend_module_space(backend_modules, after_name)
+                    _, index = find_module_space(modules, after_name)
                     if index < 0:
-                        if not allow_nonexist and '_'.join(after_name.split(' ')).upper() not in all_mods_upper:
+                        if not allow_nonexist and '_'.join(after_name.split(' ')).upper() not in all_modules_upper:
                             print(f"Dependency error: Module '{after_name}' in 'After' list of module '{module_name}' does not exist.", file=sys.stderr)
                             sys.exit(1)
                     elif index > cur_module_index:
@@ -217,51 +226,103 @@ def generate_module_dependencies_header(info_path, header_path_prefix, backend_m
                     if before_name == module_name:
                         print(f"Dependency error: Module '{module_name}' cannot require to be loaded before itself.", file=sys.stderr)
                         sys.exit(1)
-                    _, index = find_backend_module_space(backend_modules, before_name)
+                    _, index = find_module_space(modules, before_name)
                     if index < 0:
-                        if not allow_nonexist and '_'.join(before_name.split(' ')).upper() not in all_mods_upper:
+                        if not allow_nonexist and '_'.join(before_name.split(' ')).upper() not in all_modules_upper:
                             print(f"Dependency error: Module '{before_name}' in 'Before' list of module '{module_name}' does not exist.", file=sys.stderr)
                             sys.exit(1)
                     elif index < cur_module_index:
                         print(f"Dependency error: Module '{module_name}' must be loaded before module '{before_name}'.", file=sys.stderr)
                         sys.exit(1)
 
-            dep_mods = required_mods + available_optional_mods
-            backend_mods_upper = [x.upper for x in backend_modules]
+            dep_modules = required_modules + available_optional_modules
 
-            defines  = ''.join(['#define MODULE_{}_AVAILABLE() {}\n'.format(x, "1" if x in backend_mods_upper else "0") for x in all_optional_mods_upper])
-            includes = ''.join([f'#include "modules/{x.under}/{x.under}.h"\n' for x in dep_mods])
-            decls    = ''.join([f'extern {x.camel} {backend_module_instance_names[x.space]};\n' for x in dep_mods])
+    return has_dependencies, wants_module_list, dep_modules, all_optional_modules_upper
 
-            available_h_content  = '// WARNING: This file is generated.\n\n'
-            available_h_content += '#pragma once\n'
+def generate_backend_module_dependencies_header(info_path, header_path_prefix, backend_module, backend_modules, all_backend_modules_upper, backend_module_instance_names):
+    if backend_module:
+        module_name = backend_module.space
+    else:
+        module_name = f'[{info_path}]'
 
-            dependencies_h_content  = '// WARNING: This file is generated.\n\n'
-            dependencies_h_content += '#pragma once\n\n'
-            dependencies_h_content += '#if __INCLUDE_LEVEL__ > 1\n'
-            dependencies_h_content += f'#error "Don\'t include {os.path.split(header_path_prefix)[-1]}dependencies.h in headers, only in sources! Use {os.path.split(header_path_prefix)[-1]}available.h in headers if you want to check whether a module is compiled in"\n'
-            dependencies_h_content += '#endif\n\n'
-            dependencies_h_content += f'#include "{os.path.split(header_path_prefix)[-1]}available.h"\n'
+    has_dependencies, wants_module_list, dep_modules, all_optional_modules_upper = generate_module_dependencies(info_path, backend_module, backend_modules, all_backend_modules_upper)
 
-            if defines:
-                available_h_content += '\n' + defines
-            if includes:
-                dependencies_h_content += '\n' + includes
-            if decls:
-                dependencies_h_content += '\n' + decls
+    if has_dependencies:
+        backend_modules_upper = [x.upper for x in backend_modules]
 
-            if config['Dependencies'].getboolean('ModuleList', False):
-                dependencies_h_content += '\n'
-                dependencies_h_content += '#include "config.h"\n'
-                dependencies_h_content += 'extern Config modules;\n'
+        defines  = ''.join(['#define MODULE_{}_AVAILABLE() {}\n'.format(x, "1" if x in backend_modules_upper else "0") for x in all_optional_modules_upper])
+        undefs  = ''.join(['#undef MODULE_{}_AVAILABLE\n'.format(x) for x in all_optional_modules_upper])
+        includes = ''.join([f'#include "modules/{x.under}/{x.under}.h"\n' for x in dep_modules])
+        decls    = ''.join([f'extern {x.camel} {backend_module_instance_names[x.space]};\n' for x in dep_modules])
 
-            tfutil.write_file_if_different(header_path_prefix + 'available.h', available_h_content)
-            tfutil.write_file_if_different(header_path_prefix + 'dependencies.h', dependencies_h_content)
+        available_h_content  = f'// WARNING: This file is generated from "{info_path}" by pio_hooks.py\n\n'
+        available_h_content += '#ifdef MODULE_DEPENDENCIES_H_INCLUDED\n'
+        available_h_content += '#error "Any module available header (transitively?) included after module_dependencies.h include! Swap order!"\n'
+        available_h_content += '#endif\n'
+        available_h_content += '#ifdef MODULE_AVAILABLE_H\n'
+        available_h_content += '#error "Overlapping module available header includes! include module_available_end.h at the end of headers including module_available.h!"\n'
+        available_h_content += '#endif\n'
+        available_h_content += '#define MODULE_AVAILABLE_H\n'
 
-    if not has_dependencies:
+        available_end_h_content = f'// WARNING: This file is generated from "{info_path}" by pio_hooks.py\n\n'
+        available_end_h_content += '#undef MODULE_AVAILABLE_H\n'
+
+        dependencies_h_content  = f'// WARNING: This file is generated from "{info_path}" by pio_hooks.py\n\n'
+        dependencies_h_content += '#if __INCLUDE_LEVEL__ > 1\n'
+        dependencies_h_content += f'#error "Don\'t include {os.path.split(header_path_prefix)[-1]}dependencies.h in headers, only in sources! Use {os.path.split(header_path_prefix)[-1]}available.h in headers if you want to check whether a module is compiled in"\n'
+        dependencies_h_content += '#endif\n\n'
+
+        if defines:
+            available_h_content += '\n' + defines
+        if undefs:
+            available_end_h_content += '\n' + undefs
+        if includes:
+            dependencies_h_content += '\n' + includes
+        if decls:
+            dependencies_h_content += '\n' + decls
+
+        dependencies_h_content += f'\n\n#include "{os.path.split(header_path_prefix)[-1]}available.h"\n'
+        dependencies_h_content += f'#define MODULE_DEPENDENCIES_H_INCLUDED\n'
+
+        if wants_module_list:
+            dependencies_h_content += '\n'
+            dependencies_h_content += '#include "config.h"\n'
+            dependencies_h_content += 'extern Config modules;\n'
+
+        tfutil.write_file_if_different(header_path_prefix + 'available.h', available_h_content)
+        tfutil.write_file_if_different(header_path_prefix + 'dependencies.h', dependencies_h_content)
+        tfutil.write_file_if_different(header_path_prefix + 'available_end.h', available_end_h_content)
+    else:
         try:
             os.remove(header_path_prefix + 'available.h')
+        except FileNotFoundError:
+            pass
+
+        try:
             os.remove(header_path_prefix + 'dependencies.h')
+        except FileNotFoundError:
+            pass
+
+def generate_frontend_module_available_file(info_path, file_path_prefix, frontend_module, frontend_modules, all_frontend_modules_upper):
+    if frontend_module:
+        module_name = frontend_module.space
+    else:
+        module_name = f'[{info_path}]'
+
+    has_dependencies, wants_module_list, dep_modules, all_optional_modules_upper = generate_module_dependencies(info_path, frontend_module, frontend_modules, all_frontend_modules_upper)
+
+    if has_dependencies:
+        frontend_modules_upper = [x.upper for x in frontend_modules]
+        defines = ''.join(['//#define MODULE_{}_AVAILABLE {}\n'.format(x, "1" if x in frontend_modules_upper else "0") for x in all_optional_modules_upper])
+        available_inc_content  = f'// WARNING: This file is generated from "{info_path}" by pio_hooks.py\n'
+
+        if defines:
+            available_inc_content += '\n' + defines
+
+        tfutil.write_file_if_different(file_path_prefix + 'available.inc', available_inc_content)
+    else:
+        try:
+            os.remove(file_path_prefix + 'available.inc')
         except FileNotFoundError:
             pass
 
@@ -397,7 +458,10 @@ def hyphenate(s, key, lang):
             is_camel_case = re.search(r'[a-z][A-Z]', word) is not None
             is_snake_case = "_" in word
             if is_too_long and not is_camel_case and not is_snake_case and should_be_hyphenated(word):
-                missing_hyphenations.setdefault(lang, []).append(word)
+                missing_hyphenation = missing_hyphenations.setdefault(lang, [])
+
+                if word not in missing_hyphenation:
+                    missing_hyphenation.append(word)
 
     return s
 
@@ -433,48 +497,20 @@ def repair_firmware_update_dir():
     except:
         pass
 
-def find_backend_module_space(backend_modules, name_space):
+def find_module_space(modules, name_space):
     index = 0
-    for backend_module in backend_modules:
-        if backend_module.space == name_space:
-            return backend_module, index
+    for module in modules:
+        if module.space == name_space:
+            return module, index
         index += 1
 
     name_upper = '_'.join(name_space.split(' ')).upper()
-    for backend_module in backend_modules:
-        if backend_module.upper == name_upper:
-            print(f"Dependency error: Encountered incorrectly capitalized backend module '{name_space}'", file=sys.stderr)
+    for module in modules:
+        if module.upper == name_upper:
+            print(f"Dependency error: Encountered incorrectly capitalized module '{name_space}'", file=sys.stderr)
             sys.exit(1)
 
     return None, -1
-
-def find_branding_module(frontend_modules):
-    branding_module = None
-
-    for frontend_module in frontend_modules:
-        mod_path = os.path.join('web', 'src', 'modules', frontend_module.under)
-
-        potential_branding_path = os.path.join(mod_path, 'branding.ts')
-
-        if os.path.exists(potential_branding_path):
-            if branding_module != None:
-                print('Error: Branding module collision ' + mod_path + ' vs ' + branding_module)
-                sys.exit(1)
-
-            branding_module = mod_path
-
-    if branding_module is None:
-        print('Error: No branding module selected')
-        sys.exit(1)
-
-    req_for_branding = ['branding.ts', 'logo.png', 'favicon.png']
-
-    for f in req_for_branding:
-        if not os.path.exists(os.path.join(branding_module, f)):
-            print('Error: Branding module does not contain {}'.format(f))
-            sys.exit(1)
-
-    return branding_module
 
 def main():
     if env.IsCleanTarget():
@@ -483,7 +519,7 @@ def main():
     repair_rtc_dir()
     repair_firmware_update_dir()
 
-    subprocess.check_call([env.subst('$PYTHONEXE'), "-u", "update_packages.py"])
+    check_call([env.subst('$PYTHONEXE'), "-u", "update_packages.py"])
 
     # Add build flags
     timestamp = int(time.time())
@@ -499,6 +535,7 @@ def main():
     day_ahead_price_api_url = env.GetProjectOption("custom_day_ahead_price_api_url")
     solar_forecast_api_url = env.GetProjectOption("custom_solar_forecast_api_url")
     require_firmware_info = env.GetProjectOption("custom_require_firmware_info")
+    branding = env.GetProjectOption("custom_branding")
     build_flags = env.GetProjectOption("build_flags")
     frontend_debug = env.GetProjectOption("custom_frontend_debug") == "true"
     web_only = env.GetProjectOption("custom_web_only") == "true"
@@ -638,7 +675,7 @@ def main():
     build_lines.append('#define BUILD_HOST_PREFIX "{}"'.format(host_prefix))
     build_lines.append('#define BUILD_HOST_PREFIX_LENGTH {}'.format(len(host_prefix)))
 
-    for firmware in ['WARP', 'WARP2', 'WARP3', 'ENERGY_MANAGER']:
+    for firmware in ['WARP', 'WARP2', 'WARP3', 'ENERGY_MANAGER', 'ENERGY_MANAGER_V2', 'SMART_ENERGY_BROKER']:
         build_lines.append('#define BUILD_IS_{}() {}'.format(firmware, 1 if firmware == name.upper() else 0))
 
     build_lines.append('#define BUILD_CONFIG_TYPE "{}"'.format(config_type))
@@ -652,6 +689,7 @@ def main():
     build_lines.append('#define BUILD_FIRMWARE_UPDATE_URL "{}"'.format(firmware_update_url))
     build_lines.append('#define BUILD_DAY_AHEAD_PRICE_API_URL "{}"'.format(day_ahead_price_api_url))
     build_lines.append('#define BUILD_SOLAR_FORECAST_API_URL "{}"'.format(solar_forecast_api_url))
+    build_lines.append('#define BUILD_IS_SIGNED() {}'.format("1" if signed else "0"))
     build_lines.append('uint32_t build_timestamp();')
     build_lines.append('const char *build_timestamp_hex_str();')
     build_lines.append('const char *build_version_full_str();')
@@ -689,9 +727,23 @@ def main():
         f.write(firmware_basename)
 
     frontend_modules = [util.FlavoredName(x).get() for x in env.GetProjectOption("custom_frontend_modules").splitlines()]
+
     if nightly:
         frontend_modules.append(util.FlavoredName("Nightly").get())
         frontend_modules.append(util.FlavoredName("Debug").get())
+
+    branding_module = util.FlavoredName(branding + ' Branding').get()
+    frontend_modules.append(branding_module)
+    branding_mod_path = os.path.join('web', 'src', 'modules', branding_module.under)
+
+    if not os.path.exists(branding_mod_path):
+        print(f'Error: Branding module {branding} Branding missing')
+        sys.exit(1)
+
+    for filename in ['branding.ts', 'logo.png', 'favicon.png']:
+        if not os.path.exists(os.path.join(branding_mod_path, filename)):
+            print(f'Error: Branding module {branding} Branding does not contain {filename}')
+            sys.exit(1)
 
     frontend_components = []
     for entry in env.GetProjectOption("custom_frontend_components").splitlines():
@@ -741,12 +793,11 @@ def main():
 
         frontend_status_components.append(FrontendStatusComponent(module, component))
 
-    branding_module = find_branding_module(frontend_modules)
-
     metadata = json.dumps({
         'name': name,
         'signed': signed,
-        'frontend_modules': [frontend_module.under for frontend_module in frontend_modules]
+        'frontend_modules': [frontend_module.under for frontend_module in frontend_modules],
+        'branding_mod_path': os.path.abspath(branding_mod_path),
     }, separators=(',', ':'))
 
     web_build_lines = []
@@ -757,13 +808,13 @@ def main():
 
     # Handle backend modules
     excluded_backend_modules = list(os.listdir('src/modules'))
-    backend_modules = [util.FlavoredName(x).get() for x in ['Task Scheduler', 'Event Log', 'API', 'Web Server'] + env.GetProjectOption("custom_backend_modules").splitlines()]
+    backend_modules = [util.FlavoredName(x).get() for x in ['Task Scheduler', 'Event Log', 'API', 'Web Server', 'Rtc'] + env.GetProjectOption("custom_backend_modules").splitlines()]
 
     if nightly:
         backend_modules.append(util.FlavoredName("Debug").get())
 
     with tfutil.ChangedDirectory('src'):
-        excluded_bindings = [PurePath(x).as_posix() for x in glob.glob('bindings/brick_*') + glob.glob('bindings/bricklet_*')]
+        excluded_bindings = [pathlib.PurePath(x).as_posix() for x in glob.glob('bindings/brick_*') + glob.glob('bindings/bricklet_*')]
 
     excluded_bindings.remove('bindings/bricklet_unknown.h')
     excluded_bindings.remove('bindings/bricklet_unknown.c')
@@ -791,9 +842,10 @@ def main():
         mod_path = os.path.join('src', 'modules', backend_module.under)
 
         if not os.path.exists(mod_path) or not os.path.isdir(mod_path):
-            print("Backend module {} not found.".format(backend_module.space))
+            print("Backend module '{}' not found.".format(backend_module.space))
+            sys.exit(1)
 
-        for root, dirs, files in os.walk(mod_path):
+        for root, dirs, files in os.walk(mod_path, followlinks=True):
             for name in files:
                 include_bindings(os.path.join(root, name))
 
@@ -807,15 +859,14 @@ def main():
             environ['PLATFORMIO_BUILD_DIR'] = env.subst('$BUILD_DIR')
             environ['PLATFORMIO_METADATA'] = metadata
 
-            abs_branding_module = os.path.abspath(branding_module)
             with tfutil.ChangedDirectory(mod_path):
-                subprocess.check_call([env.subst('$PYTHONEXE'), "-u", "prepare.py", abs_branding_module], env=environ)
+                check_call([env.subst('$PYTHONEXE'), "-u", "prepare.py"], env=environ)
 
-    for root, dirs, files in os.walk('src'):
-        root_path = PurePath(root)
+    for root, dirs, files in os.walk('src', followlinks=True):
+        root_path = pathlib.PurePath(root)
         root_parents = [root_path] + list(root_path.parents)
 
-        if PurePath('src', 'bindings') in root_parents or PurePath('src', 'modules') in root_parents:
+        if pathlib.PurePath('src', 'bindings') in root_parents or pathlib.PurePath('src', 'modules') in root_parents:
             continue
 
         for name in files:
@@ -829,14 +880,14 @@ def main():
 
     env.Replace(SRC_FILTER=[' '.join(build_src_filter)])
 
-    all_mods = []
+    all_backend_modules_upper = []
     for existing_backend_module in os.listdir(os.path.join('src', 'modules')):
         if not os.path.isdir(os.path.join('src', 'modules', existing_backend_module)):
             continue
 
-        all_mods.append(existing_backend_module.upper())
+        all_backend_modules_upper.append(existing_backend_module.upper())
 
-    backend_mods_upper = [x.upper for x in backend_modules]
+    backend_modules_upper = [x.upper for x in backend_modules]
     identifier_backlist = ["system"]
 
     tfutil.specialize_template("modules.cpp.template", os.path.join("src", "modules.cpp"), {
@@ -879,7 +930,7 @@ def main():
         backend_module_instance_names[backend_module.space] = instance_name
 
         with open(os.path.join(mod_path, 'module.cpp'), 'w', encoding='utf-8') as f:
-            f.write('// WARNING: This file is generated.\n\n')
+            f.write(f'// WARNING: This file is generated from "{info_path}" by pio_hooks.py\n\n')
             f.write(f'#include "{backend_module.under}.h"\n\n')
             f.write(f'{backend_module.camel} {instance_name};\n\n')
             f.write('// Enforce that all back-end modules implement the IModule interface. If you receive\n')
@@ -899,9 +950,9 @@ def main():
         info_path = os.path.join(mod_path, 'module.ini')
         header_path_prefix = os.path.join(mod_path, 'module_')
 
-        generate_module_dependencies_header(info_path, header_path_prefix, backend_module, backend_modules, all_mods, backend_module_instance_names)
+        generate_backend_module_dependencies_header(info_path, header_path_prefix, backend_module, backend_modules, all_backend_modules_upper, backend_module_instance_names)
 
-    generate_module_dependencies_header('src/main_dependencies.ini', 'src/main_', None, backend_modules, all_mods, backend_module_instance_names)
+    generate_backend_module_dependencies_header('src/main_dependencies.ini', 'src/main_', None, backend_modules, all_backend_modules_upper, backend_module_instance_names)
 
     # Handle frontend modules
     main_ts_entries = []
@@ -929,9 +980,8 @@ def main():
             environ['PLATFORMIO_BUILD_DIR'] = env.subst('$BUILD_DIR')
             environ['PLATFORMIO_METADATA'] = metadata
 
-            abs_branding_module = os.path.abspath(branding_module)
             with tfutil.ChangedDirectory(mod_path):
-                subprocess.check_call([env.subst('$PYTHONEXE'), "-u", "prepare.py", abs_branding_module], env=environ)
+                check_call([env.subst('$PYTHONEXE'), "-u", "prepare.py"], env=environ)
 
         if os.path.exists(os.path.join(mod_path, 'main.ts')) or os.path.exists(os.path.join(mod_path, 'main.tsx')):
             main_ts_entries.append(frontend_module.under)
@@ -983,6 +1033,20 @@ def main():
     check_translation(translation)
     translation = hyphenate_translation(translation)
 
+    all_frontend_modules_upper = []
+    for existing_frontend_module in os.listdir(os.path.join('web', 'src', 'modules')):
+        if not os.path.isdir(os.path.join('web', 'src', 'modules', existing_frontend_module)):
+            continue
+
+        all_frontend_modules_upper.append(existing_frontend_module.upper())
+
+    for frontend_module in frontend_modules:
+        mod_path = os.path.join('web', 'src', 'modules', frontend_module.under)
+        info_path = os.path.join(mod_path, 'module.ini')
+        file_path_prefix = os.path.join(mod_path, 'module_')
+
+        generate_frontend_module_available_file(info_path, file_path_prefix, frontend_module, frontend_modules, all_frontend_modules_upper)
+
     global missing_hyphenations
     if len(missing_hyphenations) > 0:
         print("Missing hyphenations detected. Add those to hyphenations.py!")
@@ -1020,16 +1084,16 @@ def main():
     tfutil.write_file_if_different(os.path.join('web', 'src', 'ts', 'translation.json'), translation_data)
     del translation_data
 
-    with open(os.path.join(branding_module, 'favicon.png'), 'rb') as f:
+    with open(os.path.join(branding_mod_path, 'favicon.png'), 'rb') as f:
         favicon = b64encode(f.read()).decode('ascii')
 
-    with open(os.path.join(branding_module, 'logo.png'), 'rb') as f:
+    with open(os.path.join(branding_mod_path, 'logo.png'), 'rb') as f:
         logo_base64 = b64encode(f.read()).decode('ascii')
 
-    with open(os.path.join(branding_module, 'branding.ts'), 'r', encoding='utf-8') as f:
-        branding = f.read()
+    with open(os.path.join(branding_mod_path, 'branding.ts'), 'r', encoding='utf-8') as f:
+        branding_ts = f.read()
 
-    with open(os.path.join(branding_module, 'pre.scss'), 'r', encoding='utf-8') as f:
+    with open(os.path.join(branding_mod_path, 'pre.scss'), 'r', encoding='utf-8') as f:
         color = f.read().split('\n')[1].split(' ')[1]
         if color.endswith(';'):
             color = color[:-1]
@@ -1092,7 +1156,7 @@ def main():
 
     tfutil.specialize_template(os.path.join("web", "branding.ts.template"), os.path.join("web", "src", "ts", "branding.ts"), {
         '{{{logo_base64}}}': logo_base64,
-        '{{{branding}}}': branding,
+        '{{{branding}}}': branding_ts,
     })
 
     translation_str = ''
@@ -1170,13 +1234,13 @@ def main():
     util.log('Checking translation completeness')
 
     with tfutil.ChangedDirectory('web'):
-        subprocess.check_call([env.subst('$PYTHONEXE'), "-u", "check_translation_completeness.py"] + [x.under for x in frontend_modules])
+        check_call([env.subst('$PYTHONEXE'), "-u", "check_translation_completeness.py"] + [x.under for x in frontend_modules])
 
     # Check translation override completeness
     util.log('Checking translation override completeness')
 
     with tfutil.ChangedDirectory('web'):
-        subprocess.check_call([env.subst('$PYTHONEXE'), "-u", "check_override_completeness.py"])
+        check_call([env.subst('$PYTHONEXE'), "-u", "check_override_completeness.py"])
 
     # Generate enums
     for backend_module in backend_modules:
@@ -1222,7 +1286,7 @@ def main():
                         enum_cases.append('    case {0}::{1}: return "{2}";\n'.format(enum_name.camel, value_name.camel, value_name.space))
 
                 with open(os.path.join(mod_path, enum_name.under + '.enum.h'), 'w', encoding='utf-8') as f:
-                    f.write(f'// WARNING: This file is generated from "{name}"\n\n')
+                    f.write(f'// WARNING: This file is generated from "{name}" by pio_hooks.py\n\n')
                     f.write('#include <stdint.h>\n\n')
                     f.write('#pragma once\n\n')
                     f.write(f'enum class {enum_name.camel} : {name_parts[1]}_t {{\n')
@@ -1232,7 +1296,7 @@ def main():
                     f.write(f'const char *get_{enum_name.under}_name({enum_name.camel} value);\n')
 
                 with open(os.path.join(mod_path, enum_name.under + '.enum.cpp'), 'w', encoding='utf-8') as f:
-                    f.write(f'// WARNING: This file is generated from "{name}"\n\n')
+                    f.write(f'// WARNING: This file is generated from "{name}" by pio_hooks.py\n\n')
                     f.write(f'#include "{enum_name.under}.enum.h"\n\n')
                     f.write(f'const char *get_{enum_name.under}_name({enum_name.camel} value)\n')
                     f.write('{\n')
@@ -1246,7 +1310,7 @@ def main():
 
                 if os.path.exists(frontend_mod_path) and os.path.isdir(frontend_mod_path):
                     with open(os.path.join(frontend_mod_path, enum_name.under + '.enum.ts'), 'w', encoding='utf-8') as f:
-                        f.write(f'// WARNING: This file is generated from "{name}"\n\n')
+                        f.write(f'// WARNING: This file is generated from "{name}" by pio_hooks.py\n\n')
                         f.write(f'export const enum {enum_name.camel} {{\n')
                         f.write(''.join(enum_values))
                         f.write('}\n')
@@ -1322,7 +1386,7 @@ def main():
                 print('Error: npm >= 8 required, found npm {0}'.format(npm_version))
                 sys.exit(1)
 
-            subprocess.check_call(['npm', 'ci'], shell=sys.platform == 'win32')
+            check_call(['npm', 'ci'], shell=sys.platform == 'win32')
 
         with open('web/node_modules/tinkerforge.marker', 'wb') as f:
             pass
@@ -1340,7 +1404,7 @@ def main():
         if os.path.isfile(path):
             index_html_src_paths.append(path)
 
-    for root, dirs, files in sorted(os.walk('web/src')):
+    for root, dirs, files in sorted(os.walk('web/src', followlinks=True)):
         for name in sorted(files):
             index_html_src_paths.append(os.path.join(root, name))
 
@@ -1369,9 +1433,17 @@ def main():
         except FileNotFoundError:
             pass
 
+        build_py_args = []
+
+        if frontend_debug:
+            build_py_args += ['--js-source-map', '--css-source-map', '--no-minify']
+
+        for frontend_module in frontend_modules:
+            build_py_args.append(frontend_module.under)
+
         with tfutil.ChangedDirectory('web'):
             try:
-                subprocess.check_call([env.subst('$PYTHONEXE'), "-u", "build.py"] + ([] if not frontend_debug else ['--js-source-map', '--css-source-map', '--no-minify']))
+                check_call([env.subst('$PYTHONEXE'), "-u", "build.py"] + build_py_args)
             except subprocess.CalledProcessError as e:
                 if e.returncode != 42:
                     print(e, file=sys.stderr)

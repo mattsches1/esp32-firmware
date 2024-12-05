@@ -32,8 +32,7 @@ import { Button, Card } from "react-bootstrap";
 import { SubPage } from "../../ts/components/sub_page";
 import { NavbarItem } from "../../ts/components/navbar_item";
 import { Download, Terminal } from "react-feather";
-import { InputNumber } from "src/ts/components/input_number";
-
+import { InputNumber } from "../../ts/components/input_number";
 
 const CMDOutFloat = (props: any) => <OutputFloat maxFractionalDigitsOnPage={3} maxUnitLengthOnPage={2} {...props}/>
 const CMDCardOutFloat = (props: any) => <OutputFloat maxUnitLengthOnPage={3.5} {...props}/>
@@ -190,20 +189,10 @@ export function ChargeManagerDebug(props: {dynamicLoadConfig: API.getType['power
                 />
             </FormRow>
 
-
-            <FormSeparator heading={__("charge_manager.content.protocol")} first={true} />
-            <CMDFormRow label="Trace log" labelColClasses="col-lg-2" contentColClasses="col-lg-10">
-                <Button variant="primary" className="form-control" onClick={async () => util.downloadToFile(await util.download("/trace_log"), "charge-manager-trace-log", "txt", "text/plain")}><span class="ml-1 mr-2">Download</span> <Download/></Button>
-            </CMDFormRow>
-
             <FormSeparator heading="Limits" />
 
-            <CMDFormRow label="Hysteresis">
-                <div class="row">
-                    <div class="mb-1 col-12 col-lg-6">
-                        <InputText value={(ll_state.last_hyst_reset == 0 ? 0 : util.format_timespan_ms(uptime - ll_state.last_hyst_reset)) + " / " + util.format_timespan(ll_cfg.global_hysteresis)}/>
-                    </div>
-                </div>
+            <CMDFormRow label="Hysteresis" labelColClasses="col-lg-2" contentColClasses="col-lg-10">
+                <InputText value={(ll_state.last_hyst_reset == 0 ? 0 : util.format_timespan_ms(uptime - ll_state.last_hyst_reset)) + " / " + util.format_timespan(ll_cfg.global_hysteresis)}/>
             </CMDFormRow>
 
             <CMDFormRow label="">

@@ -65,29 +65,30 @@ struct AsyncHTTPSClientEvent
             size_t data_chunk_offset;
             const void *data_chunk;
             size_t data_chunk_len;
-            size_t data_remaining_len;
-            ssize_t data_complete_len;
+            ssize_t data_complete_len; // -1 if chunked response
+            bool data_is_complete;
         };
     };
 };
 
-class AsyncHTTPSClient
+class AsyncHTTPSClient final
 {
 public:
     AsyncHTTPSClient(bool use_cookies = false): use_cookies{use_cookies} {}
     ~AsyncHTTPSClient();
 
-    void download_async(const char *url, int cert_id, std::function<void(AsyncHTTPSClientEvent *event)> callback);
-    void post_async(const char *url, int cert_id, const char *body, int body_size, std::function<void(AsyncHTTPSClientEvent *event)> callback);
-    void put_async(const char *url, int cert_id, const char *body, int body_size, std::function<void(AsyncHTTPSClientEvent *event)> callback);
-    void delete_async(const char *url, int cert_id, const char *body, int body_size, std::function<void(AsyncHTTPSClientEvent *event)> callback);
+    void download_async(const char *url, int cert_id, std::function<void(AsyncHTTPSClientEvent *event)> &&callback);
+    void post_async(const char *url, int cert_id, const char *body, int body_size, std::function<void(AsyncHTTPSClientEvent *event)> &&callback);
+    void put_async(const char *url, int cert_id, const char *body, int body_size, std::function<void(AsyncHTTPSClientEvent *event)> &&callback);
+    void delete_async(const char *url, int cert_id, const char *body, int body_size, std::function<void(AsyncHTTPSClientEvent *event)> &&callback);
     void abort_async();
     void set_header(const char *key, const char *value);
     bool is_busy() const { return in_progress; }
 
 private:
-    void fetch(const char *url, int cert_id, esp_http_client_method_t method, const char *body, int body_size, std::function<void(AsyncHTTPSClientEvent *event)> callback);
-    void error_abort(AsyncHTTPSClientEvent &event, AsyncHTTPSClientError reason);
+    void fetch(const char *url, int cert_id, esp_http_client_method_t method, const char *body, int body_size, std::function<void(AsyncHTTPSClientEvent *event)> &&callback);
+    void error_abort(AsyncHTTPSClientError error, esp_err_t error_http_client = ESP_OK, int error_http_status = -1);
+    void clear();
     void parse_cookie(const char *cookie);
     static esp_err_t event_handler(esp_http_client_event_t *event);
 
@@ -101,8 +102,6 @@ private:
     esp_http_client_handle_t http_client = nullptr;
     uint32_t last_async_alive = 0;
     size_t received_len = 0;
-    ssize_t complete_len = -1;
     bool use_cookies;
-
     uint64_t task_id = 0;
 };

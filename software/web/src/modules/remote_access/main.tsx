@@ -21,21 +21,21 @@ import * as util from "../../ts/util";
 import * as API from "../../ts/api";
 import { h, Fragment } from "preact";
 import { Smartphone } from "react-feather";
-import { ConfigComponent } from "src/ts/components/config_component";
-import { ConfigForm } from "src/ts/components/config_form";
-import { FormRow } from "src/ts/components/form_row";
-import { InputPassword } from "src/ts/components/input_password";
-import { InputText } from "src/ts/components/input_text";
-import { NavbarItem } from "src/ts/components/navbar_item";
-import { SubPage } from "src/ts/components/sub_page";
-import { Switch } from "src/ts/components/switch";
-import { __ } from "src/ts/translation";
+import { ConfigComponent } from "../../ts/components/config_component";
+import { ConfigForm } from "../../ts/components/config_form";
+import { FormRow } from "../../ts/components/form_row";
+import { InputPassword } from "../../ts/components/input_password";
+import { InputText } from "../../ts/components/input_text";
+import { NavbarItem } from "../../ts/components/navbar_item";
+import { SubPage } from "../../ts/components/sub_page";
+import { Switch } from "../../ts/components/switch";
+import { __ } from "../../ts/translation";
 import "./wireguard";
 import { config, RegistrationState } from "./api";
-import { InputNumber } from "src/ts/components/input_number";
-import { InputSelect } from "src/ts/components/input_select";
+import { InputNumber } from "../../ts/components/input_number";
+import { InputSelect } from "../../ts/components/input_select";
 import { ArgonType, hash } from "argon2-browser";
-import { CollapsedSection } from "src/ts/components/collapsed_section";
+import { CollapsedSection } from "../../ts/components/collapsed_section";
 import { Container, Modal, Row, Spinner } from "react-bootstrap";
 
 export function RemoteAccessNavbar() {
@@ -43,9 +43,7 @@ export function RemoteAccessNavbar() {
 }
 
 interface RemoteAccessState {
-    email: string,
     login_key: string,
-    password: string,
     status_modal_string: string,
 }
 
@@ -55,8 +53,8 @@ export class RemoteAccess extends ConfigComponent<"remote_access/config", {}, Re
     reject: (arg0?: any) => void;
     constructor() {
         super("remote_access/config",
-            __("remote_access.script.save_failed"),
-            __("remote_access.script.reboot_content_changed"));
+              () => __("remote_access.script.save_failed"),
+              () => __("remote_access.script.reboot_content_changed"));
 
         this.resolve = undefined;
         this.reject = undefined;
@@ -88,7 +86,7 @@ export class RemoteAccess extends ConfigComponent<"remote_access/config", {}, Re
             this.resolve = resolve;
             this.reject = reject;
         });
-        await API.call_unchecked("remote_access/get_login_salt", cfg, __("remote_access.script.save_failed"));
+        await API.call("remote_access/get_login_salt", cfg, () => __("remote_access.script.save_failed"));
 
         const bs64LoginSalt = await getLoginSaltPromise;
         const encodedString = "data:application/octet-stream;base64," + bs64LoginSalt;
@@ -103,7 +101,7 @@ export class RemoteAccess extends ConfigComponent<"remote_access/config", {}, Re
             this.resolve = resolve;
             this.reject = reject;
         });
-        await API.call_unchecked("remote_access/get_secret_salt", cfg, __("remote_access.script.save_failed"));
+        await API.call("remote_access/get_secret_salt", cfg, () => __("remote_access.script.save_failed"));
         const bs64Secret = await getSecretPromise;
         const encodedString = "data:application/octet-stream;base64," + bs64Secret;
         const res = await fetch(encodedString);
@@ -118,7 +116,7 @@ export class RemoteAccess extends ConfigComponent<"remote_access/config", {}, Re
             this.reject = reject;
         });
 
-        API.call_unchecked("remote_access/login", data, __("remote_access.script.save_failed"));
+        API.call("remote_access/login", data, () => __("remote_access.script.save_failed"));
         return loginPromise;
     }
 
@@ -129,16 +127,16 @@ export class RemoteAccess extends ConfigComponent<"remote_access/config", {}, Re
             this.reject = reject;
         });
 
-        await API.call("remote_access/register", cfg, __("remote_access.script.save_failed"));
+        await API.call("remote_access/register", cfg, () => __("remote_access.script.save_failed"));
         await registrationPromise;
 
         this.setState({status_modal_string: ""});
         const modal = util.async_modal_ref.current;
         if(!await modal.show({
-                title: __("main.reboot_title"),
-                body: __("main.reboot_content")(__("remote_access.script.reboot_content_changed")),
-                no_text: __("main.abort"),
-                yes_text: __("main.reboot"),
+                title: () => __("main.reboot_title"),
+                body: () => __("main.reboot_content")(__("remote_access.script.reboot_content_changed")),
+                no_text: () => __("main.abort"),
+                yes_text: () => __("main.reboot"),
                 no_variant: "secondary",
                 yes_variant: "danger"
             }))
@@ -160,7 +158,7 @@ export class RemoteAccess extends ConfigComponent<"remote_access/config", {}, Re
                 keys: []
             };
 
-            await API.call("remote_access/register", registration_data, __("remote_access.script.save_failed"), __("remote_access.script.reboot_content_changed"), 10000);
+            await API.call("remote_access/register", registration_data, () => __("remote_access.script.save_failed"), () => __("remote_access.script.reboot_content_changed"), 10000);
             return;
         }
 
@@ -169,7 +167,7 @@ export class RemoteAccess extends ConfigComponent<"remote_access/config", {}, Re
             loginSalt = await this.get_login_salt(cfg);
         } catch (err) {
             console.error(err);
-            util.add_alert("registration", "danger", "Failed to login:", "Wrong user or password");
+            util.add_alert("registration", "danger", () => "Failed to login:", () => "Wrong user or password");
             this.setState({status_modal_string: ""});
             return;
         }
@@ -197,7 +195,7 @@ export class RemoteAccess extends ConfigComponent<"remote_access/config", {}, Re
             });
         } catch (err) {
             console.error(`Failed to login: ${err}`);
-            util.add_alert("registration", "danger", "Failed to login:", "Wrong user or password");
+            util.add_alert("registration", "danger", () => "Failed to login:", () => "Wrong user or password");
             this.setState({status_modal_string: ""});
             return;
         }
@@ -207,7 +205,7 @@ export class RemoteAccess extends ConfigComponent<"remote_access/config", {}, Re
             secretSalt = await this.get_secret_salt(cfg);
         } catch (err) {
             console.error(`Failed to get secret salt: ${err}`);
-            util.add_alert("registration", "danger", "Failed to get secret-salt:", err);
+            util.add_alert("registration", "danger", () => "Failed to get secret-salt:", () => err);
             this.setState({status_modal_string: ""});
             return;
         }
@@ -261,7 +259,7 @@ export class RemoteAccess extends ConfigComponent<"remote_access/config", {}, Re
             await this.runRegistration(registration_data);
         } catch (err) {
             console.error(`Failed to register charger: ${err}`);
-            util.add_alert("registration", "danger", "Failed to register", err);
+            util.add_alert("registration", "danger", () => "Failed to register", () => err);
             this.setState({status_modal_string: ""});
         }
     }
@@ -286,7 +284,7 @@ export class RemoteAccess extends ConfigComponent<"remote_access/config", {}, Re
             keys: []
         };
 
-        await API.call("remote_access/register", registration_data, __("remote_access.script.save_failed"), __("remote_access.script.reboot_content_changed"), 10000);
+        await API.call("remote_access/register", registration_data, () => __("remote_access.script.save_failed"), () => __("remote_access.script.reboot_content_changed"), 10000);
     }
 
     render() {
@@ -340,7 +338,7 @@ export class RemoteAccess extends ConfigComponent<"remote_access/config", {}, Re
                                         this.setState({email: v});
                                     }} />
                     </FormRow>
-                    <FormRow label={__("remote_access.content.password")}>
+                    <FormRow label={__("remote_access.content.password")} label_muted={__("remote_access.content.password_muted")}>
                         <InputPassword required={this.state.enable}
                                         maxLength={64}
                                         value={this.state.password}
@@ -350,7 +348,7 @@ export class RemoteAccess extends ConfigComponent<"remote_access/config", {}, Re
                                         hideClear
                                         placeholder="" />
                     </FormRow>
-                    <CollapsedSection label={__("remote_access.content.advanced_settings")}>
+                    <CollapsedSection heading={__("remote_access.content.advanced_settings")}>
                         <FormRow label={__("remote_access.content.relay_host")}>
                             <InputText required
                                     maxLength={64}

@@ -11,8 +11,8 @@ let x = {
             "full_access": "Lese-/Schreibzugriff",
             "table": "Registertabelle",
             "tf": "WARP Charger",
-            "bender_emulate": "Kompatibel zu Bender CC613",
-            "keba_emulate": "Kompatibel zu Keba C-Series",
+            "bender_emulate": "Open Modbus Charge Control Interface (OMCCI); Kompatibel zu Bender CC613",
+            "keba_emulate": "Kompatibel zu Keba P30 C-Series",
             "modbus_tcp": "Modbus/TCP",
             "enable": "Modbus/TCP-Modus",
             "port": "Port",
@@ -39,7 +39,7 @@ let x = {
                         <td>Version der Registertabelle</td>
                         <td>uint32</td>
                         <td>---</td>
-                        <td>Aktuelle Version: 2</td>
+                        <td>Aktuelle Version: 3</td>
                     </tr>
                     <tr>
                         <td>2</td>
@@ -208,11 +208,25 @@ let x = {
                         <td>Siehe <a href="https://docs.warp-charger.com/docs/mqtt_http/api_reference/meter/#meter_all_values_any">API-Dokumentation</a></td>
                     </tr>
                     <tr>
-                        <td>3000</td>
-                        <td>CP-Unterbrechung</td>
+                        <td>3100</td>
+                        <td>Verbundene Phasen</td>
                         <td>uint32</td>
-                        <td>cp_disc</td>
-                        <td>Noch nicht implementiert!</td>
+                        <td>phase_switch</td>
+                        <td>Gibt an wie viele Phasen mit dem Fahrzeug verbunden sind (1 oder 3).</td>
+                    </tr>
+                    <tr>
+                        <td>3102</td>
+                        <td>Zustand der Phasenumschaltung</td>
+                        <td>uint32</td>
+                        <td>phase_switch</td>
+                        <td>Aktueller Zustand der Phasenumschaltung:
+                            <ul>
+                                <li>0: Phasenumschaltung ist bereit für Kommandos.</li>
+                                <li>1: Phasenumschaltung ist über die Einstellungen deaktiviert.</li>
+                                <li>2: Phasenumschaltung ist aktiviert aber aktuell nicht verfügbar.</li>
+                                <li>3: Phasenumschaltung wird gerade durchgeführt; ankommende Kommandos werden ignoriert.</li>
+                            </ul>
+                        </td>
                     </tr>
                     <tr>
                         <td>4000 bis 4009</td>
@@ -228,6 +242,22 @@ let x = {
                         <td>nfc</td>
                         <td>Zeit in Millisekunden seitdem das zuletzt erkannten NFC-Tag das letzte mal erkannt wurde. Zeiten &lt;
                             1000 ms bedeuten typischerweise, dass das Tag gerade an die Wallbox gehalten wird.</td>
+                    </tr>
+                    <tr>
+                        <td>4012 bis 4013</td>
+                        <td>Typ des letzten NFC-Tags</td>
+                        <td>uint8 (4x)</td>
+                        <td>nfc</td>
+                        <td>Typ des zuletzt erkannten NFC-Tags als ASCII-kodierter Hex-String.
+                            <ul>
+                                <li>"0000": Mifare Classic</li>
+                                <li>"0001": NFC Forum Typ 1</li>
+                                <li>"0002": NFC Forum Typ 2</li>
+                                <li>"0003": NFC Forum Typ 3</li>
+                                <li>"0004": NFC Forum Typ 4</li>
+                                <li>"0005": NFC Forum Typ 5</li>
+                            </ul>
+                        </td>
                     </tr>
                 </tbody>
                 <thead>
@@ -266,8 +296,14 @@ let x = {
                         <td>evse</td>
                         <td>
                             Steuert die LED des Tasters in der Wallbox-Front.
+                            <strong>
+                            Blinkmuster und -dauer müssen mit einem Modbus-Befehl geschrieben werden!
+                            Falls auch die Farbe gesetzt werden soll (nur WARP3), müssen die Register 1004 bis einschließlich 1013 in einem Befehl geschrieben werden.
+                            </strong>
+                            Damit die LED kontrolliert werden kann muss die Option "Status-LED-Steuerung" aktiviert sein.
+
                             <ul>
-                                <li>-1: EVSE kontrolliert LED</li>
+                                <li>0xFFFFFFFF: EVSE kontrolliert LED</li>
                                 <li>0: LED aus</li>
                                 <li>1 bis 254: LED gedimmt</li>
                                 <li>255: LED an</li>
@@ -287,6 +323,27 @@ let x = {
                             Maximal 65535 ms werden unterstützt.</td>
                     </tr>
                     <tr>
+                        <td>1008</td>
+                        <td>Front-LED-Blinkfarbwert (Hue)</td>
+                        <td>uint32</td>
+                        <td>evse</td>
+                        <td>Der Farbwert der Farbe (im <a href="https://de.wikipedia.org/wiki/HSV-Farbraum">HSV-Farbraum</a>) in der das im Register 1004 gesetzte Blinkmuster angezeigt werden soll. Nur Werte zwischen 0 und 359 (°) sind erlaubt. Die Farbe kann nur bei einem WARP3 Charger gesetzt werden. WARP und WARP2 Charger besitzen eine einfarbig blaue LED.</td>
+                    </tr>
+                    <tr>
+                        <td>1010</td>
+                        <td>Front-LED-Blinkfarbsättigung (Saturation)</td>
+                        <td>uint32</td>
+                        <td>evse</td>
+                        <td>Die Farbsättigung der Farbe (im <a href="https://de.wikipedia.org/wiki/HSV-Farbraum">HSV-Farbraum</a>) in der das im Register 1004 gesetzte Blinkmuster angezeigt werden soll. Nur Werte zwischen 0 und 255 sind erlaubt. Die Farbe kann nur bei einem WARP3 Charger gesetzt werden. WARP und WARP2 Charger besitzen eine einfarbig blaue LED.</td>
+                    </tr>
+                    <tr>
+                        <td>1012</td>
+                        <td>Front-LED-Blinkfarbhelligkeit (Value)</td>
+                        <td>uint32</td>
+                        <td>evse</td>
+                        <td>Die Helligkeit der Farbe (im <a href="https://de.wikipedia.org/wiki/HSV-Farbraum">HSV-Farbraum</a>) in der das im Register 1004 gesetzte Blinkmuster angezeigt werden soll. Nur Werte zwischen 0 und 255 sind erlaubt. Die Farbe kann nur bei einem WARP3 Charger gesetzt werden. WARP und WARP2 Charger besitzen eine einfarbig blaue LED.</td>
+                    </tr>
+                    <tr>
                         <td>2000</td>
                         <td>Relative Energie zurücksetzen</td>
                         <td>uint32</td>
@@ -294,11 +351,57 @@ let x = {
                         <td>Setzt den relativen Energiewert zurück (Input Register 2006). Passwort: 0x3E12E5E7</td>
                     </tr>
                     <tr>
-                        <td>3000</td>
-                        <td>CP-Trennung auslösen</td>
+                        <td>3100</td>
+                        <td>Phasenumschaltung auslösen</td>
                         <td>uint32</td>
-                        <td>cp_disc</td>
-                        <td>Noch nicht implementiert!</td>
+                        <td>phase_switch</td>
+                        <td>1 für einphasiges Laden. 3 für dreiphasiges Laden.</td>
+                    </tr>
+                    <tr>
+                        <td>4000 bis 4009</td>
+                        <td>ID des vorzutäuschenden NFC-Tags</td>
+                        <td>uint8 (20x)</td>
+                        <td>nfc</td>
+                        <td>Mit den Registern 4000 bis einschließlich 4013 kann ein NFC-Tag vorgetäuscht werden (analog zur API nfc/inject_tag):
+                            <ul>
+                                <li>Register 4000 bis 4009: Die ID des Tags als ASCII-kodierter Hex-String.</li>
+                                <li>Register 4010 und 4011:
+                                    <ul>
+                                        <li>"0001": Mit dem vorgetäuschten Tag kann ein Ladevorgang nur gestartet werden (analog zur API nfc/inject_tag_start)</li>
+                                        <li>"0002": Mit dem vorgetäuschten Tag kann ein Ladevorgang nur gestoppt werden (analog zur API nfc/inject_tag_stop)</li>
+                                        <li>alle anderen Werte: Mit dem vorgetäuschten Tag kann ein Ladevorgang gestartet und gestoppt werden (analog zur API nfc/inject_tag)</li>
+                                    </ul>
+                                </li>
+                                <li>Register 4012 und 4013: Der Typ des NFC-Tags als ASCII-kodierter Hex-String:
+                                    <ul>
+                                        <li>"0000": Mifare Classic</li>
+                                        <li>"0001": NFC Forum Typ 1</li>
+                                        <li>"0002": NFC Forum Typ 2</li>
+                                        <li>"0003": NFC Forum Typ 3</li>
+                                        <li>"0004": NFC Forum Typ 4</li>
+                                        <li>"0005": NFC Forum Typ 5</li>
+                                    </ul>
+                                </li>
+                            </ul>
+                            <br/>
+                            <strong>Schreiben der Register 4012 und 4013 startet das Vortäuschen das Tags. Danach werden die Holding Register 4000 bis 4013 geleert!</strong>
+                            Das Datenformat der Holding Register 4000 bis 4013 ist identisch zum Format der Input Register 4000 bis 4013 (die das zuletzt gesehen NFC-Tag enthalten).
+                            Ein physisch existierendes Tag kann also (wieder) vorgetäuscht werden, indem es einmal an die Wallbox gehalten wird und die dabei erzeugten Werte in den Input Registern 4000 bis 4013 später in die Holding Register 4000 bis 4013 geschrieben werden.
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>4010 bis 4011</td>
+                        <td>Verwendungszweck des vorgetäuschten NFC-Tags</td>
+                        <td>uint8 (4x)</td>
+                        <td>nfc</td>
+                        <td>Siehe Beschreibung der Holding Register 4000 bis 4009.</td>
+                    </tr>
+                    <tr>
+                        <td>4012 bis 4013</td>
+                        <td>Typ des vorgetäuschten NFC-Tags</td>
+                        <td>uint8 (4x)</td>
+                        <td>nfc</td>
+                        <td>Siehe Beschreibung der Holding Register 4000 bis 4009.</td>
                     </tr>
                 </tbody>
                 <thead>
@@ -339,10 +442,10 @@ let x = {
                     </tr>
                     <tr>
                         <td>4</td>
-                        <td>Feature "cp_disc" verfügbar</td>
+                        <td>Feature "phase_switch" verfügbar</td>
                         <td>bool</td>
                         <td>---</td>
-                        <td>Noch nicht implementiert!</td>
+                        <td>Hardware und Konfiguration erlauben eine Phasenumschaltung-</td>
                     </tr>
                     <tr>
                         <td>5</td>
@@ -350,6 +453,41 @@ let x = {
                         <td>bool</td>
                         <td>---</td>
                         <td>Ein NFC Bricklet ist verbaut und aktiv.</td>
+                    </tr>
+                    <tr>
+                        <td>6</td>
+                        <td>Feature "evse_sd_input" verfügbar</td>
+                        <td>bool</td>
+                        <td>---</td>
+                        <td>Der Ladecontroller verfügt über einen Abschalteingang.</td>
+                    </tr>
+                    <tr>
+                        <td>7</td>
+                        <td>Feature "evse_gp_input" verfügbar</td>
+                        <td>bool</td>
+                        <td>---</td>
+                        <td>Der Ladecontroller verfügt über einen konfigurierbaren Eingang.</td>
+                    </tr>
+                    <tr>
+                        <td>8</td>
+                        <td>Feature "evse_gp_output" verfügbar</td>
+                        <td>bool</td>
+                        <td>---</td>
+                        <td>Der Ladecontroller verfügt über einen konfigurierbaren Ausgang.</td>
+                    </tr>
+                    <tr>
+                        <td>1100</td>
+                        <td>Zustand des Abschalteingangs</td>
+                        <td>bool</td>
+                        <td>evse_sd_input</td>
+                        <td> 0 - geschlossen, 1 - geöffnet</td>
+                    </tr>
+                    <tr>
+                        <td>1101</td>
+                        <td>Zustand des konfigurierbaren Eingangs</td>
+                        <td>bool</td>
+                        <td>evse_gp_input</td>
+                        <td> 0 - geschlossen, 1 - geöffnet</td>
                     </tr>
                     <tr>
                         <td>2100</td>
@@ -416,6 +554,13 @@ let x = {
                         <td>false bzw. 0 zum Blockieren des Ladevorgangs. true bzw. 1 zum Freigeben. Setzt die Ladefreigabe, die
                             auch (je nach Konfiguration) vom Taster, den Start/Stop-Buttons auf der Webinterface-Statusseite
                             und der evse/[start/stop]_charging-API verwendet wird.</td>
+                    </tr>
+                    <tr>
+                        <td>1100</td>
+                        <td>Setzt den Zustand des konfigurierbaren Ausgangs</td>
+                        <td>bool</td>
+                        <td>evse_gp_output</td>
+                        <td>0 - Verbunden mit Masse, 1 - Hochohmig</td>
                     </tr>
                 </tbody>
             </>

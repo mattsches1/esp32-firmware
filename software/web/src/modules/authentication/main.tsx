@@ -37,13 +37,13 @@ export function AuthenticationNavbar() {
     return <NavbarItem name="authentication" module="authentication" title={__("authentication.navbar.authentication")} symbol={<Key />} />;
 }
 
-type AuthenticationState = API.getType['authentication/config'] & {password: string};
+type AuthenticationState = API.getType['authentication/config'];
 
-export class Authentication extends ConfigComponent<'authentication/config', {}, AuthenticationState> {
+export class Authentication extends ConfigComponent<'authentication/config', {}, {password: string}> {
     constructor() {
         super('authentication/config',
-              __("authentication.script.save_failed"),
-              __("authentication.script.reboot_content_changed"));
+              () => __("authentication.script.save_failed"),
+              () => __("authentication.script.reboot_content_changed"));
     }
 
     hash(username: string, password?: string) {
@@ -53,7 +53,7 @@ export class Authentication extends ConfigComponent<'authentication/config', {},
         return YaMD5.YaMD5.hashStr(username + ":esp32-lib:" + password);
     }
 
-    override render(props: {}, state: AuthenticationState) {
+    override render(props: {}, state: AuthenticationState & {password: string}) {
         if (!util.render_allowed())
             return <SubPage name="authentication" />;
 
@@ -91,10 +91,10 @@ export class Authentication extends ConfigComponent<'authentication/config', {},
                         <Button variant="danger" className="form-control" disabled={state.digest_hash == ""} onClick={async () => {
                             const modal = util.async_modal_ref.current;
                             if(!await modal.show({
-                                    title: __("authentication.content.disable_auth_title"),
-                                    body: __("authentication.content.disable_auth_body"),
-                                    no_text: __("authentication.content.disable_auth_abort"),
-                                    yes_text: __("authentication.content.disable_auth_confirm"),
+                                    title: () => __("authentication.content.disable_auth_title"),
+                                    body: () => __("authentication.content.disable_auth_body"),
+                                    no_text: () => __("authentication.content.disable_auth_abort"),
+                                    yes_text: () => __("authentication.content.disable_auth_confirm"),
                                     no_variant: "secondary",
                                     yes_variant: "danger"
                                 }))

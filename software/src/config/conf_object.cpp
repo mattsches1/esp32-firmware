@@ -19,6 +19,10 @@
 
 #include "config/private.h"
 
+#include "event_log_prefix.h"
+#include "main_dependencies.h"
+#include "tools/memory.h"
+
 bool Config::ConfObject::slotEmpty(size_t i)
 {
     return object_buf[i].schema == nullptr;
@@ -34,51 +38,83 @@ void Config::ConfObject::freeSlotBuf(Config::ConfObject::Slot *buf)
     heap_caps_free(buf);
 }
 
-Config *Config::ConfObject::get(const String &needle)
+[[gnu::noinline]]
+[[gnu::noreturn]]
+static void abort_on_key_not_found(const char *needle)
 {
-    const auto *slot = this->getSlot();
-    const auto schema = slot->schema;
-    const auto size = schema->length;
-
-    const auto needle_length = needle.length();
-
-    for (size_t i = 0; i < size; ++i) {
-        if (schema->keys[i].length != needle_length)
-            continue;
-
-        if (memcmp(schema->keys[i].val, needle.c_str(), needle_length) == 0)
-            return &slot->values[i];
-    }
-
-    char *message;
-    esp_system_abort(asprintf(&message, "Config key %s not found!", needle.c_str()) < 0 ? "" : message);
+    char msg[64];
+    snprintf(msg, ARRAY_SIZE(msg), "Config key %s not found!", needle);
+    esp_system_abort(msg);
 }
 
-const Config *Config::ConfObject::get(const String &needle) const
+Config *Config::ConfObject::get(const char *needle, size_t needle_len)
 {
     const auto *slot = this->getSlot();
     const auto schema = slot->schema;
     const auto size = schema->length;
+    const auto keys = schema->keys;
 
-    const auto needle_length = needle.length();
+    if (string_is_in_rodata(needle)) {
+        for (size_t i = 0; i < size; ++i) {
+            if (keys[i].val == needle) { // Address comparison, not string comparison
+                return &slot->values[i];
+            }
+        }
+#ifdef DEBUG_FS_ENABLE
+        logger.printfln("Key '%s' in rodata but not in keys.", needle);
+#endif
+    }
+
+    if (!needle_len) {
+        needle_len = strlen(needle);
+    }
 
     for (size_t i = 0; i < size; ++i) {
-        if (schema->keys[i].length != needle_length)
+        if (keys[i].length != needle_len)
             continue;
 
-        if (memcmp(schema->keys[i].val, needle.c_str(), needle_length) == 0)
+        if (memcmp(keys[i].val, needle, needle_len) == 0)
             return &slot->values[i];
     }
 
-    char *message;
-    esp_system_abort(asprintf(&message, "Config key %s not found!", needle.c_str()) < 0 ? "" : message);
+    abort_on_key_not_found(needle);
+}
+
+const Config *Config::ConfObject::get(const char *needle, size_t needle_len) const
+{
+    const auto *slot = this->getSlot();
+    const auto schema = slot->schema;
+    const auto size = schema->length;
+    const auto keys = schema->keys;
+
+    if (string_is_in_rodata(needle)) {
+        for (size_t i = 0; i < size; ++i) {
+            if (keys[i].val == needle) { // Address comparison, not string comparison
+                return &slot->values[i];
+            }
+        }
+#ifdef DEBUG_FS_ENABLE
+        logger.printfln("Key '%s' in rodata but not in keys.", needle);
+#endif
+    }
+
+    if (!needle_len) {
+        needle_len = strlen(needle);
+    }
+
+    for (size_t i = 0; i < size; ++i) {
+        if (keys[i].length != needle_len)
+            continue;
+
+        if (memcmp(keys[i].val, needle, needle_len) == 0)
+            return &slot->values[i];
+    }
+
+    abort_on_key_not_found(needle);
 }
 
 const Config::ConfObject::Slot *Config::ConfObject::getSlot() const { return &object_buf[idx]; }
 Config::ConfObject::Slot *Config::ConfObject::getSlot() { return &object_buf[idx]; }
-
-extern char _rodata_start;
-extern char _rodata_end;
 
 Config::ConfObject::ConfObject(std::vector<std::pair<const char *, Config>> &&val)
 {
@@ -90,8 +126,7 @@ Config::ConfObject::ConfObject(std::vector<std::pair<const char *, Config>> &&va
     for (int i = 0; i < len; ++i) {
         const char *key = val[i].first;
 
-        bool key_in_flash = (key >= &_rodata_start && key <= &_rodata_end);
-        if (!key_in_flash)
+        if (!string_is_in_rodata(key))
             esp_system_abort("ConfObject key not in flash! Please pass a string literal!");
 
         schema->keys[i].val = key;

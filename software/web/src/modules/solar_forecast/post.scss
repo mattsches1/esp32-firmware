@@ -1,0 +1,23 @@
+.status-solar-forecast-chart {
+    position: relative;
+    aspect-ratio: 1.33333;
+}
+
+@include media-breakpoint-up(md) {
+    .status-solar-forecast-chart {
+        position: relative;
+        aspect-ratio: 3;
+    }
+}
+
+.solar-forecast-chart {
+    position: relative;
+    aspect-ratio: 1.5;
+}
+
+@include media-breakpoint-up(md) {
+    .solar-forecast-chart {
+        position: relative;
+        aspect-ratio: 3;
+    }
+}

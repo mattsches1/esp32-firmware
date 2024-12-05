@@ -10,6 +10,7 @@ let x = {
             "remote_access": "Fernzugriff",
             "email": "E-Mail-Adresse",
             "password": "Passwort",
+            "password_muted": "wird nur zur Registrierung verwendet und nicht gespeichert",
             "relay_host": "Relay-Server-Hostname",
             "relay_port": "Relay-Server-Port",
             "enable": "Fernzugriff aktiviert",
@@ -21,7 +22,7 @@ let x = {
             "prepare_login": "Bereite Login vor",
             "logging_in": "Logge Benutzer ein",
             "prepare_encryption": "Bereite Verschlüsselung vor",
-            "registration": "Registriere Wallbox"
+            "registration": null
         },
         "script": {
             "save_failed": "Speichern der Fernzugriffs-Einstellungen fehlgeschlagen.",

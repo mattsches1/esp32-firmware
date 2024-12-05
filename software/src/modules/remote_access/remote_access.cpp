@@ -116,8 +116,6 @@ static int create_sock_and_send_to(const void *payload, size_t payload_len, cons
     int ret = dns_gethostbyname_addrtype_lwip_ctx(dest_host, &ip, nullptr, nullptr, LWIP_DNS_ADDRTYPE_IPV4);
     if (ret == ERR_VAL) {
         logger.printfln("No DNS server is configured!");
-    } else if (ret != ERR_OK) {
-        logger.printfln("Error during DNS resolve!");
     }
 
     if (ret != ESP_OK || ip.type != IPADDR_TYPE_V4) {
@@ -168,17 +166,15 @@ void RemoteAccess::pre_setup() {
         {"cert_id", Config::Int8(-1)}
     })};
 
-    Config *cs = new Config {Config::Uint8(1)};
-
     connection_state = Config::Array(
-                {},
-                cs,
-                MAX_USERS * MAX_KEYS_PER_USER + 1,
-                MAX_USERS * MAX_KEYS_PER_USER + 1,
-                Config::type_id<Config::ConfUint>()
+        {},
+        Config::get_prototype_uint8_0(),
+        MAX_USERS * MAX_KEYS_PER_USER + 1,
+        MAX_USERS * MAX_KEYS_PER_USER + 1,
+        Config::type_id<Config::ConfUint>()
     );
     for(int i = 0; i < MAX_USERS * MAX_KEYS_PER_USER + 1; ++i) {
-        connection_state.add();
+        connection_state.add()->updateUint(1); // Set the default here so that the generic prototype can be used.
     }
 
     registration_state = Config::Object({
@@ -214,15 +210,18 @@ static std::unique_ptr<char []> decode_base64(const CoolString &input, size_t bu
 
 void RemoteAccess::handle_response_chunk(const AsyncHTTPSClientEvent *event) {
     if (response_body.length() == 0) {
-        response_body.reserve(event->data_complete_len);
+        if (event->data_complete_len < 0) {
+            response_body.reserve(1024);
+        }
+        else {
+            response_body.reserve(event->data_complete_len);
+        }
     }
     response_body.concat((const uint8_t*)event->data_chunk, (unsigned int)event->data_chunk_len);
 }
 
 void RemoteAccess::register_urls() {
-    api.addState("remote_access/config", &config, {
-        "password"
-    });
+    api.addState("remote_access/config", &config, {"password"}, {"email"});
 
     api.addState("remote_access/state", &connection_state);
     api.addState("remote_access/registration_state", &registration_state);
@@ -593,20 +592,8 @@ void RemoteAccess::register_urls() {
         return;
     }
 
-    task_scheduler.scheduleOnce([this]() {
-        this->resolve_management();
-        this->connect_management();
-        this->connection_state.get(0)->updateUint(1);
-    }, 5000);
-
     task_scheduler.scheduleWithFixedDelay([this]() {
-        if (!this->management_request_done) {
-            this->resolve_management();
-        }
-    }, 1000 * 30, 1000 * 30);
-
-    task_scheduler.scheduleWithFixedDelay([this]() {
-        for (int i = 0; i < MAX_KEYS_PER_USER; i++) {
+        for (size_t i = 0; i < MAX_KEYS_PER_USER; i++) {
             uint32_t state = 1;
             if (this->remote_connections[i] != nullptr) {
                 state = this->remote_connections[i]->is_peer_up(nullptr, nullptr) ? 2 : 1;
@@ -620,7 +607,7 @@ void RemoteAccess::register_urls() {
                 }
             }
         }
-    }, 1000, 1000);
+    }, 1_s, 1_s);
 
     task_scheduler.scheduleWithFixedDelay([this]() {
         uint32_t state = 1;
@@ -637,7 +624,25 @@ void RemoteAccess::register_urls() {
                 logger.printfln("Management connection disconnected");
             }
         }
-    }, 1000, 1000);
+    }, 1_s, 1_s);
+}
+
+void RemoteAccess::register_events() {
+    if (!config.get("enable")->asBool())
+        return;
+
+    event.registerEvent("network/state", {"connected"}, [this](const Config *connected) {
+        task_scheduler.cancel(this->task_id);
+
+        if (connected->asBool()) {
+            this->task_id = task_scheduler.scheduleWithFixedDelay([this]() {
+                if (!this->management_request_done) {
+                    this->resolve_management();
+                }
+            }, 0_s, 30_s);
+        }
+        return EventResult::OK;
+    });
 }
 
 void RemoteAccess::run_request_with_next_stage(const char *url, esp_http_client_method_t method, const char *body, int body_size, ConfigRoot config, std::function<void(ConfigRoot config)> next_stage) {
@@ -680,7 +685,7 @@ void RemoteAccess::run_request_with_next_stage(const char *url, esp_http_client_
                 case AsyncHTTPSClientEventType::Finished:
                     task_scheduler.scheduleOnce([this, next_stage, config]() {
                         next_stage(config);
-                    }, 0);
+                    });
                     break;
             }
         };
@@ -692,16 +697,16 @@ void RemoteAccess::run_request_with_next_stage(const char *url, esp_http_client_
     }
     switch (method) {
         case HTTP_METHOD_GET:
-            https_client->download_async(url, config.get("cert_id")->asInt(), callback);
+            https_client->download_async(url, config.get("cert_id")->asInt(), std::move(callback));
             break;
         case HTTP_METHOD_POST:
-            https_client->post_async(url, config.get("cert_id")->asInt(), body, body_size, callback);
+            https_client->post_async(url, config.get("cert_id")->asInt(), body, body_size, std::move(callback));
             break;
         case HTTP_METHOD_PUT:
-            https_client->put_async(url, config.get("cert_id")->asInt(), body, body_size, callback);
+            https_client->put_async(url, config.get("cert_id")->asInt(), body, body_size, std::move(callback));
             break;
         case HTTP_METHOD_DELETE:
-            https_client->delete_async(url, config.get("cert_id")->asInt(), body, body_size, callback);
+            https_client->delete_async(url, config.get("cert_id")->asInt(), body, body_size, std::move(callback));
             break;
         default:
             break;
@@ -930,6 +935,8 @@ void RemoteAccess::resolve_management() {
     auto callback = [this](ConfigRoot cfg) {
         management_request_done = true;
         https_client = nullptr;
+        this->connect_management();
+        this->connection_state.get(0)->updateUint(1);
     };
     run_request_with_next_stage(url.c_str(), HTTP_METHOD_PUT, json, len, config, callback);
 }
@@ -940,33 +947,33 @@ static int management_filter_in(struct pbuf* packet) {
 
     if (payload[9] != 0x11) {
         logger.printfln("Management blocked invalid incoming packet with protocol: 0x%X", payload[9]);
-        return -1;
+        return ERR_VAL;
     }
 
     int header_len = (payload[0] & 0xF) * 4;
     if (packet->len - (header_len + 8) != sizeof(management_command_packet)) {
         logger.printfln("Management blocked invalid incoming packet of size: %i", (packet->len - (header_len + 8)));
-        return -1;
+        return ERR_VAL;
     }
 
     int dest_port = payload[header_len] << 8;
     dest_port |= payload[header_len + 1];
     if (dest_port != 12345) {
         logger.printfln("Management blocked invalid incoming packet with destination port: %i.", dest_port);
-        return -1;
+        return ERR_VAL;
     }
-    return 0;
+    return ERR_OK;
 }
 
 static int management_filter_out(struct pbuf* packet) {
     uint8_t *payload = (uint8_t*)packet->payload;
 
     if (payload[9] == 0x1) {
-        return 0;
+        return ERR_OK;
     } else {
         logger.printfln("Management blocked outgoing packet");
     }
-    return -1;
+    return ERR_VAL;
 }
 
 bool port_valid(uint16_t port) {
@@ -1003,10 +1010,10 @@ void RemoteAccess::connect_management() {
         return;
 
     struct timeval tv;
-    if (!clock_synced(&tv)) {
+    if (!rtc.clock_synced(&tv)) {
         task_scheduler.scheduleOnce([this]() {
             this->connect_management();
-        }, 5000);
+        }, 5_s);
         return;
     }
 
@@ -1065,15 +1072,15 @@ void RemoteAccess::connect_management() {
 
     task_scheduler.scheduleWithFixedDelay([this]() {
         this->run_management();
-    }, 0, 250);
+    }, 250_ms);
 }
 
 void RemoteAccess::connect_remote_access(uint8_t i, uint16_t local_port) {
     struct timeval tv;
-    if (!clock_synced(&tv)) {
+    if (!rtc.clock_synced(&tv)) {
         task_scheduler.scheduleOnce([this, i, local_port]() {
             this->connect_remote_access(i, local_port);
-        }, 5000);
+        }, 5_s);
         return;
     }
 

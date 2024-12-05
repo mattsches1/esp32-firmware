@@ -27,7 +27,7 @@
 class ModbusTCPClient final : public IModule
 {
 public:
-    ModbusTCPClient() {}
+    ModbusTCPClient() : pool(TFModbusTCPByteOrder::Host) {}
 
     void setup() override;
     void loop() override;
@@ -36,5 +36,4 @@ public:
 
 private:
     TFModbusTCPClientPool pool;
-    dns_gethostbyname_addrtype_lwip_ctx_async_data dns_data;
 };

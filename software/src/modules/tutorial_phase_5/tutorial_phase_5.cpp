@@ -110,12 +110,12 @@ void TutorialPhase5::setup()
         state.get("button")->updateBool(button_state == TF_RGB_LED_BUTTON_BUTTON_STATE_PRESSED);
     }
 
-    // Start task with 1000 millisecond interval to read back current color
+    // Start task with 1 second interval to read back current color
     // value of the RGB LED Button Bricklet. This allows to externally change
     // the color value and make the ESP32 (Ethernet) Brick notice this.
     task_scheduler.scheduleWithFixedDelay([this]() {
         poll_bricklet_color();
-    }, 0, 1000);
+    }, 1_s);
 
     logger.printfln("Tutorial (Phase 5) module initialized");
 
@@ -133,7 +133,7 @@ void TutorialPhase5::register_urls()
     // Add extra ConfigRoot object to the API manager as a command target under
     // the name "tutorial_phase_5/config" to receive updates from the front-end
     // module. If an update is received, the lambda function is called to handle it.
-    api.addCommand("tutorial_phase_5/config_update", &config_update, {}, [this]() {
+    api.addCommand("tutorial_phase_5/config_update", &config_update, {}, [this](String &/*errmsg*/) {
         String color = config_update.get("color")->asString();
 
         logger.printfln("Tutorial (Phase 5) module received color update: %s", color.c_str());
@@ -146,7 +146,7 @@ void TutorialPhase5::register_urls()
     // The API manager checks the ConfigRoot object for changes every 250
     // milliseconds when low latency is requested. If a change is detected,
     // an update is sent.
-    api.addState("tutorial_phase_5/state", &state, {}, true);
+    api.addState("tutorial_phase_5/state", &state, {}, {}, true);
 }
 
 void TutorialPhase5::loop()

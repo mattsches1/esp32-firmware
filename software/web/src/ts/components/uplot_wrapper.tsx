@@ -51,6 +51,7 @@ interface UplotWrapperProps {
     legend_div_ref?: RefObject<HTMLDivElement>;
     aspect_ratio: number;
     x_height: number;
+    x_format: Intl.DateTimeFormatOptions;
     x_padding_factor: number;
     x_include_date: boolean;
     y_min?: number;
@@ -59,6 +60,7 @@ interface UplotWrapperProps {
     y_unit: string;
     y_label: string;
     y_digits: number;
+    y_three_split?: boolean;
 }
 
 export class UplotWrapper extends Component<UplotWrapperProps, {}> {
@@ -72,6 +74,8 @@ export class UplotWrapper extends Component<UplotWrapperProps, {}> {
     observer: ResizeObserver;
     y_min: number = 0;
     y_max: number = 0;
+    y_size_offset: number = 22;
+    y_label_size: number = 20;
 
     shouldComponentUpdate() {
         return false;
@@ -90,7 +94,7 @@ export class UplotWrapper extends Component<UplotWrapperProps, {}> {
             }
         });
 
-        let options = {
+        let options: uPlot.Options = {
             ...this.get_size(),
             pxAlign: 0,
             cursor: {
@@ -120,6 +124,7 @@ export class UplotWrapper extends Component<UplotWrapperProps, {}> {
             ],
             axes: [
                 {
+                    font: '12px system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"',
                     size: this.props.x_height,
                     incrs: [
                         60,
@@ -142,7 +147,7 @@ export class UplotWrapper extends Component<UplotWrapperProps, {}> {
 
                         for (let i = 0; i < splits.length; ++i) {
                             let date = new Date(splits[i] * 1000);
-                            let value = date.toLocaleString([], {hour: '2-digit', minute: '2-digit'});
+                            let value = date.toLocaleString([], this.props.x_format);
 
                             if (this.props.x_include_date && foundIncr >= 3600) {
                                 let year = date.toLocaleString([], {year: 'numeric'});
@@ -168,15 +173,24 @@ export class UplotWrapper extends Component<UplotWrapperProps, {}> {
                 },
                 {
                     label: this.props.y_label,
-                    labelSize: 20,
-                    labelGap: 2,
+                    labelSize: this.y_label_size,
+                    labelGap: 0,
                     labelFont: 'bold 14px system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"',
+                    font: '12px system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"',
                     size: (self: uPlot, values: string[], axisIdx: number, cycleNum: number): number => {
                         let size = 0;
+                        let size_correction_factor = 1;
 
                         if (values) {
                             self.ctx.save();
                             self.ctx.font = self.axes[axisIdx].font;
+
+                            if (self.ctx.font == '10px sans-serif') {
+                                // FIXME: For some unknown reason sometimes changing the canvas font doesn't work and the
+                                //        canvas font stays "10px sans-serif", work around this using a rought correction
+                                //        factor. This is not the best because the result of this correction is not exact
+                                size_correction_factor = 12 * devicePixelRatio / 10;
+                            }
 
                             for (let i = 0; i < values.length; ++i) {
                                 size = Math.max(size, self.ctx.measureText(values[i]).width);
@@ -185,7 +199,8 @@ export class UplotWrapper extends Component<UplotWrapperProps, {}> {
                             self.ctx.restore();
                         }
 
-                        return Math.ceil(size / devicePixelRatio) + 20;
+                        size *= size_correction_factor;
+                        return Math.ceil(size / devicePixelRatio) + this.y_size_offset;
                     },
                     values: (self: uPlot, splits: number[]) => {
                         let values: string[] = new Array(splits.length);
@@ -227,6 +242,7 @@ export class UplotWrapper extends Component<UplotWrapperProps, {}> {
                 },
             },
             legend: {
+                live: !util.is_native_median_app(),
                 mount: (self: uPlot, legend: HTMLElement) => {
                     if (this.props.legend_div_ref && this.props.legend_div_ref.current) {
                         this.props.legend_div_ref.current.appendChild(legend);
@@ -252,7 +268,7 @@ export class UplotWrapper extends Component<UplotWrapperProps, {}> {
                                 let x1 = self.valToPos(xd[i1] + xpad, 'x', true);
                                 let y = self.valToPos(0, 'y', true);
 
-                                if (y > ctx.canvas.height - (self.axes[0].size as number)) {
+                                if (y > ctx.canvas.height - this.props.x_height * devicePixelRatio) {
                                     return;
                                 }
 
@@ -275,6 +291,12 @@ export class UplotWrapper extends Component<UplotWrapperProps, {}> {
                 },
             ],
         };
+
+        if (this.props.y_three_split) {
+            options.axes[1].splits = (self: uPlot, axisIdx: number, scaleMin: number, scaleMax: number, foundIncr: number, foundSpace: number) => {
+                return [scaleMin, (scaleMin + scaleMax) / 2, scaleMax];
+            };
+        }
 
         let div = this.div_ref.current;
         this.uplot = new uPlot(options, [], div);

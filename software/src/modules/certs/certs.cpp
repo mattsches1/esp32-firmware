@@ -36,12 +36,14 @@ static inline String get_cert_name_path(uint8_t cert_id) {
 
 void Certs::pre_setup()
 {
+    state_certs_prototype = Config::Object({
+        {"id", Config::Uint(0, 0, MAX_CERTS)},
+        {"name", Config::Str("", 0, MAX_CERT_NAME)},
+    });
+
     state = Config::Object({
         {"certs", Config::Array({},
-            new Config(Config::Object({
-                {"id", Config::Uint(0, 0, MAX_CERTS)},
-                {"name", Config::Str("", 0, MAX_CERT_NAME)},
-            })),
+            &state_certs_prototype,
             0, MAX_CERTS, Config::type_id<Config::ConfObject>())
         }
     });
@@ -93,7 +95,16 @@ void Certs::pre_setup()
                         &ignored);
         mbedtls_pem_free(&key_ctx);
 
-        if (result != 0 && key_res != 0 && second_key_res != 0) {
+        int third_key_res = mbedtls_pem_read_buffer(
+                        &key_ctx,
+                        "-----BEGIN EC PRIVATE KEY-----",
+                        "-----END EC PRIVATE KEY-----",
+                        (const unsigned char *)cert.c_str(),
+                        nullptr, 0,
+                        &ignored);
+        mbedtls_pem_free(&key_ctx);
+
+        if ((result != 0) && (key_res != 0) && (second_key_res != 0) && (third_key_res != 0)) {
             if (result != 0) {
                 char buf[256] = {0};
                 mbedtls_strerror(result, buf, sizeof(buf));
@@ -108,6 +119,11 @@ void Certs::pre_setup()
                 char buf[256] = {0};
                 mbedtls_strerror(second_key_res, buf, sizeof(buf));
                 return String("Failed to parse RSA private key: ") + buf;
+            }
+            if (third_key_res != 0) {
+                char buf[256] = {0};
+                mbedtls_strerror(third_key_res, buf, sizeof(buf));
+                return String("Failed to parse EC private key: ") + buf;
             }
         }
         return "";
@@ -148,8 +164,6 @@ void Certs::register_urls()
     api.addState("certs/state", &state);
 
     api.addCommand("certs/add", &add, {}, [this](String &error) {
-        error = "";
-
         if (add.get("cert")->asString().length() == 0) {
             error = "Adding an empty certificate is not allowed. Did you mean to call certs/modify?";
             return;
@@ -184,8 +198,6 @@ void Certs::register_urls()
     }, true);
 
     api.addCommand("certs/modify", &add, {}, [this](String &error) {
-        error = "";
-
         uint8_t cert_id = add.get("id")->asUint();
         bool found = false;
         for (const auto &cert: state.get("certs")) {
@@ -219,8 +231,6 @@ void Certs::register_urls()
     }, true);
 
     api.addCommand("certs/remove", &remove, {}, [this](String &error) {
-        error = "";
-
         uint8_t cert_id = remove.get("id")->asUint();
 
         String path = get_cert_path(cert_id);
@@ -240,8 +250,9 @@ std::unique_ptr<unsigned char[]> Certs::get_cert(uint8_t cert_id, size_t *out_ce
 {
     String path = get_cert_path(cert_id);
 
-    if (!LittleFS.exists(path))
+    if (!LittleFS.exists(path)) {
         return nullptr;
+    }
 
     File f = LittleFS.open(path, "r");
     // Allocate one byte more so that the cert is also null-terminated.

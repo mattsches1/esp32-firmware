@@ -29,6 +29,7 @@
 #include "event_log_prefix.h"
 #include "module_dependencies.h"
 #include "tools.h"
+#include "tools/net.h"
 #include "modules/meters/meter_defs.h"
 
 int CMNetworking::create_socket(uint16_t port, bool blocking)
@@ -42,13 +43,13 @@ int CMNetworking::create_socket(uint16_t port, bool blocking)
 
     sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
     if (sock < 0) {
-        logger.printfln("Unable to create socket: errno %d", errno);
+        logger.printfln("Unable to create socket for port %hu: %s (%d)", port, strerror(errno), errno);
         return -1;
     }
 
     int err = bind(sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
     if (err < 0) {
-        logger.printfln("Socket unable to bind: errno %d", errno);
+        logger.printfln("Socket unable to bind to port %hu: %s (%d)", port, strerror(errno), errno);
         return -1;
     }
 
@@ -57,13 +58,13 @@ int CMNetworking::create_socket(uint16_t port, bool blocking)
 
     int flags = fcntl(sock, F_GETFL, 0);
     if (flags < 0) {
-        logger.printfln("Failed to get flags from socket: errno %d", errno);
+        logger.printfln("Failed to get flags from socket for port %hu: %s (%d)", port, strerror(errno), errno);
         return -1;
     }
 
     err = fcntl(sock, F_SETFL, flags | O_NONBLOCK);
     if (err < 0) {
-        logger.printfln("Failed to set O_NONBLOCK flag: errno %d", errno);
+        logger.printfln("Failed to set O_NONBLOCK flag for port %hu: %s (%d)", port, strerror(errno), errno);
         return -1;
     }
 
@@ -197,8 +198,8 @@ static void manager_task(void *arg)
 
 void CMNetworking::register_manager(const char *const *const hosts,
                                     int charger_count,
-                                    std::function<void(uint8_t /* client_id */, cm_state_v1 *, cm_state_v2 *, cm_state_v3 *)> manager_callback,
-                                    std::function<void(uint8_t, uint8_t)> manager_error_callback)
+                                    const std::function<void(uint8_t /* client_id */, cm_state_v1 *, cm_state_v2 *, cm_state_v3 *)> &manager_callback,
+                                    const std::function<void(uint8_t, uint8_t)> &manager_error_callback)
 {
     this->hosts = hosts;
     this->charger_count = charger_count;
@@ -274,8 +275,8 @@ void CMNetworking::register_manager(const char *const *const hosts,
 
         // Try to receive up to four packets in one go to catch up on the backlog.
         // Don't receive every available packet to smooth out bursts of packets.
-        static_assert(MAX_CONTROLLED_CHARGERS <= 32);
-        for (int poll_ctr = 0; poll_ctr < 4; ++poll_ctr) {
+        static_assert(MAX_CONTROLLED_CHARGERS <= 64);
+        for (int poll_ctr = 0; poll_ctr < 10; ++poll_ctr) {
             if (!xQueueReceive(manager_queue, &item, 0))
                 return;
 
@@ -300,26 +301,38 @@ void CMNetworking::register_manager(const char *const *const hosts,
 
             // Don't log in the first 20 seconds after startup: We are probably still resolving hostnames.
             if (charger_idx == -1) {
-                if (deadline_elapsed(20000))
-                    logger.printfln("Received packet from unknown %s. Is the config complete?", inet_ntoa(source_addr.sin_addr));
+                if (deadline_elapsed(20_s)) {
+                    char source_str[16];
+                    tf_ip4addr_ntoa(&source_addr, source_str, sizeof(source_str));
+
+                    logger.printfln("Received packet from unknown %s. Is the config complete?", source_str);
+                }
                 return;
             }
 
             String validation_error = validate_state_packet_header(&state_pkt, len);
             if (!validation_error.isEmpty()) {
+                char source_str[16];
+                tf_ip4addr_ntoa(&source_addr, source_str, sizeof(source_str));
+
                 logger.printfln("Received state packet from %s (%s) (%i bytes) failed validation: %s",
                                 charge_manager.get_charger_name(charger_idx),
-                                inet_ntoa(source_addr.sin_addr),
+                                source_str,
                                 len,
                                 validation_error.c_str());
-                manager_error_callback(charger_idx, CM_NETWORKING_ERROR_INVALID_HEADER);
+                if (manager_error_callback) {
+                    manager_error_callback(charger_idx, CM_NETWORKING_ERROR_INVALID_HEADER);
+                }
                 return;
             }
 
             if (seq_num_invalid(state_pkt.header.seq_num, last_seen_seq_num[charger_idx])) {
+                char source_str[16];
+                tf_ip4addr_ntoa(&source_addr, source_str, sizeof(source_str));
+
                 logger.printfln("Received stale (out of order?) state packet from %s (%s). Last seen seq_num is %u, Received seq_num is %u",
                                 charge_manager.get_charger_name(charger_idx),
-                                inet_ntoa(source_addr.sin_addr),
+                                source_str,
                                 last_seen_seq_num[charger_idx],
                                 state_pkt.header.seq_num);
                 return;
@@ -328,28 +341,34 @@ void CMNetworking::register_manager(const char *const *const hosts,
             last_seen_seq_num[charger_idx] = state_pkt.header.seq_num;
 
             if (!CM_STATE_FLAGS_MANAGED_IS_SET(state_pkt.v1.state_flags)) {
-                manager_error_callback(charger_idx, CM_NETWORKING_ERROR_NOT_MANAGED);
+                char source_str[16];
+                tf_ip4addr_ntoa(&source_addr, source_str, sizeof(source_str));
+
                 logger.printfln("%s (%s) reports managed is not activated!",
                     charge_manager.get_charger_name(charger_idx),
-                    inet_ntoa(source_addr.sin_addr));
+                    source_str);
+                if (manager_error_callback) {
+                    manager_error_callback(charger_idx, CM_NETWORKING_ERROR_NOT_MANAGED);
+                }
                 return;
             }
 
-            manager_callback(charger_idx, &state_pkt.v1, state_pkt.header.version >= 2 ? &state_pkt.v2 : nullptr, state_pkt.header.version >= 3 ? &state_pkt.v3 : nullptr);
+#if MODULE_EM_PHASE_SWITCHER_AVAILABLE()
+            em_phase_switcher.filter_state_packet(charger_idx, &state_pkt);
+#endif
+
+            if (manager_callback) {
+                manager_callback(charger_idx, &state_pkt.v1, state_pkt.header.version >= 2 ? &state_pkt.v2 : nullptr, state_pkt.header.version >= 3 ? &state_pkt.v3 : nullptr);
+            } else {
+                this->send_state_packet(&state_pkt);
+            }
         }
-    }, 100, 100);
+    }, 50_ms, 50_ms);
 }
 
 bool CMNetworking::send_manager_update(uint8_t client_id, uint16_t allocated_current, bool cp_disconnect_requested, int8_t allocated_phases)
 {
     static uint16_t next_seq_num = 1;
-
-    if (manager_sock < 0)
-        return true;
-
-    resolve_hostname(client_id);
-    if (!is_resolved(client_id))
-        return true;
 
     struct cm_command_packet command_pkt;
     command_pkt.header.magic = CM_PACKET_MAGIC;
@@ -363,7 +382,23 @@ bool CMNetworking::send_manager_update(uint8_t client_id, uint16_t allocated_cur
 
     command_pkt.v2.allocated_phases = allocated_phases;
 
-    int err = sendto(manager_sock, &command_pkt, sizeof(command_pkt), MSG_DONTWAIT, (sockaddr *)&dest_addrs[client_id], sizeof(dest_addrs[client_id]));
+    return send_command_packet(client_id, &command_pkt);
+}
+
+bool CMNetworking::send_command_packet(uint8_t client_id, cm_command_packet *command_pkt)
+{
+    if (manager_sock < 0)
+        return true;
+
+    resolve_hostname(client_id);
+    if (!is_resolved(client_id))
+        return true;
+
+#if MODULE_EM_PHASE_SWITCHER_AVAILABLE()
+    em_phase_switcher.filter_command_packet(client_id, command_pkt);
+#endif
+
+    int err = sendto(manager_sock, command_pkt, sizeof(decltype(*command_pkt)), MSG_DONTWAIT, (sockaddr *)&dest_addrs[client_id], sizeof(dest_addrs[client_id]));
 
     if (err < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK)
@@ -374,7 +409,9 @@ bool CMNetworking::send_manager_update(uint8_t client_id, uint16_t allocated_cur
             return true;
         }
 
-        logger.printfln("Failed to send command: %s (%d)", strerror(errno), errno);
+        if (errno == EHOSTUNREACH && network.is_connected())
+            logger.printfln("Failed to send command: %s (%d)", strerror(errno), errno);
+
         return true;
     }
     if (err != CM_COMMAND_PACKET_LENGTH) {
@@ -384,7 +421,7 @@ bool CMNetworking::send_manager_update(uint8_t client_id, uint16_t allocated_cur
     return true;
 }
 
-void CMNetworking::register_client(std::function<void(uint16_t, bool, int8_t)> client_callback)
+void CMNetworking::register_client(const std::function<void(uint16_t, bool, int8_t)> &client_callback)
 {
     client_sock = create_socket(CHARGE_MANAGEMENT_PORT, false);
 
@@ -399,9 +436,9 @@ void CMNetworking::register_client(std::function<void(uint16_t, bool, int8_t)> c
 
         struct cm_command_packet command_pkt;
 
-        struct sockaddr_storage temp_addr;
-        socklen_t socklen = sizeof(temp_addr);
-        int len = recvfrom(client_sock, &command_pkt, sizeof(command_pkt), 0, (struct sockaddr *)&temp_addr, &socklen);
+        struct sockaddr_storage from_addr;
+        socklen_t socklen = sizeof(from_addr);
+        int len = recvfrom(client_sock, &command_pkt, sizeof(command_pkt), 0, (struct sockaddr *)&from_addr, &socklen);
 
         if (len < 0) {
             if (errno != EAGAIN && errno != EWOULDBLOCK)
@@ -417,10 +454,9 @@ void CMNetworking::register_client(std::function<void(uint16_t, bool, int8_t)> c
 
         String validation_error = validate_command_packet_header(&command_pkt, len);
         if (!validation_error.isEmpty()) {
-            logger.printfln("Received command packet from %s (%i bytes) failed validation: %s",
-                inet_ntoa(((struct sockaddr_in*)&temp_addr)->sin_addr),
-                len,
-                validation_error.c_str());
+            char from_str[16];
+            tf_ip4addr_ntoa(&from_addr, from_str, sizeof(from_str));
+            logger.printfln("Received command packet from %s (%i bytes) failed validation: %s", from_str, len, validation_error.c_str());
             return;
         }
 
@@ -431,23 +467,63 @@ void CMNetworking::register_client(std::function<void(uint16_t, bool, int8_t)> c
 
         last_seen_seq_num = command_pkt.header.seq_num;
 
-        if (manager_addr_valid && memcmp(&manager_addr, &temp_addr, manager_addr.s2_len) != 0) {
+        if (memcmp(&this->manager_addr, &from_addr, from_addr.s2_len) != 0) {
             char manager_str[16];
-            char temp_str[16];
-            inet_ntoa_r(((struct sockaddr_in*)&manager_addr)->sin_addr, manager_str, sizeof(manager_str));
-            inet_ntoa_r(((struct sockaddr_in*)&temp_addr   )->sin_addr, temp_str,    sizeof(temp_str   ));
-            logger.printfln("Warning: Manager address changed from %s to %s.", manager_str, temp_str);
+            char from_str[16];
+            tf_ip4addr_ntoa(&this->manager_addr, manager_str, sizeof(manager_str));
+            tf_ip4addr_ntoa(&from_addr,          from_str,    sizeof(from_str   ));
+
+            if (deadline_elapsed(this->last_manager_addr_change + 1_m)) {
+                if (this->manager_addr.s2_len > 0) {
+                    logger.printfln("Manager address changed from %s to %s", manager_str, from_str);
+                }
+                this->manager_addr_valid = true;
+            } else {
+                logger.printfln("Rejecting conflicting manager address change from %s to %s", manager_str, from_str);
+                this->manager_addr_valid = false;
+            }
+
+            memcpy(&this->manager_addr, &from_addr, from_addr.s2_len);
+            this->last_manager_addr_change = now_us();
+
+            if (!this->manager_addr_valid) {
+                // Block charging
+                if (client_callback) {
+                    client_callback(0, false, 0);
+                }
+
+                return;
+            }
+        } else { // Manager address unchanged
+            if (!this->manager_addr_valid && this->manager_addr.s2_len > 0) {
+                if (deadline_elapsed(this->last_manager_addr_change + 1_m)) {
+                    char manager_str[16];
+                    tf_ip4addr_ntoa(&this->manager_addr, manager_str, sizeof(manager_str));
+
+                    logger.printfln("Accepting manager address %s", manager_str);
+                    this->manager_addr_valid = true;
+                } else {
+                    // Block charging
+                    if (client_callback) {
+                        client_callback(0, false, 0);
+                    }
+
+                    return;
+                }
+            }
         }
 
         last_successful_recv = millis();
-        manager_addr = temp_addr;
-        manager_addr_valid = true;
 
-        client_callback(command_pkt.v1.allocated_current,
-                        CM_COMMAND_FLAGS_CPDISC_IS_SET(command_pkt.v1.command_flags),
-                        command_pkt.header.version >= 2 ? command_pkt.v2.allocated_phases : 0);
+        if (client_callback) {
+            client_callback(command_pkt.v1.allocated_current,
+                            CM_COMMAND_FLAGS_CPDISC_IS_SET(command_pkt.v1.command_flags),
+                            command_pkt.header.version >= 2 ? command_pkt.v2.allocated_phases : 0);
+        } else {
+            this->send_command_packet(0, &command_pkt);
+        }
         //logger.printfln("Received command packet. Allocated current is %u", command_pkt.v1.allocated_current);
-    }, 100, 100);
+    }, 100_ms, 100_ms);
 }
 
 bool CMNetworking::send_client_update(uint32_t esp32_uid,
@@ -456,7 +532,7 @@ bool CMNetworking::send_client_update(uint32_t esp32_uid,
                                       uint32_t time_since_state_change,
                                       uint8_t error_state,
                                       uint32_t uptime,
-                                      uint32_t charging_time,
+                                      uint32_t car_stopped_charging,
                                       uint16_t allowed_charging_current,
                                       uint16_t supported_current,
                                       bool managed,
@@ -496,7 +572,7 @@ bool CMNetworking::send_client_update(uint32_t esp32_uid,
 
     state_pkt.v1.esp32_uid = esp32_uid;
     state_pkt.v1.evse_uptime = uptime;
-    state_pkt.v1.charging_time = charging_time;
+    state_pkt.v1.car_stopped_charging = car_stopped_charging;
     state_pkt.v1.allowed_charging_current = allowed_charging_current;
     state_pkt.v1.supported_current = supported_current;
     state_pkt.v1.iec61851_state = iec61851_state;
@@ -519,7 +595,7 @@ bool CMNetworking::send_client_update(uint32_t esp32_uid,
 
     if (has_meter_values) {
         auto meter_all_values = api.getState("meter/all_values");
-        for (int i = 0; i < 3; i++) {
+        for (size_t i = 0; i < 3; i++) {
             state_pkt.v1.line_voltages[i]      = meter_all_values->get(i + METER_ALL_VALUES_LINE_TO_NEUTRAL_VOLTS_L1)->asFloat();
             state_pkt.v1.line_currents[i]      = meter_all_values->get(i + METER_ALL_VALUES_CURRENT_L1_A            )->asFloat();
             state_pkt.v1.line_power_factors[i] = meter_all_values->get(i + METER_ALL_VALUES_POWER_FACTOR_L1         )->asFloat();
@@ -548,7 +624,17 @@ bool CMNetworking::send_client_update(uint32_t esp32_uid,
     state_pkt.v3.phases = phases;
     state_pkt.v3.phases |= can_switch_phases_now << CM_STATE_V3_CAN_PHASE_SWITCH_BIT_POS;
 
-    int err = sendto(client_sock, &state_pkt, sizeof(state_pkt), 0, (sockaddr *)&manager_addr, sizeof(manager_addr));
+    return send_state_packet(&state_pkt);
+}
+
+bool CMNetworking::send_state_packet(const cm_state_packet *state_pkt)
+{
+    if (!manager_addr_valid) {
+        //logger.printfln("Manager addr not valid.");
+        return false;
+    }
+
+    int err = sendto(client_sock, state_pkt, sizeof(decltype(*state_pkt)), 0, (sockaddr *)&manager_addr, sizeof(manager_addr));
     if (err < 0) {
         if (errno != EAGAIN && errno != EWOULDBLOCK)
             logger.printfln("Failed to send state: %s (%d)", strerror(errno), errno);

@@ -36,10 +36,12 @@
 class MeterSunSpec final : protected GenericModbusTCPClient, public IMeter
 {
 public:
-    MeterSunSpec(uint32_t slot_, Config *state_, Config *errors_, ModbusTCP *mb_) : GenericModbusTCPClient(mb_), slot(slot_), state(state_), errors(errors_) {}
+    MeterSunSpec(uint32_t slot_, Config *state_, Config *errors_, TFModbusTCPClientPool *pool_) :
+        GenericModbusTCPClient("meters_sun_spec", pool_), slot(slot_), state(state_), errors(errors_) {}
 
     [[gnu::const]] MeterClassID get_class() const override;
     void setup(const Config &ephemeral_config) override;
+    void register_events() override;
     void pre_reboot() override;
 
     bool supports_power()         override {return true;}

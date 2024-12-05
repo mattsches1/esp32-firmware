@@ -284,10 +284,10 @@ class PresetSelector extends Component<PresetSelectorProps, PresetSelectorState>
 
                     if (this.props.config[1].value_ids.toString() !== this.presets[parseInt(this.state.preset)].toString()) {
                         if (!await util.async_modal_ref.current.show({
-                            title: __("meters_api.content.override_modal_title"),
-                            body: __("meters_api.content.override_modal_body"),
-                            yes_text: __("meters_api.content.override_modal_confirm"),
-                            no_text: __("meters_api.content.override_modal_cancel"),
+                            title: () => __("meters_api.content.override_modal_title"),
+                            body: () => __("meters_api.content.override_modal_body"),
+                            yes_text: () => __("meters_api.content.override_modal_confirm"),
+                            no_text: () => __("meters_api.content.override_modal_cancel"),
                             yes_variant: "danger",
                             no_variant: "secondary",
                             nestingDepth: 2
@@ -307,7 +307,7 @@ class PresetSelector extends Component<PresetSelectorProps, PresetSelectorState>
 export function init() {
     return {
         [MeterClassID.API]: {
-            name: __("meters_api.content.meter_class"),
+            name: () => __("meters_api.content.meter_class"),
             new_config: () => [MeterClassID.API, {display_name: "", value_ids: new Array<number>()}] as MeterConfig,
             clone_config: (config: MeterConfig) => [config[0], {...config[1]}] as MeterConfig,
             get_edit_children: (config: APIMetersConfig, on_config: (config: APIMetersConfig) => void): ComponentChildren => {

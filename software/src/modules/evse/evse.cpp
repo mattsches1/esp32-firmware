@@ -20,14 +20,13 @@
 #include "evse.h"
 
 #include "event_log_prefix.h"
-#include "module_dependencies.h"
 #include "bindings/errors.h"
 #include "bindings/hal_common.h"
 #include "tools.h"
 #include "string_builder.h"
 #include "evse_bricklet_firmware_bin.embedded.h"
 
-#include "module_available.h"
+#include "module_dependencies.h"
 
 EVSE::EVSE() : DeviceModule(evse_bricklet_firmware_bin_data,
                             evse_bricklet_firmware_bin_length,
@@ -97,18 +96,18 @@ void EVSE::pre_setup()
         {"adc_values", Config::Array({
                 Config::Uint16(0),
                 Config::Uint16(0)
-            }, new Config{Config::Uint16(0)}, 2, 2, Config::type_id<Config::ConfUint>())
+            }, Config::get_prototype_uint16_0(), 2, 2, Config::type_id<Config::ConfUint>())
         },
         {"voltages", Config::Array({
                 Config::Int16(0),
                 Config::Int16(0),
                 Config::Int16(0),
-            }, new Config{Config::Int16(0)}, 3, 3, Config::type_id<Config::ConfInt>())
+            }, Config::get_prototype_int16_0(), 3, 3, Config::type_id<Config::ConfInt>())
         },
         {"resistances", Config::Array({
                 Config::Uint32(0),
                 Config::Uint32(0),
-            }, new Config{Config::Uint32(0)}, 2, 2, Config::type_id<Config::ConfUint>())
+            }, Config::get_prototype_uint32_0(), 2, 2, Config::type_id<Config::ConfUint>())
         },
         {"gpio", Config::Array({
             Config::Bool(false),
@@ -116,7 +115,7 @@ void EVSE::pre_setup()
             Config::Bool(false),
             Config::Bool(false),
             Config::Bool(false),
-            }, new Config{Config::Bool(false)}, 5, 5, Config::type_id<Config::ConfBool>())},
+            }, Config::get_prototype_bool_false(), 5, 5, Config::type_id<Config::ConfBool>())},
         {"charging_time", Config::Uint32(0)},
         {"time_since_state_change", Config::Uint32(0)},
         {"uptime", Config::Uint32(0)}
@@ -143,14 +142,14 @@ void EVSE::pre_setup()
                 Config::Int16(0),
                 Config::Int16(0),
                 Config::Int16(0),
-            }, new Config{Config::Int16(0)}, 14, 14, Config::type_id<Config::ConfInt>())}
+            }, Config::get_prototype_int16_0(), 14, 14, Config::type_id<Config::ConfInt>())}
     });
 }
 
 void EVSE::post_register_urls()
 {
     api.addState("evse/user_calibration", &user_calibration);
-    api.addCommand("evse/user_calibration_update", &user_calibration, {}, [this](){
+    api.addCommand("evse/user_calibration_update", &user_calibration, {}, [this](String &/*errmsg*/) {
         int16_t resistance_880[14];
         user_calibration.get("resistance_880")->fillInt16Array(resistance_880, ARRAY_SIZE(resistance_880));
 
@@ -246,7 +245,7 @@ static const char *debug_header =
     "LL_STATE,"
     "led_state,"
     "cp_pwm_duty_cycle,"
-    "charging_time,"
+    "car_stopped_charging,"
     "time_since_state_change,"
     "uptime,"
     "ADC_VALUES,"
@@ -323,7 +322,7 @@ void EVSE::get_debug_line(StringBuilder *sb)
     int16_t voltages[3];
     uint32_t resistances[2];
     bool gpio[5];
-    uint32_t charging_time;
+    bool car_stopped_charging;
     uint32_t time_since_state_change;
     uint32_t uptime;
 
@@ -348,7 +347,7 @@ void EVSE::get_debug_line(StringBuilder *sb)
                                     voltages,
                                     resistances,
                                     gpio,
-                                    &charging_time,
+                                    &car_stopped_charging,
                                     &time_since_state_change,
                                     &uptime,
                                     // We don't care about the led and button state here. TODO: do we really not?
@@ -398,7 +397,7 @@ void EVSE::get_debug_line(StringBuilder *sb)
 
              led_state,
              cp_pwm_duty_cycle,
-             charging_time,
+             car_stopped_charging,
              time_since_state_change,
              uptime,
 
@@ -472,7 +471,7 @@ void EVSE::update_all_data()
     int16_t voltages[3];
     uint32_t resistances[2];
     bool gpio[5];
-    uint32_t charging_time;
+    bool car_stopped_charging;
     uint32_t time_since_state_change;
     uint32_t uptime;
 
@@ -505,7 +504,7 @@ void EVSE::update_all_data()
                                     voltages,
                                     resistances,
                                     gpio,
-                                    &charging_time,
+                                    &car_stopped_charging,
                                     &time_since_state_change,
                                     &uptime,
                                     &indication,
@@ -606,23 +605,23 @@ void EVSE::update_all_data()
     evse_common.low_level_state.get("led_state")->updateUint(led_state);
     evse_common.low_level_state.get("cp_pwm_duty_cycle")->updateUint(cp_pwm_duty_cycle);
 
-    for (int i = 0; i < ARRAY_SIZE(adc_values); ++i)
+    for (size_t i = 0; i < ARRAY_SIZE(adc_values); ++i)
         evse_common.low_level_state.get("adc_values")->get(i)->updateUint(adc_values[i]);
 
-    for (int i = 0; i < ARRAY_SIZE(voltages); ++i)
+    for (size_t i = 0; i < ARRAY_SIZE(voltages); ++i)
         evse_common.low_level_state.get("voltages")->get(i)->updateInt(voltages[i]);
 
-    for (int i = 0; i < ARRAY_SIZE(resistances); ++i)
+    for (size_t i = 0; i < ARRAY_SIZE(resistances); ++i)
         evse_common.low_level_state.get("resistances")->get(i)->updateUint(resistances[i]);
 
-    for (int i = 0; i < ARRAY_SIZE(gpio); ++i)
+    for (size_t i = 0; i < ARRAY_SIZE(gpio); ++i)
         evse_common.low_level_state.get("gpio")->get(i)->updateBool(gpio[i]);
 
-    evse_common.low_level_state.get("charging_time")->updateUint(charging_time);
+    evse_common.low_level_state.get("charging_time")->updateUint(car_stopped_charging);
     evse_common.low_level_state.get("time_since_state_change")->updateUint(time_since_state_change);
     evse_common.low_level_state.get("uptime")->updateUint(uptime);
 
-    for (int i = 0; i < CHARGING_SLOT_COUNT; ++i) {
+    for (size_t i = 0; i < CHARGING_SLOT_COUNT; ++i) {
         evse_common.slots.get(i)->get("max_current")->updateUint(max_current[i]);
         evse_common.slots.get(i)->get("active")->updateBool(SLOT_ACTIVE(active_and_clear_on_disconnect[i]));
         evse_common.slots.get(i)->get("clear_on_disconnect")->updateBool(SLOT_CLEAR_ON_DISCONNECT(active_and_clear_on_disconnect[i]));
@@ -651,11 +650,7 @@ void EVSE::update_all_data()
     evse_common.modbus_enabled.get("enabled")->updateBool(SLOT_ACTIVE(active_and_clear_on_disconnect[CHARGING_SLOT_MODBUS_TCP]));
     evse_common.ocpp_enabled.get("enabled")->updateBool(SLOT_ACTIVE(active_and_clear_on_disconnect[CHARGING_SLOT_OCPP]));
 
-    if (evse_common.external_enabled.get("enabled")->updateBool(SLOT_ACTIVE(active_and_clear_on_disconnect[CHARGING_SLOT_EXTERNAL]))) {
-#if MODULE_AUTOMATION_AVAILABLE()
-        automation.set_enabled(AutomationTriggerID::EVSEExternalCurrentWd, evse_common.external_enabled.get("enabled")->asBool());
-#endif
-    }
+    evse_common.external_enabled.get("enabled")->updateBool(SLOT_ACTIVE(active_and_clear_on_disconnect[CHARGING_SLOT_EXTERNAL]));
 
     evse_common.external_clear_on_disconnect.get("clear_on_disconnect")->updateBool(SLOT_CLEAR_ON_DISCONNECT(active_and_clear_on_disconnect[CHARGING_SLOT_EXTERNAL]));
 
@@ -676,7 +671,7 @@ void EVSE::update_all_data()
     user_calibration.get("voltage_div")->updateInt(voltage_div);
     user_calibration.get("resistance_2700")->updateInt(resistance_2700);
 
-    for (int i = 0; i < ARRAY_SIZE(resistance_880); ++i)
+    for (size_t i = 0; i < ARRAY_SIZE(resistance_880); ++i)
         user_calibration.get("resistance_880")->get(i)->updateInt(resistance_880[i]);
 
 #if MODULE_WATCHDOG_AVAILABLE()

@@ -30,7 +30,10 @@ import { NavbarItem } from "../../ts/components/navbar_item";
 import { Monitor } from "react-feather";
 import { Collapse } from "react-bootstrap";
 import { InputSelect } from "../../ts/components/input_select";
-import { FormSeparator } from "src/ts/components/form_separator";
+import { FormSeparator } from "../../ts/components/form_separator";
+import { MeterValueID } from "../meters/meter_value_id";
+import { get_noninternal_meter_slots, NoninternalMeterSelector } from "../power_manager/main";
+import { get_managed_chargers } from "../charge_manager/chargers";
 
 const FRONT_PANEL_TILES = 6;
 
@@ -40,8 +43,7 @@ export function FrontPanelNavbar() {
             name="front_panel"
             title={__("front_panel.navbar.front_panel")}
             hidden={false} // Module/Feature-Check
-            symbol={<Monitor/>
-            }
+            symbol={<Monitor/>}
         />
     );
 }
@@ -49,7 +51,7 @@ export function FrontPanelNavbar() {
 type FrontPanelConfig = API.getType["front_panel/config"];
 
 export class FrontPanel extends ConfigComponent<"front_panel/config", {}> {
-    static options_tile: [string, string][] = [
+    static options_tile(): [string, string][] { return [
         ["0", __("front_panel.content.empty_tile")],
         ["1", __("front_panel.content.wallbox")],
         ["2", __("front_panel.content.charge_management")],
@@ -58,31 +60,60 @@ export class FrontPanel extends ConfigComponent<"front_panel/config", {}> {
         ["5", __("front_panel.content.solar_forecast")],
         ["6", __("front_panel.content.energy_manager_status")],
         ["7", __("front_panel.content.heating_status")],
-    ]
+    ]}
 
-    static options_wallbox: [string, string][] = [...Array(32).keys()].map((i) => [
+    static options_wallbox_unknown(): [string, string][] { return [...Array(32).keys()].map((i) => [
         i.toString(),
-        __("front_panel.content.wallbox") + " " + i
-    ]);
+        __("front_panel.content.wallbox") + " " + i + " (" + __("front_panel.content.unconfigured") + ")"
+    ])}
 
-    static options_meter: [string, string][] = [...Array(7).keys()].map((i) => [
-        i.toString(), __("front_panel.content.meter") + " " + i
-    ]);
+    static options_wallbox(): [string, string][] {
+        const wallboxes = get_managed_chargers();
+        let wallbox_slots = FrontPanel.options_wallbox_unknown();
 
-    static options_day_ahead_prices: [string, string][] = [
+        wallboxes.forEach((wallbox) => {
+            const index = wallbox_slots.findIndex(([id]) => id === wallbox[0]);
+            if (index !== -1) {
+                wallbox_slots[index] = wallbox;
+            }
+        });
+
+        return wallbox_slots;
+    }
+
+
+    static options_meter_unkown(): [string, string][] { return [...Array(7).keys()].map((i) => [
+        i.toString(), __("front_panel.content.meter") + " " + i + " (" + __("front_panel.content.unconfigured") + ")"
+    ])}
+
+    static options_meter(): [string, string][] {
+        const active_meter_slots = get_noninternal_meter_slots([MeterValueID.PowerActiveLSumImExDiff], NoninternalMeterSelector.AllValues, __("power_manager.content.meter_slot_grid_power_missing_value"));
+        let meter_slots = FrontPanel.options_meter_unkown();
+
+        active_meter_slots.forEach((slot) => {
+            const index = meter_slots.findIndex(([id]) => id === slot[0]);
+            if (index !== -1) {
+                meter_slots[index] = slot;
+            }
+        });
+
+        return meter_slots;
+    }
+
+    static options_day_ahead_prices(): [string, string][] { return [
         ["0", __("front_panel.content.current_electricity_price")],
         ["1", __("front_panel.content.average_price_today")],
         ["2", __("front_panel.content.average_price_tomorrow")],
-    ]
+    ]}
 
-    static options_solar_forecast: [string, string][] = [
+    static options_solar_forecast(): [string, string][] { return [
         ["0", __("front_panel.content.pv_yield_forecast_today")],
         ["1", __("front_panel.content.pv_yield_forecast_tomorrow")],
-    ]
+    ]}
 
     constructor() {
         super('front_panel/config',
-              __("front_panel.script.save_failed"));
+              () => __("front_panel.script.save_failed"));
 /*
         for (let tile_index = 0; tile_index < FRONT_PANEL_TILES; tile_index++) {
             util.addApiEventListener_unchecked(`front_panel/tiles/${tile_index}/config`, () => {
@@ -145,7 +176,7 @@ export class FrontPanel extends ConfigComponent<"front_panel/config", {}> {
                 <div class="col-md-12">
                     <div class="input-group">
                         <div class="input-group-prepend">
-                            <span class="input-group-text">Einstellung</span>
+                            <span class="input-group-text">{__("front_panel.content.setting")}</span>
                         </div>
                         <InputSelect
                             className="front-panel-input-group-prepend"
@@ -183,10 +214,10 @@ export class FrontPanel extends ConfigComponent<"front_panel/config", {}> {
             <SubPage name="front_panel">
                 <ConfigForm id="front_panel_config_form"
                             title={__("front_panel.content.front_panel")}
-                            isModified={this.isModified()}
+                            isModified={false}
                             isDirty={this.isDirty()}
                             onSave={this.save}
-                            onReset={undefined}
+                            onReset={this.reset}
                             onDirtyChange={this.setDirty}>
                     <FormRow label={__("front_panel.content.front_panel")} label_muted={__("front_panel.content.front_panel_muted")}>
                         <Switch desc={__("front_panel.content.front_panel_desc")}
@@ -201,7 +232,7 @@ export class FrontPanel extends ConfigComponent<"front_panel/config", {}> {
                                     {tile_index != 0 && <FormSeparator first={true}/>}
                                     <FormRow symbol={get_tile_symbol(tile_index)} label={__("front_panel.content.tile") + " " + (tile_index+1)}>
                                         <InputSelect
-                                            items={FrontPanel.options_tile}
+                                            items={FrontPanel.options_tile()}
                                             value={state.tiles[tile_index][0]}
                                             onValue={(v) => {
                                                 let tiles = state.tiles;
@@ -210,10 +241,10 @@ export class FrontPanel extends ConfigComponent<"front_panel/config", {}> {
                                             }
                                         />
                                     </FormRow>
-                                    {state.tiles[tile_index][0] === 1 && (this.get_tile_config(tile_index, FrontPanel.options_wallbox))}
-                                    {state.tiles[tile_index][0] === 3 && (this.get_tile_config(tile_index, FrontPanel.options_meter))}
-                                    {state.tiles[tile_index][0] === 4 && (this.get_tile_config(tile_index, FrontPanel.options_day_ahead_prices))}
-                                    {state.tiles[tile_index][0] === 5 && (this.get_tile_config(tile_index, FrontPanel.options_solar_forecast))}
+                                    {state.tiles[tile_index][0] === 1 && (this.get_tile_config(tile_index, FrontPanel.options_wallbox()))}
+                                    {state.tiles[tile_index][0] === 3 && (this.get_tile_config(tile_index, FrontPanel.options_meter()))}
+                                    {state.tiles[tile_index][0] === 4 && (this.get_tile_config(tile_index, FrontPanel.options_day_ahead_prices()))}
+                                    {state.tiles[tile_index][0] === 5 && (this.get_tile_config(tile_index, FrontPanel.options_solar_forecast()))}
                                 </div>
                             })}
                         </div>

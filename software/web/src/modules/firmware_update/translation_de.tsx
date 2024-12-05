@@ -64,7 +64,7 @@ let x = {
             "install_state_14": "Signatur-Initialisierung fehlgeschlagen",
             "install_state_15": "Signatur-Berechnung fehlgeschlagen",
             "install_state_16": "Signatur-Verifikation fehlgeschlagen",
-            "install_state_17": "Es kann keine Aktualisierung vorgenommen werden, während ein Fahrzeug verbunden ist.",
+            "install_state_17": "Während ein Fahrzeug verbunden ist, kann keine Aktualisierung vorgenommen werden",
             "install_state_18": "Firmware-Info-Seite ist zu groß",
             "install_state_19": null,
             "install_state_20": "Firmware-Datei ist beschädigt (Checksummenfehler)",
@@ -73,6 +73,7 @@ let x = {
             "install_state_24": "Starte neu",
             "install_state_25": "Teil-Download aufgetreten",
             "install_state_26": "Installation wird nicht unterstüzt",
+            "install_state_27": "Größe der Firmware-Datei ist unbekannt",
             "build_time": /*SFN*/(build_time: string) => `erstellt ${build_time}`/*NF*/,
             "publisher": /*SFN*/(publisher: string) => `von ${publisher}`/*NF*/,
             "install_failed": "Installation fehlgeschlagen"

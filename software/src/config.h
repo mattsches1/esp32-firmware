@@ -31,10 +31,15 @@
 #include "tools.h"
 #include "config/owned_config.h"
 
+struct Config;
+
+[[gnu::noreturn]] void config_main_thread_assertion_fail();
+[[gnu::noreturn]] void config_abort_on_type_error(const char *fn_name, const Config *config_is, const char *t_name_wanted, const String *content_new = nullptr);
+
 #ifdef DEBUG_FS_ENABLE
 #define ASSERT_MAIN_THREAD() do { \
         if (!running_in_main_task()) { \
-            esp_system_abort("Accessing the config is only allowed in the main thread!"); \
+            config_main_thread_assertion_fail(); \
         } \
     } while (0)
 #else
@@ -85,7 +90,9 @@ struct Config {
         const CoolString *getVal() const;
         const Slot *getSlot() const;
 
-        ConfString(const CoolString &val, uint16_t min, uint16_t max);
+        ConfString(const char *val, uint16_t min, uint16_t max);
+        ConfString(const String &val, uint16_t min, uint16_t max);
+        ConfString(String &&val, uint16_t min, uint16_t max);
         ConfString(const ConfString &cpy);
         ~ConfString();
 
@@ -205,8 +212,8 @@ struct Config {
         static Slot *allocSlotBuf(size_t elements);
         static void freeSlotBuf(Slot *buf);
 
-        Config *get(uint16_t i);
-        const Config *get(uint16_t i) const;
+        Config *get(size_t i);
+        const Config *get(size_t i) const;
         std::vector<Config> *getVal();
         const std::vector<Config> *getVal() const;
         const Slot *getSlot() const;
@@ -234,8 +241,8 @@ struct Config {
         static Slot *allocSlotBuf(size_t elements);
         static void freeSlotBuf(Slot *buf);
 
-        Config *get(const String &s);
-        const Config *get(const String &s) const;
+        Config *get(const char *s, size_t s_len);
+        const Config *get(const char *s, size_t s_len) const;
         const Slot *getSlot() const;
         Slot *getSlot();
 
@@ -462,7 +469,15 @@ struct Config {
 
     bool is_null() const;
 
+    static Config Str(const char *s,
+                      uint16_t minChars,
+                      uint16_t maxChars);
+
     static Config Str(const String &s,
+                      uint16_t minChars,
+                      uint16_t maxChars);
+
+    static Config Str(String &&s,
                       uint16_t minChars,
                       uint16_t maxChars);
 
@@ -522,7 +537,7 @@ public:
 
     static ConfigRoot *Confirm();
     // Just for convenience.
-    static String ConfirmKey();
+    static const char *ConfirmKey() {return Config::confirm_key;}
     static constexpr const char *confirm_key = "do_i_know_what_i_am_doing";
 
     static Config Uint8(uint8_t u);
@@ -540,17 +555,17 @@ public:
     class Wrap
     {
         public:
-            Wrap(Config *_conf);
+            inline Wrap(Config *_conf) {conf = _conf;}
 
-            Config *operator->();
+            inline Config *operator->() {return conf;}
 
-            explicit operator Config*();
+            inline explicit operator Config*() {return conf;}
 
             // Allowing to call begin and end directly on
             // the wrapper makes it easier to use
             // range-based for loops.
-            std::vector<Config>::iterator begin();
-            std::vector<Config>::iterator end();
+            inline std::vector<Config>::iterator begin() {return conf->begin();}
+            inline std::vector<Config>::iterator end()   {return conf->end();  }
 
         private:
             Config *conf;
@@ -560,14 +575,14 @@ public:
     class ConstWrap
     {
         public:
-            ConstWrap(const Config *_conf);
+            inline ConstWrap(const Config *_conf) {conf = _conf;}
 
-            const Config *operator->() const;
+            inline const Config *operator->() const {return conf;}
 
-            explicit operator const Config*() const;
+            inline explicit operator const Config*() const {return conf;}
 
-            std::vector<Config>::const_iterator begin() const;
-            std::vector<Config>::const_iterator end() const;
+            inline std::vector<Config>::const_iterator begin() const {return conf->begin();}
+            inline std::vector<Config>::const_iterator end()   const {return conf->end();  }
 
         private:
             const Config *conf;
@@ -575,21 +590,29 @@ public:
 
     // for ConfUnion
     Wrap get();
-
-    // for ConfObject
-    Wrap get(const String &s);
-
-    // for ConfArray
-    Wrap get(uint16_t i);
-
-    // for ConfUnion
     const ConstWrap get() const;
 
     // for ConfObject
+    Wrap get(const char *s, size_t s_len = 0);
+    const ConstWrap get(const char *s, size_t s_len = 0) const;
+    Wrap get(const String &s);
     const ConstWrap get(const String &s) const;
 
     // for ConfArray
-    const ConstWrap get(uint16_t i) const;
+               Wrap get(int8_t )       = delete;
+    const ConstWrap get(int8_t ) const = delete;
+               Wrap get(int16_t)       = delete;
+    const ConstWrap get(int16_t) const = delete;
+               Wrap get(long   )       = delete;
+    const ConstWrap get(long   ) const = delete;
+    inline            Wrap get(int      i)       {return get(static_cast<size_t>(i));} // These casts should be safe, as negative values become huge positive values,
+    inline const ConstWrap get(int      i) const {return get(static_cast<size_t>(i));} // and the nested get() performs an array bounds check.
+    inline            Wrap get(uint8_t  i)       {return get(static_cast<size_t>(i));}
+    inline const ConstWrap get(uint8_t  i) const {return get(static_cast<size_t>(i));}
+    inline            Wrap get(uint16_t i)       {return get(static_cast<size_t>(i));}
+    inline const ConstWrap get(uint16_t i) const {return get(static_cast<size_t>(i));}
+    Wrap get(size_t i);
+    const ConstWrap get(size_t i) const;
     Wrap add();
     bool removeLast();
     bool removeAll();
@@ -614,14 +637,7 @@ private:
     ConfigT *get() {
         ASSERT_MAIN_THREAD();
         if (!this->is<ConfigT>()) {
-            char *message;
-            int result = -1;
-#ifndef DEBUG_FS_ENABLE
-            result = asprintf(&message, "get: Config has wrong type. This is %s, requested is %s", this->value.getVariantName(), ConfigT::variantName);
-#else
-            result = asprintf(&message, "get: Config has wrong type. This is %s, requested is %s.\n Content is %s", this->value.getVariantName(), ConfigT::variantName, this->to_string().c_str());
-#endif
-            esp_system_abort(result < 0 ? "" : message);
+            config_abort_on_type_error("get", this, ConfigT::variantName);
         }
 
         return reinterpret_cast<ConfigT *>(&value.val);
@@ -631,14 +647,7 @@ private:
     const ConfigT *get() const {
         ASSERT_MAIN_THREAD();
         if (!this->is<ConfigT>()) {
-            char *message;
-            int result = -1;
-#ifndef DEBUG_FS_ENABLE
-            result = asprintf(&message, "get: Config has wrong type. This is %s, requested is %s", this->value.getVariantName(), ConfigT::variantName);
-#else
-            result = asprintf(&message, "get: Config has wrong type. This is %s, requested is %s.\n Content is %s", this->value.getVariantName(), ConfigT::variantName, this->to_string().c_str());
-#endif
-            esp_system_abort(result < 0 ? "" : message);
+            config_abort_on_type_error("get (const)", this, ConfigT::variantName);
         }
 
         return reinterpret_cast<const ConfigT *>(&value.val);
@@ -663,14 +672,7 @@ public:
         } else if (this->is<ConfInt>()) {
             return (T) this->asInt();
         } else {
-            char *message;
-            int result = -1;
-#ifndef DEBUG_FS_ENABLE
-            result = asprintf(&message, "asEnum: Config has wrong type. This is %s, (not a ConfInt or ConfUint)", this->value.getVariantName());
-#else
-            result = asprintf(&message, "asEnum: Config has wrong type. This is %s, (not a ConfInt or ConfUint)\nContent is %s", this->value.getVariantName(), this->to_string().c_str());
-#endif
-            esp_system_abort(result < 0 ? "" : message);
+            config_abort_on_type_error("asEnum", this, "ConfInt or ConfUint");
         }
     }
 
@@ -686,14 +688,8 @@ private:
     bool update_value(T value, const char *value_type) {
         ASSERT_MAIN_THREAD();
         if (!this->is<ConfigT>()) {
-            char *message;
-            int result = -1;
-#ifndef DEBUG_FS_ENABLE
-            result = asprintf(&message, "update_value: Config has wrong type. This is a %s. new value is a %s", this->value.getVariantName(), value_type);
-#else
-            result = asprintf(&message, "update_value: Config has wrong type. This is a %s. new value is a %s\nContent is %s\nvalue is %s", this->value.getVariantName(), value_type, this->to_string().c_str(), String(value).c_str());
-#endif
-            esp_system_abort(result < 0 ? "" : message);
+            String value_string(value);
+            config_abort_on_type_error("update_value", this, value_type, &value_string);
         }
         T *target = get<ConfigT>()->getVal();
         T old_value = *target;
@@ -722,14 +718,8 @@ public:
             return updateInt(static_cast<int32_t>(value));
         }
         else {
-            char *message;
-            int result = -1;
-#ifndef DEBUG_FS_ENABLE
-            result = asprintf(&message, "updateEnum: Config has wrong type. This is %s, (not a ConfInt or ConfUint)", this->value.getVariantName());
-#else
-            result = asprintf(&message, "updateEnum: Config has wrong type. This is %s, (not a ConfInt or ConfUint)\nContent is %s", this->value.getVariantName(), this->to_string().c_str());
-#endif
-            esp_system_abort(result < 0 ? "" : message);
+            String value_string(static_cast<uint32_t>(value));
+            config_abort_on_type_error("updateEnum", this, "ConfInt or ConfUint", &value_string);
         }
     }
 
@@ -737,14 +727,8 @@ public:
     bool changeUnionVariant(T tag) {
         ASSERT_MAIN_THREAD();
         if (!this->is<ConfUnion>()) {
-            char *message;
-            int result = -1;
-#ifndef DEBUG_FS_ENABLE
-            result = asprintf(&message, "updateUnion: Config has wrong type. This is %s, (not a ConfUnion)", this->value.getVariantName());
-#else
-            result = asprintf(&message, "updateUnion: Config has wrong type. This is %s, (not a ConfUnion)\nContent is %s", this->value.getVariantName(), this->to_string().c_str());
-#endif
-            esp_system_abort(result < 0 ? "" : message);
+            String tag_string(static_cast<int32_t>(tag));
+            config_abort_on_type_error("changeUnionVariant", this, "ConfUnion", &tag_string);
         }
 
         return get<ConfUnion>()->changeUnionVariant(static_cast<uint8_t>(tag));
@@ -762,11 +746,7 @@ private:
         size_t toWrite = std::min(confArr.getVal()->size(), elements);
 
         for (size_t i = 0; i < toWrite; ++i) {
-            const Config *entry = confArr.get(i);
-            if (!entry->is<ConfigT>()) {
-                esp_system_abort("Config entry has wrong type.");
-            }
-            arr[i] = *entry->get<ConfigT>()->getVal();
+            arr[i] = *confArr.get(i)->get<ConfigT>()->getVal();
         }
 
         return toWrite;
@@ -798,6 +778,14 @@ public:
 
     String to_string_except(const char *const *keys_to_censor, size_t keys_to_censor_len) const;
     void to_string_except(const char *const *keys_to_censor, size_t keys_to_censor_len, StringBuilder *sb) const;
+
+    [[gnu::const]] static const Config *get_prototype_float_nan();
+    [[gnu::const]] static const Config *get_prototype_int16_0();
+    [[gnu::const]] static const Config *get_prototype_int32_0();
+    [[gnu::const]] static const Config *get_prototype_uint8_0();
+    [[gnu::const]] static const Config *get_prototype_uint16_0();
+    [[gnu::const]] static const Config *get_prototype_uint32_0();
+    [[gnu::const]] static const Config *get_prototype_bool_false();
 };
 
 struct ConfigRoot : public Config {

@@ -29,15 +29,14 @@
 #include <esp_transport_ws.h>
 #include <LittleFS.h>
 
+#define TRACE_LOG_PREFIX nullptr
+
 #include "event_log_prefix.h"
 #include "module_dependencies.h"
 #include "tf_websocket_client.h"
 #include "build.h"
 #include "ocpp.h"
 #include "modules/meters/meter_defs.h"
-
-// A module can't have a dependency on itself. Manually declare it here.
-extern Ocpp ocpp;
 
 static bool feature_evse = false;
 static bool feature_meter = false;
@@ -77,7 +76,8 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base, i
 
 extern "C" esp_err_t esp_crt_bundle_attach(void *conf);
 
-tf_websocket_client_handle_t client;
+static tf_websocket_client_handle_t client;
+static bool client_running = false;
 static std::unique_ptr<String[]> auth_headers;
 static size_t auth_headers_count = 0;
 static size_t next_auth_header = 0;
@@ -154,7 +154,10 @@ void *platform_init(const char *websocket_url, BasicAuthCredentials *credentials
     client = tf_websocket_client_init(&websocket_cfg);
     tf_websocket_register_events(client, WEBSOCKET_EVENT_ANY, websocket_event_handler, (void *)client);
 
-    tf_websocket_client_start(client);
+    if (network.is_connected()) {
+        tf_websocket_client_start(client);
+        client_running = true;
+    }
 
     return client;
 }
@@ -166,12 +169,18 @@ bool platform_has_fixed_cable(int connectorId)
 
 void platform_disconnect(void *ctx)
 {
-    tf_websocket_client_close(client, pdMS_TO_TICKS(1000));
+    if (client_running) {
+        tf_websocket_client_close(client, pdMS_TO_TICKS(1000));
+        client_running = false;
+    }
 }
 
 void platform_reconnect(void *ctx)
 {
-    tf_websocket_client_stop(client);
+    if (client_running) {
+        tf_websocket_client_stop(client);
+        client_running = false;
+    }
 
     // Try next set of credentials if available.
     if (auth_headers_count > 0) {
@@ -179,7 +188,10 @@ void platform_reconnect(void *ctx)
         next_auth_header = (next_auth_header + 1) % auth_headers_count;
     }
 
-    tf_websocket_client_start(client);
+    if (network.is_connected()) {
+        tf_websocket_client_start(client);
+        client_running = true;
+    }
 }
 
 void platform_destroy(void *ctx)
@@ -224,8 +236,8 @@ uint32_t last_system_time_set_at = 0;
 
 void platform_set_system_time(void *ctx, time_t t)
 {
-   struct timeval tv{t, 0};
-   settimeofday(&tv, nullptr);
+    struct timeval tv{t, 0};
+    rtc.push_system_time(tv, Rtc::Quality::Force);
 }
 
 time_t platform_get_system_time(void *ctx)
@@ -238,12 +250,17 @@ time_t platform_get_system_time(void *ctx)
 void platform_printfln(int level, const char *fmt, ...)
 {
     va_list args;
+
+    if (level <= OCPP_LOG_LEVEL_WARN) {
+        va_start(args, fmt);
+        logger.vprintfln(fmt, args);
+        va_end(args);
+    }
+
     va_start(args, fmt);
-    logger.printfln(fmt, args);
+    logger.vtracefln(ocpp.trace_buf_idx, fmt, args);
     va_end(args);
 }
-
-extern Ocpp ocpp;
 
 void platform_register_tag_seen_callback(void *ctx, void (*cb)(int32_t, const char *, void *), void *user_data)
 {
@@ -871,9 +888,7 @@ void platform_reset(bool hard)
 #if MODULE_NFC_AVAILABLE()
         nfc.reset();
 #endif
-#if MODULE_RTC_AVAILABLE()
         rtc.reset();
-#endif
     }
 
     /*
@@ -881,7 +896,7 @@ void platform_reset(bool hard)
         It should then restart the application software (if possible,
         otherwise restart the processor/controller).
     */
-    trigger_reboot("OCPP", 1000);
+    trigger_reboot("OCPP", 1_s);
 }
 
 void platform_register_stop_callback(void *ctx, void (*cb)(int32_t, StopReason, void *), void *user_data)
@@ -893,10 +908,10 @@ const char *platform_get_charge_point_vendor()
     return "Tinkerforge GmbH";
 }
 
-char model[20] = {0}; // FIXME: Check if this needs to be one byte longer. See https://github.com/Tinkerforge/tfocpp/blob/5f07d2a7821167bf09eb4422d80657bb77ef886e/src/ocpp/Messages.cpp#L377
+char model[21] = {0};
 const char *platform_get_charge_point_model()
 {
-    device_name.name.get("display_type")->asString().toCharArray(model, ARRAY_SIZE(model));
+    device_name.get20CharDisplayType().toCharArray(model, ARRAY_SIZE(model));
     return model;
 }
 

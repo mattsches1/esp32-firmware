@@ -17,6 +17,8 @@
  * Boston, MA 02111-1307, USA.
  */
 
+#define TRACE_LOG_PREFIX "charge_manager"
+
 #include <type_traits>
 
 #include "power_manager.h"
@@ -29,6 +31,8 @@
 
 #define ENABLE_PM_TRACE 1
 
+#define METER_SLOT_BATTERY_NO_BATTERY (255)
+
 void PowerManager::pre_setup()
 {
     // States
@@ -37,17 +41,18 @@ void PowerManager::pre_setup()
         {"external_control", Config::Uint32(EXTERNAL_CONTROL_STATE_DISABLED)},
     });
 
-    config_int32_zero_prototype = Config::Int32(0);
+    const Config *config_prototype_int32_0 = Config::get_prototype_int32_0();
 
     low_level_state = Config::Object({
         {"power_at_meter", Config::Float(0)},
+        {"power_at_battery", Config::Float(0)},
         {"power_available", Config::Int32(0)},
         {"i_meter", Config::Array({
                 Config::Int32(0),
                 Config::Int32(0),
                 Config::Int32(0),
             },
-            &config_int32_zero_prototype,
+            config_prototype_int32_0,
             3, 3, Config::type_id<Config::ConfInt>())
         },
         {"i_pp_max", Config::Array({
@@ -55,7 +60,7 @@ void PowerManager::pre_setup()
                 Config::Int32(0),
                 Config::Int32(0),
             },
-            &config_int32_zero_prototype,
+            config_prototype_int32_0,
             3, 3, Config::type_id<Config::ConfInt>())
         },
         {"i_pp_mavg", Config::Array({
@@ -63,7 +68,7 @@ void PowerManager::pre_setup()
                 Config::Int32(0),
                 Config::Int32(0),
             },
-            &config_int32_zero_prototype,
+            config_prototype_int32_0,
             3, 3, Config::type_id<Config::ConfInt>())
         },
         {"i_pp", Config::Array({
@@ -71,7 +76,7 @@ void PowerManager::pre_setup()
                 Config::Int32(0),
                 Config::Int32(0),
             },
-            &config_int32_zero_prototype,
+            config_prototype_int32_0,
             3, 3, Config::type_id<Config::ConfInt>())
         },
         {"overall_min_power", Config::Int32(0)},
@@ -86,16 +91,31 @@ void PowerManager::pre_setup()
         {"excess_charging_enable", Config::Bool(false)},
         {"default_mode", Config::Uint(0, 0, 3)},
         {"meter_slot_grid_power", Config::Uint(POWER_MANAGER_DEFAULT_METER_SLOT, 0, METERS_SLOTS - 1)},
+        {"meter_slot_battery_power", Config::Uint(METER_SLOT_BATTERY_NO_BATTERY, 0, METER_SLOT_BATTERY_NO_BATTERY)},
+        {"battery_mode", Config::Uint(0, 0, static_cast<uint32_t>(BatteryMode::BatteryModeMax))},
+        {"battery_inverted", Config::Bool(false)},
+        {"battery_deadzone", Config::Uint(100, 0, 9999)}, // in watt
         {"target_power_from_grid", Config::Int32(0)}, // in watt
         {"guaranteed_power", Config::Uint(1380, 0, 22080)}, // in watt
         {"cloud_filter_mode", Config::Uint(CLOUD_FILTER_MEDIUM, CLOUD_FILTER_OFF, CLOUD_FILTER_STRONG)},
     }), [](const Config &cfg, ConfigSource source) -> String {
+        const bool excess_charging_enable = cfg.get("excess_charging_enable")->asBool();
+
         if (cfg.get("phase_switching_mode")->asUint() == 3) { // external control
-            if (cfg.get("excess_charging_enable")->asBool() != false) {
+            if (excess_charging_enable) {
                 return "Can't enable excess charging when external control is enabled for phase switching.";
             }
             if (cfg.get("default_mode")->asUint() != MODE_FAST) {
-                return "Can't select any charging mode besides 'Fast' when extrenal control is enabled for phase switching.";
+                return "Can't select any charging mode besides 'Fast' when external control is enabled for phase switching.";
+            }
+        }
+
+        if (excess_charging_enable) {
+            const uint32_t slot_grid    = cfg.get("meter_slot_grid_power"   )->asUint();
+            const uint32_t slot_battery = cfg.get("meter_slot_battery_power")->asUint();
+
+            if (slot_grid == slot_battery) {
+                return "Grid and battery storage cannot use the same power meter";
             }
         }
 
@@ -152,9 +172,12 @@ void PowerManager::pre_setup()
             {"phases_wanted", Config::Uint(1)}
         }),
         [this](const Config *cfg) {
-            api.callCommand("power_manager/external_control_update", Config::ConfUpdateObject{{
+            const String err = api.callCommand("power_manager/external_control_update", Config::ConfUpdateObject{{
                 {"phases_wanted", cfg->get("phases_wanted")->asUint()}
             }});
+            if (!err.isEmpty()) {
+                logger.printfln("Automation couldn't set external_control_update: %s", err.c_str());
+            }
         }, nullptr, false);
 
     automation.register_action(
@@ -170,9 +193,12 @@ void PowerManager::pre_setup()
                 configured_mode = this->default_mode;
             }
 
-            api.callCommand("power_manager/charge_mode_update", Config::ConfUpdateObject{{
+            const String err = api.callCommand("power_manager/charge_mode_update", Config::ConfUpdateObject{{
                 {"mode", configured_mode}
             }});
+            if (!err.isEmpty()) {
+                logger.printfln("Automation couldn't switch charge mode: %s", err.c_str());
+            }
         },
         nullptr,
         false);
@@ -227,6 +253,11 @@ void PowerManager::pre_setup()
 
 static void init_minmax_filter(PowerManager::minmax_filter *filter, size_t values_count, PowerManager::FilterType filter_type)
 {
+    if (values_count <= 0) {
+        logger.printfln("Cannot create minmax filter with %zu values.", values_count);
+        values_count = 1;
+    }
+
     filter->history_length = static_cast<decltype(filter->history_length)>(values_count);
     filter->history_values = static_cast<decltype(filter->history_values)>(heap_caps_malloc_prefer(values_count * sizeof(filter->history_values[0]), 2, MALLOC_CAP_32BIT, MALLOC_CAP_SPIRAM)); // Prefer IRAM
     filter->type = filter_type;
@@ -234,6 +265,11 @@ static void init_minmax_filter(PowerManager::minmax_filter *filter, size_t value
 
 static void init_mavg_filter(PowerManager::mavg_filter *filter, size_t values_count)
 {
+    if (values_count <= 0) {
+        logger.printfln("Cannot create mavg filter with %zu values.", values_count);
+        values_count = 1;
+    }
+
     filter->mavg_values_count = static_cast<decltype(filter->mavg_values_count)>(values_count);
     filter->mavg_values       = static_cast<decltype(filter->mavg_values)>(heap_caps_malloc_prefer(values_count * sizeof(filter->mavg_values[0]), 2, MALLOC_CAP_SPIRAM, MALLOC_CAP_32BIT)); // Prefer SPIRAM
 }
@@ -274,6 +310,10 @@ void PowerManager::setup()
     excess_charging_enabled     = config.get("excess_charging_enable")->asBool();
     meter_slot_power            = config.get("meter_slot_grid_power")->asUint();
     target_power_from_grid_w    = config.get("target_power_from_grid")->asInt();    // watt
+    meter_slot_battery_power    = config.get("meter_slot_battery_power")->asUint();
+    battery_mode                = config.get("battery_mode")->asEnum<BatteryMode>();
+    battery_inverted            = config.get("battery_inverted")->asBool();
+    battery_deadzone_w          = static_cast<uint16_t>(config.get("battery_deadzone")->asUint()); // watt
     guaranteed_power_w          = static_cast<int32_t>(config.get("guaranteed_power")->asUint()); // watt
     phase_switching_mode        = config.get("phase_switching_mode")->asUint();
     dynamic_load_enabled        = dynamic_load_config.get("enabled")->asBool();
@@ -336,7 +376,7 @@ void PowerManager::setup()
         int32_t max_possible_ma = circuit_breaker_trip_point_ma - largest_consumer_current_ma;
         target_phase_current_ma = std::min(max_possible_ma, current_limit_ma) * (100 - safety_margin_pct) / 100;
 
-        phase_current_max_increase_ma = target_phase_current_ma / 4;
+        phase_current_max_increase_ma = target_phase_current_ma / 2; // Cap maximum ramp-up for safety. Might not be necessary.
 
         constexpr size_t min_filter_length = 4 * 60 * 1000 / PM_TASK_DELAY_MS; // 4min
         constexpr size_t preproc_filter_length = 10 * 1000 / PM_TASK_DELAY_MS; // 10s
@@ -364,48 +404,53 @@ void PowerManager::setup()
     // Check for incomplete configuration after as much as possible has been set up.
 
     bool power_meter_available = false;
+    bool current_meter_available = false;
 #if MODULE_METERS_AVAILABLE()
     float unused_power;
-    if (meters.get_power_virtual(meter_slot_power, &unused_power) == MeterValueAvailability::Unavailable) {
+    if (meters.get_power(meter_slot_power, &unused_power) == MeterValueAvailability::Unavailable) {
         meter_slot_power = UINT32_MAX;
     } else {
         power_meter_available = true;
     }
+
+    if (meter_slot_battery_power < METER_SLOT_BATTERY_NO_BATTERY) {
+        if (meters.get_power(meter_slot_battery_power, &unused_power) == MeterValueAvailability::Unavailable) {
+            meter_slot_battery_power = std::numeric_limits<decltype(meter_slot_battery_power)>::max();
+            logger.printfln("Battery storage configured but meter can't provide power values.");
+        } else {
+            have_battery = true;
+        }
+    }
+
+    float unused_meter_currents[INDEX_CACHE_CURRENT_COUNT];
+    if (meters.get_currents(meter_slot_currents, unused_meter_currents) == MeterValueAvailability::Unavailable) {
+        meter_slot_currents = std::numeric_limits<decltype(meter_slot_currents)>::max();
+    } else {
+        current_meter_available = true;
+    }
+
 #endif
     if (excess_charging_enabled && !power_meter_available) {
         set_config_error(PM_CONFIG_ERROR_FLAGS_EXCESS_NO_METER_MASK);
         logger.printfln("Excess charging enabled but configured meter can't provide power values.");
     }
 
+    if (dynamic_load_enabled && !current_meter_available) {
+        set_config_error(PM_CONFIG_ERROR_FLAGS_DLM_NO_METER_MASK);
+        logger.printfln("Dynamic load management enabled but configured meter can't provide current values.");
+    }
+
     task_scheduler.scheduleOnce([this]() {
         // Can't check for chargers in setup() because CM's setup() hasn't run yet to load the charger configuration.
-        if (charge_manager.get_charger_count() <= 0) {
-            logger.printfln("No chargers configured. Won't try to distribute energy.");
-            set_config_error(PM_CONFIG_ERROR_FLAGS_NO_CHARGERS_MASK);
+        if (api.getState("charge_manager/config")->get("enable_charge_manager")->asBool()) {
+            if (charge_manager.get_charger_count() <= 0) {
+                logger.printfln("No chargers configured. Won't try to distribute energy.");
+                set_config_error(PM_CONFIG_ERROR_FLAGS_NO_CHARGERS_MASK);
+            }
+        } else {
+            logger.printfln("Charge manager not enabled. Won't try to distribute energy.");
         }
-    }, 0);
-
-    // The default configuration after a factory reset must be good enough for everything to run without crashing.
-    if (!phase_switcher_backend->phase_switching_capable()) {
-        switch (phase_switching_mode) {
-            case PHASE_SWITCHING_ALWAYS_1PHASE:
-            case PHASE_SWITCHING_ALWAYS_3PHASE:
-                break;
-            default: {
-                    const char *err_reason;
-#if MODULE_EM_V1_AVAILABLE()
-                    err_reason = "no contactor installed";
-#elif 0 // FIXME: charger back-end
-                    err_reason = "charger doesn't support it";
-#else
-                    err_reason = "not supported by back-end";
-#endif
-                    logger.printfln("Invalid configuration: Phase switching enabled but %s.", err_reason);
-                    set_config_error(PM_CONFIG_ERROR_FLAGS_PHASE_SWITCHING_MASK);
-                    return;
-                }
-        }
-    }
+    });
 
     if (supply_cable_max_current_ma == 0) {
         logger.printfln("No maximum current configured for chargers. Disabling energy distribution.");
@@ -418,8 +463,7 @@ void PowerManager::setup()
     // that across a reboot. This will still fail on a power cycle or bricklet update,
     // which set the contactor back to single phase.
     if (phase_switching_mode == PHASE_SWITCHING_EXTERNAL_CONTROL) {
-        uint32_t phases_wanted = is_3phase ? 3 : 1;
-        external_control.get("phases_wanted")->updateUint(phases_wanted);
+        external_control.get("phases_wanted")->updateUint(current_phases);
     }
 
     // supply_cable_max_current_ma must be set before reset
@@ -429,7 +473,7 @@ void PowerManager::setup()
         this->update_data();
         this->update_energy();
         this->update_phase_switcher();
-    }, PM_TASK_DELAY_MS, PM_TASK_DELAY_MS);
+    }, millis_t{PM_TASK_DELAY_MS}, millis_t{PM_TASK_DELAY_MS});
 }
 
 void PowerManager::register_urls()
@@ -442,7 +486,7 @@ void PowerManager::register_urls()
     api.addState("power_manager/low_level_state", &low_level_state);
 
     api.addState("power_manager/charge_mode", &charge_mode);
-    api.addCommand("power_manager/charge_mode_update", &charge_mode_update, {}, [this]() {
+    api.addCommand("power_manager/charge_mode_update", &charge_mode_update, {}, [this](String &/*errmsg*/) {
         uint32_t new_mode = this->charge_mode_update.get("mode")->asUint();
 
         if (new_mode == MODE_DO_NOTHING)
@@ -466,7 +510,7 @@ void PowerManager::register_urls()
         automation.set_enabled(AutomationActionID::PMPhaseSwitch, true);
 #endif
 
-        api.addCommand("power_manager/external_control_update", &external_control_update, {}, [this]() {
+        api.addCommand("power_manager/external_control_update", &external_control_update, {}, [this](String &/*errmsg*/) {
             if (!phase_switcher_backend->is_external_control_allowed()) {
                 logger.printfln("Ignoring external control phase change request: External control currently not allowed.");
                 return;
@@ -486,8 +530,8 @@ void PowerManager::register_urls()
                     esp_system_abort("Unexpected value of phase_switcher_backend->get_phase_switching_state()");
             }
 
-            bool _wants_3phase = external_control_update.get("phases_wanted")->asUint() == 3;
-            if (phase_switcher_backend->switch_phases_3phase(_wants_3phase))
+            uint32_t phases_wanted = external_control_update.get("phases_wanted")->asUint();
+            if (phase_switcher_backend->switch_phases(phases_wanted))
                 state.get("external_control")->updateUint(EXTERNAL_CONTROL_STATE_SWITCHING);
         }, true);
 
@@ -508,10 +552,11 @@ void PowerManager::register_urls()
             }
 
             state.get("external_control")->updateUint(ext_state);
-            low_level_state.get("is_3phase")->updateBool(phase_switcher_backend->get_is_3phase());
-        }, 1000, 1000);
+            this->current_phases = phase_switcher_backend->get_phases();
+            low_level_state.get("is_3phase")->updateBool(this->current_phases == 3);
+        }, 1_s, 1_s);
     } else {
-        api.addCommand("power_manager/external_control_update", &external_control_update, {}, [this]() {
+        api.addCommand("power_manager/external_control_update", &external_control_update, {}, [this](String &/*errmsg*/) {
             uint32_t external_control_state = state.get("external_control")->asUint();
             switch (external_control_state) {
                 case EXTERNAL_CONTROL_STATE_DISABLED:
@@ -556,6 +601,14 @@ void PowerManager::zero_limits()
     cm_limits->raw.l3 = 0;
 }
 
+[[gnu::noinline]] // Don't put msg buffer on calling function's stack.
+static void abort_on_invalid_history_length(int32_t history_length)
+{
+    char msg[52]; // Message buffer must be on the stack to be included in a coredump.
+    snprintf(msg, ARRAY_SIZE(msg), "Invalid minmax filter history length %i", history_length);
+    esp_system_abort(msg);
+}
+
 static void update_minmax_filter(int32_t new_value, PowerManager::minmax_filter *filter)
 {
     // Check if filter history needs to be initialized
@@ -563,7 +616,13 @@ static void update_minmax_filter(int32_t new_value, PowerManager::minmax_filter 
         filter->min = new_value;
         filter->max = filter->type == PowerManager::FilterType::MinOnly ? -1 : new_value; // Unused max uses -1 to avoid underflows from INT32_MIN
 
-        filter->history_pos     = 1; // Position for next value
+        if (filter->history_length <= 0) {
+            abort_on_invalid_history_length(filter->history_length);
+        } else if (filter->history_length == 1) {
+            filter->history_pos = 0; // History contains only a single value, next value will overwrite.
+        } else {
+            filter->history_pos = 1; // Position for next value
+        }
         filter->history_min_pos = 0;
         filter->history_max_pos = 0;
 
@@ -693,14 +752,18 @@ void PowerManager::update_data()
 {
     // TODO remove have_phases and is_3phase
     // Update states from back-end
-    is_3phase = phase_switcher_backend->phase_switching_capable() ? phase_switcher_backend->get_is_3phase() : phase_switching_mode == PHASE_SWITCHING_ALWAYS_3PHASE;
-    low_level_state.get("is_3phase")->updateBool(is_3phase);
+    current_phases = phase_switcher_backend->get_phases();
+    low_level_state.get("is_3phase")->updateBool(current_phases == 3);
 
 #if MODULE_METERS_AVAILABLE()
-    if (meters.get_power_virtual(meter_slot_power, &power_at_meter_raw_w) != MeterValueAvailability::Fresh)
+    if (meters.get_power(meter_slot_power, &power_at_meter_raw_w) != MeterValueAvailability::Fresh) {
         power_at_meter_raw_w = NAN;
-#else
-    power_at_meter_raw_w = NAN;
+    }
+    if (have_battery) {
+        if (meters.get_power(meter_slot_battery_power, &power_at_battery_raw_w) != MeterValueAvailability::Fresh) {
+            power_at_battery_raw_w = NAN;
+        }
+    }
 #endif
 
     if (!isnan(power_at_meter_raw_w)) {
@@ -713,6 +776,13 @@ void PowerManager::update_data()
             automation_drawing_power_last = drawing_power;
         }
 #endif
+    }
+
+    if (!isnan(power_at_battery_raw_w)) {
+        if (battery_inverted) {
+            power_at_battery_raw_w *= -1;
+        }
+        low_level_state.get("power_at_battery")->updateFloat(power_at_battery_raw_w);
     }
 
     float meter_currents[INDEX_CACHE_CURRENT_COUNT];
@@ -753,7 +823,7 @@ void PowerManager::update_energy()
     } else {
         int32_t p_error_w;
 
-        if (isnan(power_at_meter_raw_w)) {
+        if (isnan(power_at_meter_raw_w) || (have_battery && isnan(power_at_battery_raw_w))) {
             if (!printed_skipping_energy_update) {
                 logger.printfln("PV excess charging unavailable because power values are not available yet.");
                 printed_skipping_energy_update = true;
@@ -766,7 +836,46 @@ void PowerManager::update_energy()
                 printed_skipping_energy_update = false;
             }
 
-            p_error_w = target_power_from_grid_w - static_cast<int32_t>(power_at_meter_raw_w);
+            // Grid: +import -export
+            const int32_t power_grid_raw_w = static_cast<int32_t>(power_at_meter_raw_w);
+            int32_t power_combined_raw_w;
+
+            if (have_battery) {
+                // Battery: +charging -discharging
+                int32_t power_battery_w = static_cast<int32_t>(power_at_battery_raw_w);
+
+                // Only take battery charging power into account if chargers are preferred,
+                // by simply ignoring the battery's power while it's charging.
+                if (power_battery_w > 0 && battery_mode != BatteryMode::PreferChargers) {
+                    power_battery_w = 0;
+                }
+
+                int32_t power_grid_adjusted_w = power_grid_raw_w;
+
+                if (power_grid_adjusted_w > 0) {
+                    if (power_grid_adjusted_w > battery_deadzone_w) {
+                        power_grid_adjusted_w -= battery_deadzone_w;
+                    } else {
+                        power_grid_adjusted_w = 0;
+                    }
+                } else if (power_grid_adjusted_w < 0) {
+                    if (power_grid_adjusted_w < -battery_deadzone_w) {
+                        power_grid_adjusted_w += battery_deadzone_w;
+                    } else {
+                        power_grid_adjusted_w = 0;
+                    }
+                } // Nothing to do if power_grid_adjusted_w == 0.
+
+                // Combined: +deficit from +grid import and -discharging
+                //           -surplus from -grid export and +charging
+                // Therefore, battery power must be subtracted.
+                power_combined_raw_w = power_grid_adjusted_w - power_battery_w;
+            } else {
+                // No battery, use grid power as-is.
+                power_combined_raw_w = power_grid_raw_w;
+            }
+
+            p_error_w = target_power_from_grid_w - power_combined_raw_w;
 
 #if MODULE_EM_V1_AVAILABLE()
             if (p_error_w > 200) {
@@ -794,7 +903,7 @@ void PowerManager::update_energy()
                 } else {
                     // Excess charging uses an adaptive P controller to adjust available power.
                     int32_t p_adjust_w;
-                    const int32_t cm_allocated_power_w = cm_allocated_currents->pv * 230 / 1000; // ma -> watt
+                    int32_t cm_allocated_power_w = cm_allocated_currents->pv * 230 / 1000; // ma -> watt
 
                     if (cm_allocated_power_w <= 0) {
                         // When no power was allocated to any charger, use p=1 so that the threshold for switching on can be reached properly.
@@ -802,7 +911,8 @@ void PowerManager::update_energy()
 
                         // Sanity check
                         if (cm_allocated_power_w < 0) {
-                            logger.printfln("Negative cm_allocated_power_w: %i", cm_allocated_power_w);
+                            logger.printfln("Negative cm_allocated_power_w: %i  cm_allocated_currents(%i %i %i %i)", cm_allocated_power_w, cm_allocated_currents->pv, cm_allocated_currents->l1, cm_allocated_currents->l2, cm_allocated_currents->l3);
+                            cm_allocated_power_w = 0;
                         }
                     } else {
                         // Some EVs may only be able to adjust their charge power in steps of 1500W,
@@ -884,17 +994,18 @@ void PowerManager::update_energy()
     Config *state_i_pp_mavg = static_cast<Config *>(low_level_state.get("i_pp_mavg"));
     Config *state_i_pp      = static_cast<Config *>(low_level_state.get("i_pp"));
 
-    for (size_t cm_phase = 1; cm_phase < 4; cm_phase++) {
+    for (size_t cm_phase = 1; cm_phase <= 3; cm_phase++) {
         if (!dynamic_load_enabled) {
-            cm_limits->raw[cm_phase] = max_current_limited_ma;
-            cm_limits->min[cm_phase] = max_current_limited_ma;
+            cm_limits->raw[cm_phase]    = max_current_limited_ma;
+            cm_limits->min[cm_phase]    = max_current_limited_ma;
+            cm_limits->spread[cm_phase] = max_current_limited_ma;
         } else {
             size_t pm_phase = cm_phase - 1; // PM is 0-based but CM is 1-based because of PV@0
 
             int32_t phase_current_meter_ma = currents_at_meter_raw_ma[pm_phase];
 
             if (phase_current_meter_ma == INT32_MAX) {
-                if (!printed_skipping_currents_update) {
+                if (!printed_skipping_currents_update && cm_phase == 1) {
                     logger.printfln("Dynamic load management unavailable because current values are not available yet.");
                     printed_skipping_currents_update = true;
                 }
@@ -902,7 +1013,7 @@ void PowerManager::update_energy()
                 cm_limits->raw[cm_phase] = 0;
                 cm_limits->min[cm_phase] = 0;
             } else {
-                if (printed_skipping_currents_update) {
+                if (printed_skipping_currents_update && cm_phase == 1) {
                     logger.printfln("Dynamic load management available because current values are now available.");
                     printed_skipping_currents_update = false;
                 }
@@ -938,10 +1049,10 @@ void PowerManager::update_energy()
                 }
 
                 // Update low-level state
-                state_i_meter  ->get(static_cast<uint16_t>(pm_phase))->updateInt(phase_current_meter_ma);
-                state_i_pp_max ->get(static_cast<uint16_t>(pm_phase))->updateInt(phase_preproc_max_ma->max);
-                state_i_pp_mavg->get(static_cast<uint16_t>(pm_phase))->updateInt(phase_preproc_mavg_val_ma);
-                state_i_pp     ->get(static_cast<uint16_t>(pm_phase))->updateInt(phase_preproc_ma);
+                state_i_meter  ->get(pm_phase)->updateInt(phase_current_meter_ma);
+                state_i_pp_max ->get(pm_phase)->updateInt(phase_preproc_max_ma->max);
+                state_i_pp_mavg->get(pm_phase)->updateInt(phase_preproc_mavg_val_ma);
+                state_i_pp     ->get(pm_phase)->updateInt(phase_preproc_ma);
 
                 // Current controller
                 int32_t current_error_ma = target_phase_current_ma - phase_preproc_ma;
@@ -955,7 +1066,8 @@ void PowerManager::update_energy()
 
                     // Sanity check
                     if (cm_allocated_phase_current_ma < 0) {
-                        logger.printfln("Negative cm_allocated_phase_current_ma: %i", cm_allocated_phase_current_ma);
+                        logger.printfln("Negative cm_allocated_phase_current_ma: cm_allocated_currents(%i %i %i %i)", cm_allocated_currents->pv, cm_allocated_currents->l1, cm_allocated_currents->l2, cm_allocated_currents->l3);
+                        cm_allocated_phase_current_ma = 0;
                     }
                 } else {
                     if (current_error_ma < 0) {
@@ -1006,7 +1118,8 @@ void PowerManager::update_energy()
     }
 
 #if ENABLE_PM_TRACE
-    logger.trace_write(trace_log, trace_log_len);
+    trace_log_len += snprintf_u(trace_log + trace_log_len, sizeof(trace_log) - trace_log_len, "\n");
+    logger.trace_plain(charge_manager.trace_buffer_index, trace_log, trace_log_len);
 #endif
 
     // Calculate long-term minimum over one-minute blocks
@@ -1067,9 +1180,9 @@ bool PowerManager::get_enabled() const
     return config.get("enabled")->asBool();
 }
 
-bool PowerManager::get_is_3phase() const
+uint32_t PowerManager::get_phases() const
 {
-    return is_3phase;
+    return current_phases;
 }
 
 void PowerManager::set_config_error(uint32_t config_error_mask)

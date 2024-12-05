@@ -1,24 +1,26 @@
 #!/usr/bin/python3 -u
 
+import tinkerforge_util as tfutil
+
+tfutil.create_parent_module(__file__, 'provisioning')
+
 import os
 import sys
 import time
 import traceback
 from threading import Thread
-
 from pathlib import Path
-
-from provision_common.provision_common import *
-
-from tinkerforge.ip_connection import IPConnection, base58encode, base58decode, BASE58, Error
-from tinkerforge.bricklet_industrial_quad_relay_v2 import BrickletIndustrialQuadRelayV2
-from tinkerforge.bricklet_rgb_led_v2 import BrickletRGBLEDV2
-from tinkerforge.bricklet_temperature_v2 import BrickletTemperatureV2
-
-SERIAL_SETTLE_DELAY = 2
-
 import termios
 import fcntl
+
+from provisioning.tinkerforge.ip_connection import IPConnection, base58encode, base58decode, BASE58, Error
+from provisioning.tinkerforge.bricklet_industrial_quad_relay_v2 import BrickletIndustrialQuadRelayV2
+from provisioning.tinkerforge.bricklet_rgb_led_v2 import BrickletRGBLEDV2
+from provisioning.tinkerforge.bricklet_temperature_v2 import BrickletTemperatureV2
+
+from provisioning.provision_common.provision_common import *
+
+SERIAL_SETTLE_DELAY = 2
 
 class NonBlockingInput:
     def __enter__(self):

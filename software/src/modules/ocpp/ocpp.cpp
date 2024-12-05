@@ -30,6 +30,8 @@ extern char local_uid_str[32];
 
 void Ocpp::pre_setup()
 {
+    trace_buf_idx = logger.alloc_trace_buffer("ocpp", 1 << 17);
+
     config = Config::Object({
         {"enable", Config::Bool(false)},
         {"url", Config::Str("", 0, 128)},
@@ -156,8 +158,8 @@ void Ocpp::setup()
 
         task_scheduler.scheduleWithFixedDelay([this](){
             cp->tick();
-        }, 100, 100);
-    }, 5000);
+        }, 100_ms, 100_ms);
+    }, 5_s);
 }
 
 void Ocpp::register_urls()
@@ -167,13 +169,13 @@ void Ocpp::register_urls()
     api.addState("ocpp/state", &state);
     api.addState("ocpp/configuration", &configuration);
 #endif
-    api.addCommand("ocpp/reset", Config::Null(), {}, [](){
+    api.addCommand("ocpp/reset", Config::Null(), {}, [](String &/*errmsg*/) {
         remove_directory("/ocpp");
     }, true);
 
 #ifdef OCPP_DEBUG
     api.addFeature("ocpp_debug");
-    api.addCommand("ocpp/change_configuration", &change_configuration, {}, [this](){
+    api.addCommand("ocpp/change_configuration", &change_configuration, {}, [this](String &/*errmsg*/) {
         auto status = cp->changeConfig(change_configuration.get("key")->asEphemeralCStr(), change_configuration.get("value")->asEphemeralCStr());
         logger.printfln("Change config %s status %s", change_configuration.get("key")->asEphemeralCStr(), ChangeConfigurationResponseStatusStrings[(size_t) status]);
     }, true);

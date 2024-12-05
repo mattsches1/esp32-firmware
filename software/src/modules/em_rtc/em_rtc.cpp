@@ -26,19 +26,14 @@ void EmRtc::setup()
     if (!em_common.initialized)
         return;
 
+    rtc.register_backend(this);
+
     initialized = true;
 }
 
-void EmRtc::register_urls()
+void EmRtc::set_time(const tm &tm, int32_t microseconds)
 {
-    if (!initialized)
-        return;
-
-    rtc.register_backend(this);
-}
-
-void EmRtc::set_time(const tm &tm)
-{
+    // TODO: can we do something with the microseconds here?
     em_common.set_time(tm);
 }
 

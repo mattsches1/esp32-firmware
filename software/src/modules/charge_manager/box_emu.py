@@ -255,20 +255,21 @@ class Charger:
         try:
             data, self.manager_addr = self._sock.recvfrom(command_len)
         except BlockingIOError:
-            return
+            return False
         if len(data) != command_len:
-            return
+            return False
 
         magic, length, seq_num, version, allocated_current, command_flags, allocated_phases = struct.unpack(command_format, data)
 
         if version != self.expected_command_version:
-            return
+            return False
 
         self.req_seq_num = seq_num
         self.req_version = version
         self.req_allocated_current = allocated_current
         self.req_should_disconnect_cp = ((command_flags & 0x40) >> 6) == 1
         self.req_allocated_phases = allocated_phases
+        return True
 
 if __name__ == "__main__":
     from PyQt5.QtWidgets import *
@@ -291,11 +292,11 @@ if __name__ == "__main__":
 
             self.recv_timer = QTimer()
             self.recv_timer.timeout.connect(lambda: self.receive())
-            self.recv_timer.start(100)
+            self.recv_timer.start(10)
 
             self.send_timer = QTimer()
             self.send_timer.timeout.connect(lambda: self.send())
-            self.send_timer.start(1000)
+            self.send_timer.start(2500)
 
         def addRow(self, title_or_widget, widget=None):
             if widget is None:
@@ -449,7 +450,9 @@ if __name__ == "__main__":
             self.resp_iec61851_state.setCurrentIndex(self.state.iec61851_state)
 
         def receive(self):
-            self.state.recv()
+            if self.state.recv():
+                self.send_timer.start(2500)
+                self.send()
 
         def send(self):
             self.state.tick()
@@ -458,13 +461,22 @@ if __name__ == "__main__":
 
     def main():
         app = QApplication([])
-        window = QWidget()
+        window = QScrollArea()
+        window.setWidgetResizable(True)
+        widget = QWidget()
 
-        window.setWindowTitle(",".join(sys.argv[1:]))
+        top_level = QWidget()
+        top_top_level_layout = QVBoxLayout()
+        top_top_level_layout.addWidget(window)
+        top_top_level_layout.setContentsMargins(0,0,0,0)
 
-        chargers = len(sys.argv) - 1
-        cols = math.ceil(chargers / 13)
-        rows = math.ceil(chargers / cols)
+        window.setWidget(widget)
+
+        top_level.setWindowTitle(",".join(sys.argv[1:]))
+
+        charger_count = len(sys.argv) - 1
+        cols = math.ceil(charger_count / 13)
+        rows = math.ceil(charger_count / cols)
 
         top_level_layout = QGridLayout()
 
@@ -480,8 +492,9 @@ if __name__ == "__main__":
             if col == rows - 1:
                 last_row_counter += chargers[-1].row_counter
 
-        window.setLayout(top_level_layout)
-        window.show()
+        widget.setLayout(top_level_layout)
+        top_level.setLayout(top_top_level_layout)
+        top_level.show()
         app.exec_()
 
     main()

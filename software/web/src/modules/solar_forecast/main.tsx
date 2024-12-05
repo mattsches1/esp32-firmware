@@ -19,7 +19,7 @@
 
 import * as util from "../../ts/util";
 import * as API from "../../ts/api";
-import { createRef, h, Fragment } from "preact";
+import { createRef, h, Fragment, Component, RefObject } from "preact";
 import { __ } from "../../ts/translation";
 import { Switch } from "../../ts/components/switch";
 import { ConfigComponent } from "../../ts/components/config_component";
@@ -27,18 +27,122 @@ import { ConfigForm } from "../../ts/components/config_form";
 import { FormRow } from "../../ts/components/form_row";
 import { SubPage } from "../../ts/components/sub_page";
 import { NavbarItem } from "../../ts/components/navbar_item";
-import { Button, Collapse } from "react-bootstrap";
 import { InputFloat } from "../../ts/components/input_float";
-import { Sunrise, Info, ChevronRight } from "react-feather";
+import { Sunrise } from "react-feather";
 import { Table } from "../../ts/components/table";
 import { InputNumber } from "../../ts/components/input_number";
 import { FormSeparator } from "../../ts/components/form_separator";
 import { UplotLoader } from "../../ts/components/uplot_loader";
-import { UplotData, UplotWrapper, UplotPath } from "../../ts/components/uplot_wrapper_2nd";
+import { UplotData, UplotWrapper } from "../../ts/components/uplot_wrapper_2nd";
 import { InputText } from "../../ts/components/input_text";
 import { CollapsedSection } from "../../ts/components/collapsed_section";
+import { StatusSection } from "../../ts/components/status_section";
 
 const SOLAR_FORECAST_PLANES = 6;
+
+function get_active_planes() {
+    let active_planes = [];
+    for (let i = 0; i < SOLAR_FORECAST_PLANES; i++) {
+        const plane_config = API.get_unchecked(`solar_forecast/planes/${i}/config`);
+        if (plane_config.active) {
+            active_planes.push(i);
+        }
+    }
+    return active_planes;
+}
+
+function does_forecast_exist() {
+    for (let i = 0; i < SOLAR_FORECAST_PLANES; i++) {
+        const plane_forecast = API.get_unchecked(`solar_forecast/planes/${i}/forecast`);
+        if (plane_forecast.length > 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function get_timestamp_today_00_00_in_seconds() {
+    return Math.floor(new Date(util.get_date_now_1m_update_rate()).setHours(0, 0, 0, 0) / 1000);
+}
+
+function forecast_time_between(first_date: number, index: number, start: number, end: number) {
+    let index_timestamp_seconds = (first_date + index*60)*60;
+    return (index_timestamp_seconds >= start) && (index_timestamp_seconds <= end);
+}
+
+function get_kwh_now_to_midnight() {
+    let start         = Math.floor(new Date(util.get_date_now_1m_update_rate()).setMinutes(0, 0, 0) / 1000);
+    let end           = get_timestamp_today_00_00_in_seconds() + 60*60*24 - 1;
+    let active_planes = get_active_planes();
+    let wh            = 0.0;
+    let count         = 0
+    for (const plane of active_planes) {
+        const plane_forecast = API.get_unchecked(`solar_forecast/planes/${plane}/forecast`);
+        for (let index = 0; index < plane_forecast.forecast.length; index++) {
+            if (forecast_time_between(plane_forecast.first_date, index, start, end)) {
+                wh += plane_forecast.forecast[index] || 0.0;
+                count++;
+            }
+        }
+    }
+
+    if (count == 0) {
+        return NaN;
+    }
+
+    return wh/1000.0;
+}
+
+export function is_solar_forecast_enabled() {
+    return API.get("solar_forecast/config").enable;
+}
+
+export function get_kwh_today() {
+    let start         = get_timestamp_today_00_00_in_seconds();
+    let end           = start + 60*60*24 - 1;
+    let active_planes = get_active_planes();
+    let wh            = 0.0;
+    let count         = 0;
+    for (const plane of active_planes) {
+        const plane_forecast = API.get_unchecked(`solar_forecast/planes/${plane}/forecast`);
+        for (let index = 0; index < plane_forecast.forecast.length; index++) {
+            if (forecast_time_between(plane_forecast.first_date, index, start, end)) {
+                wh += plane_forecast.forecast[index] || 0.0;
+                count++;
+            }
+        }
+    }
+
+    if (count == 0) {
+        return NaN;
+    }
+
+    return wh/1000.0;
+}
+
+export function get_kwh_tomorrow() {
+    let start         = get_timestamp_today_00_00_in_seconds() + 60*60*24;
+    let end           = start + 60*60*24 - 1;
+    let active_planes = get_active_planes();
+    let wh            = 0.0;
+    let count         = 0;
+    for (const plane of active_planes) {
+        const plane_forecast = API.get_unchecked(`solar_forecast/planes/${plane}/forecast`);
+        for (let index = 0; index < plane_forecast.forecast.length; index++) {
+            if (forecast_time_between(plane_forecast.first_date, index, start, end)) {
+                wh += plane_forecast.forecast[index] || 0.0;
+                count++;
+            }
+        }
+    }
+
+    if (count == 0) {
+        return NaN;
+    }
+
+    return wh/1000.0;
+}
+
 
 export function SolarForecastNavbar() {
     return <NavbarItem name="solar_forecast" title={__("solar_forecast.navbar.solar_forecast")} symbol={<Sunrise />} hidden={false}/>;
@@ -53,23 +157,16 @@ interface SolarForecastState {
     plane_configs: {[plane_index: number]: PlaneConfig};
     plane_forecasts: {[plane_index: number]: API.getType['planes/0/plane_forecast']};
     plane_config_tmp: PlaneConfig;
-    extra_show: boolean[];
 }
 
-export class SolarForecast extends ConfigComponent<"solar_forecast/config", {}, SolarForecastState> {
-    uplot_loader_ref        = createRef();
-    uplot_wrapper_ref       = createRef();
-    uplot_legend_div_ref    = createRef();
-    uplot_wrapper_flags_ref = createRef();
+export class SolarForecast extends ConfigComponent<"solar_forecast/config", {status_ref?: RefObject<SolarForecastStatus>}, SolarForecastState> {
+    uplot_loader_ref  = createRef();
+    uplot_wrapper_ref = createRef();
 
     constructor() {
         super('solar_forecast/config',
-              __("solar_forecast.script.save_failed"),
-              undefined, {
-                  extra_show: new Array<boolean>(SOLAR_FORECAST_PLANES),
-              });
-
-        this.state.extra_show.fill(false);
+              () => __("solar_forecast.script.save_failed"),
+              undefined, {});
 
         util.addApiEventListener("solar_forecast/state", () => {
             this.setState({state: API.get("solar_forecast/state")});
@@ -126,7 +223,7 @@ export class SolarForecast extends ConfigComponent<"solar_forecast/config", {}, 
             await API.save_unchecked(
                 `solar_forecast/planes/${plane_index}/config`,
                 this.state.plane_configs[plane_index],
-                __("solar_forecast.script.save_failed"),
+                () => __("solar_forecast.script.save_failed"),
                 plane_index == SOLAR_FORECAST_PLANES - 1 ? this.reboot_string : undefined);
         }
 
@@ -221,7 +318,6 @@ export class SolarForecast extends ConfigComponent<"solar_forecast/config", {}, 
 
         // Is data to display available?
         let data_available = false;
-        let first_date = 0;
         let first_index = 0;
         let active_planes = [];
         for (let i = 0; i < SOLAR_FORECAST_PLANES; i++) {
@@ -229,57 +325,50 @@ export class SolarForecast extends ConfigComponent<"solar_forecast/config", {}, 
             if(this.state.plane_configs[i].active && (this.state.plane_forecasts[i].forecast.length > 0)) {
                 if (!data_available) {
                     // We use first date from first plane that has data available
-                    first_date = this.state.plane_forecasts[i].first_date;
                     first_index = i;
                 }
                 active_planes.push(i);
                 data_available = true;
-            } else {
-                //data_available = false;
-                //break;
             }
         }
 
         if (!data_available) {
             data = {
-                keys: [],
-                names: [],
-                values: [],
-                stacked: [],
-                paths: [],
-                update_timestamp: 0,
-                use_timestamp: 0
+                keys: [null],
+                names: [null],
+                values: [null],
+                filled: [null],
             }
         } else {
             data = {
-                keys: ['time'],
-                names: [__("solar_forecast.content.time")],
+                keys: [null],
+                names: [null],
                 values: [[]],
-                stacked: [false],
-                paths: [null],
-                default_visibilty: [true],
-                update_timestamp: 0,
-                use_timestamp: 0
+                filled: [null],
             }
 
             for (const index in active_planes) {
                 data.keys.push('plane' + index);
-                data.names.push(__("solar_forecast.content.plane") + ' ' + this.state.plane_configs[index].name);
+                data.names.push(this.state.plane_configs[index].name);
                 data.values.push([]);
-                data.stacked.push(true);
-                data.paths.push(UplotPath.Line);
-                data.default_visibilty.push(true);
-
+                data.filled.push(true);
             }
 
             let resolution_multiplier = 60;
             for (let i = 0; i < this.state.plane_forecasts[first_index].forecast.length; i++) {
-                data.values[0].push(this.state.plane_forecasts[first_index].first_date*60 + i*60*resolution_multiplier);
+                data.values[0].push(this.state.plane_forecasts[first_index].first_date * 60 + i * 60 * resolution_multiplier);
                 let j = 1;
                 for (const index in active_planes) {
-                    data.values[j].push(this.state.plane_forecasts[index].forecast[i]/1000.0);
+                    data.values[j].push(this.state.plane_forecasts[index].forecast[i]);
                     j++;
                 }
+            }
+
+            data.values[0].push(this.state.plane_forecasts[first_index].first_date * 60 + this.state.plane_forecasts[first_index].forecast.length * 60 * resolution_multiplier - 1);
+            let j = 1;
+            for (const index in active_planes) {
+                data.values[j].push(this.state.plane_forecasts[index].forecast[this.state.plane_forecasts[first_index].forecast.length - 1]);
+                j++;
             }
         }
 
@@ -293,17 +382,22 @@ export class SolarForecast extends ConfigComponent<"solar_forecast/config", {}, 
             return <SubPage name="solar_forecast" />;
         }
 
-        function get_next_free_plane_index() {
-            for (let i = 0; i < SOLAR_FORECAST_PLANES; i++) {
-                if (!state.plane_configs[i].active) {
-                    return i;
-                }
+        function get_plane_info(plane_index: number) {
+            let plane_state = state.plane_states[plane_index];
+            if (plane_state.last_check == 0) {
+                // Darauf hinweisen das noch nicht gespeichert wurde falls isDirty()
+                return <div class="form-group row"><span class="col-12">{__("solar_forecast.content.not_set_for_this_plane")}</span></div>;
+            } else {
+                return <div>
+                        <div class="form-group row"><span class="col-4">{__("solar_forecast.content.address_of_pv_plane")}</span><span class="col-8"> {plane_state.place} ({__("solar_forecast.content.resolution")})</span></div>
+                        <div class="form-group row"><span class="col-4">{__("solar_forecast.content.last_update_attempt")}</span><span class="col-8">{new Date(plane_state.last_check*60*1000).toLocaleString()}</span></div>
+                        <div class="form-group row"><span class="col-4">{__("solar_forecast.content.last_successful_update")}</span><span class="col-8">{new Date(plane_state.last_sync*60*1000).toLocaleString()}</span></div>
+                        <div class="form-group row"><span class="col-4">{__("solar_forecast.content.next_update")}</span><span class="col-8">{new Date(plane_state.next_check*60*1000).toLocaleString()}</span></div>
+                       </div>;
             }
-
-            return -1;
         }
 
-        function get_active_planes() {
+        function get_active_unsaved_planes() {
             let active_planes = [];
             for (let i = 0; i < SOLAR_FORECAST_PLANES; i++) {
                 if (state.plane_configs[i].active) {
@@ -313,82 +407,31 @@ export class SolarForecast extends ConfigComponent<"solar_forecast/config", {}, 
             return active_planes;
         }
 
-        function get_plane_info(plane_index: number) {
-            let plane_state = state.plane_states[plane_index];
-            if (plane_state.last_check == 0) {
-                // Darauf hinweisen das noch nicht gespeichert wurde falls isDirty()
-                return <div class="form-group row"><span class="col-12">Solarprognose für diese Fläche wurde noch nicht abgefragt.</span></div>;
-            } else {
-                return <div>
-                        <div class="form-group row"><span class="col-4">Adresse der PV-Fläche: </span><span class="col-8"> {plane_state.place} (Genauigkeit von ca. 1km ist OK)</span></div>
-                        <div class="form-group row"><span class="col-4">letzter Abfrageversuch:</span><span class="col-8">{new Date(plane_state.last_check*60*1000).toLocaleString()}</span></div>
-                        <div class="form-group row"><span class="col-4">letzte erfolgreiche Abfrage:</span><span class="col-8">{new Date(plane_state.last_sync*60*1000).toLocaleString()}</span></div>
-                        <div class="form-group row"><span class="col-4">nächste Abfrage:</span><span class="col-8">{new Date(plane_state.next_check*60*1000).toLocaleString()}</span></div>
-                       </div>;
-            }
-        }
-
-        function does_forecast_exist() {
+        function get_next_free_unsaved_plane_index() {
             for (let i = 0; i < SOLAR_FORECAST_PLANES; i++) {
-                if (state.plane_forecasts[i].forecast.length > 0) {
-                    return true;
+                if (!state.plane_configs[i].active) {
+                    return i;
                 }
             }
-            return false;
+
+            return -1;
         }
 
-        function get_timestamp_today_00_00_in_seconds() {
-            return Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
-        }
-
-        function forecast_time_between(plane: number, index: number, start: number, end: number) {
-            let index_timestamp_seconds = (state.plane_forecasts[plane].first_date + index*60)*60;
-            return (index_timestamp_seconds >= start) && (index_timestamp_seconds <= end);
-        }
-
-        function get_kwh_now_to_midnight() {
-            let start         = Math.floor(new Date().setMinutes(0, 0, 0) / 1000);
-            let end           = get_timestamp_today_00_00_in_seconds() + 60*60*24 - 1;
-            let active_planes = get_active_planes();
-            let wh            = 0.0;
-            for (const plane of active_planes) {
-                for (let index = 0; index < state.plane_forecasts[plane].forecast.length; index++) {
-                    if (forecast_time_between(plane, index, start, end)) {
-                        wh += state.plane_forecasts[plane].forecast[index] || 0.0;
-                    }
+        function get_next_update_string() {
+            let now = util.get_date_now_1m_update_rate()/(60*1000);
+            if ((state.state.next_api_call == 0) || (get_active_planes().length == 0) || (state.state.next_api_call < now)) {
+                return __("util.not_yet_known");
+            } else {
+                let diff    = state.state.next_api_call - now;
+                let hours   = Math.floor(diff / 60);
+                let minutes = Math.floor(diff % 60);
+                let update_string = (hours == 0) ? `${minutes}m`:`${hours}h ${minutes}m`;
+                if ((state.state.rate_limit != -1) && (state.state.rate_remaining != -1)) {
+                    update_string += " " + __("solar_forecast.content.remaining_queries")(state.state.rate_remaining, state.state.rate_limit);
                 }
-            }
-            return wh/1000.0;
-        }
 
-        function get_kwh_today() {
-            let start         = get_timestamp_today_00_00_in_seconds();
-            let end           = start + 60*60*24 - 1;
-            let active_planes = get_active_planes();
-            let wh            = 0.0;
-            for (const plane of active_planes) {
-                for (let index = 0; index < state.plane_forecasts[plane].forecast.length; index++) {
-                    if (forecast_time_between(plane, index, start, end)) {
-                        wh += state.plane_forecasts[plane].forecast[index] || 0.0;
-                    }
-                }
+                return update_string;
             }
-            return wh/1000.0;
-        }
-
-        function get_kwh_tomorrow() {
-            let start         = get_timestamp_today_00_00_in_seconds() + 60*60*24;
-            let end           = start + 60*60*24 - 1;
-            let active_planes = get_active_planes();
-            let wh            = 0.0;
-            for (const plane of active_planes) {
-                for (let index = 0; index < state.plane_forecasts[plane].forecast.length; index++) {
-                    if (forecast_time_between(plane, index, start, end)) {
-                        wh += state.plane_forecasts[plane].forecast[index] || 0.0;
-                    }
-                }
-            }
-            return wh/1000.0;
         }
 
         return (
@@ -396,82 +439,88 @@ export class SolarForecast extends ConfigComponent<"solar_forecast/config", {}, 
                 <ConfigForm
                     id="plane_configs_config_form"
                     title={__("solar_forecast.content.solar_forecast")}
-                    isModified={this.isModified()}
+                    isModified={false}
                     isDirty={this.isDirty()}
                     onSave={this.save}
                     onReset={this.reset}
                     onDirtyChange={this.setDirty}>
-                    <FormRow label={__("solar_forecast.content.solar_forecast")} label_muted={__("solar_forecast.content.solar_forecast_muted")}>
+                    <FormRow label={__("solar_forecast.content.enable_solar_forecast")} label_muted={__("solar_forecast.content.solar_forecast_muted")}>
                         <Switch desc={__("solar_forecast.content.solar_forecast_desc")}
                                 checked={state.enable}
                                 onClick={this.toggle('enable')}
                         />
                     </FormRow>
-                    <Collapse in={state.enable}>
-                        <div class="mb-3">
-                            <FormRow label={__("solar_forecast.content.planes")}>
-                                <div></div>
-                            </FormRow>
-                                <Table columnNames={[__("solar_forecast.content.table_name"), __("solar_forecast.content.table_latitude"), __("solar_forecast.content.table_longitude"), __("solar_forecast.content.table_declination"), __("solar_forecast.content.table_azimuth"), __("solar_forecast.content.table_kwp")]}
-                                    tableTill="lg"
-                                    rows={get_active_planes().map((active_plane_index) => {
-                                        let plane_config = state.plane_configs[active_plane_index];
-                                        return {
-                                            extraShow: this.state.extra_show[active_plane_index],
-                                            extraValue: get_plane_info(active_plane_index),
-                                            columnValues: [
-                                                    <span class="text-nowrap">
-                                                <Button size="sm" onClick={() => {
-                                                    this.setState({extra_show: state.extra_show.map((show, i) => active_plane_index == i ? !show : show)});
-                                                }}>
-                                                        <ChevronRight {...{id:`solar-forecast-${active_plane_index}-chevron`, class: state.extra_show[active_plane_index] ? "rotated-chevron" : "unrotated-chevron"} as any}/>
-                                                </Button>
-                                                <span class="ml-1 mr-1">{plane_config.name}</span>
-                                                    </span>
-                                                ,
-                                                util.toLocaleFixed(plane_config.latitude / 10000, 4) + "°",
-                                                util.toLocaleFixed(plane_config.longitude / 10000, 4) + "°",
-                                                plane_config.declination + "°",
-                                                plane_config.azimuth + "°",
-                                                util.toLocaleFixed(plane_config.wp / 1000, 3) + " kWp",
-                                            ],
-                                            editTitle: __("solar_forecast.content.edit_plane_config_title"),
-                                            onEditShow: async () => this.setState({plane_config_tmp: {...plane_config}}),
-                                            onEditGetChildren: () => this.on_get_children(),
-                                            onEditSubmit: async () => {
-                                                this.setState({plane_configs: {...state.plane_configs, [active_plane_index]: state.plane_config_tmp}});
-                                                this.setDirty(true);
-                                            },
-                                            onRemoveClick: async () => {
-                                                this.setState({plane_configs: {...state.plane_configs, [active_plane_index]: {active: false, name: "#" + active_plane_index, latitude: 0, longitude: 0, declination: 0, azimuth: 0, wp: 0}}});
-                                                this.setDirty(true);
-                                            }}
-                                        })
-                                    }
-                                    addEnabled={get_active_planes().length < SOLAR_FORECAST_PLANES}
-                                    addTitle={__("solar_forecast.content.add_plane_config_title")}
-                                    addMessage={get_active_planes().length == SOLAR_FORECAST_PLANES ? __("solar_forecast.content.add_plane_config_done") : __("solar_forecast.content.add_plane_config_prefix") + (get_active_planes().length + 1) + __("solar_forecast.content.add_plane_config_infix") + SOLAR_FORECAST_PLANES + __("solar_forecast.content.add_plane_config_postfix")}
-                                    onAddShow={async () => {
-                                        this.setState({plane_config_tmp: {active: true, name: "#" + get_next_free_plane_index(), latitude: 0, longitude: 0, declination: 0, azimuth: 0, wp: 0}})
-                                    }}
-                                    onAddGetChildren={() => this.on_get_children()}
-                                    onAddSubmit={async () => {
-                                        this.setState({plane_configs: {...state.plane_configs, [get_next_free_plane_index()]: state.plane_config_tmp}});
-                                        this.setDirty(true);
-                                    }}
-                                />
-                        </div>
-                    </Collapse>
+                    <FormRow label={__("solar_forecast.content.planes")}>
+                        <div></div>
+                    </FormRow>
+                    <Table columnNames={[__("solar_forecast.content.table_name"), __("solar_forecast.content.table_latitude"), __("solar_forecast.content.table_longitude"), __("solar_forecast.content.table_declination"), __("solar_forecast.content.table_azimuth"), __("solar_forecast.content.table_kwp")]}
+                        tableTill="lg"
+                        rows={get_active_unsaved_planes().map((active_plane_index) => {
+                            let plane_config = state.plane_configs[active_plane_index];
+                            return {
+                                extraValue: get_plane_info(active_plane_index),
+                                columnValues: [
+                                    plane_config.name,
+                                    util.toLocaleFixed(plane_config.latitude / 10000, 4) + "°",
+                                    util.toLocaleFixed(plane_config.longitude / 10000, 4) + "°",
+                                    plane_config.declination + "°",
+                                    plane_config.azimuth + "°",
+                                    util.toLocaleFixed(plane_config.wp / 1000, 3) + " kWp",
+                                ],
+                                editTitle: __("solar_forecast.content.edit_plane_config_title"),
+                                onEditShow: async () => this.setState({plane_config_tmp: {...plane_config}}),
+                                onEditGetChildren: () => this.on_get_children(),
+                                onEditSubmit: async () => {
+                                    this.setState({plane_configs: {...state.plane_configs, [active_plane_index]: state.plane_config_tmp}});
+                                    this.setDirty(true);
+                                },
+                                onRemoveClick: async () => {
+                                    this.setState({plane_configs: {...state.plane_configs, [active_plane_index]: {active: false, name: "#" + active_plane_index, latitude: 0, longitude: 0, declination: 0, azimuth: 0, wp: 0}}});
+                                    this.setDirty(true);
+                                }}
+                            })
+                        }
+                        addEnabled={get_active_unsaved_planes().length < SOLAR_FORECAST_PLANES}
+                        addTitle={__("solar_forecast.content.add_plane_config_title")}
+                        addMessage={get_active_unsaved_planes().length == SOLAR_FORECAST_PLANES ? __("solar_forecast.content.add_plane_config_done") : __("solar_forecast.content.add_plane_config_count")(get_active_unsaved_planes().length, SOLAR_FORECAST_PLANES)}
+                        onAddShow={async () => {
+                            this.setState({plane_config_tmp: {active: true, name: "#" + get_next_free_unsaved_plane_index(), latitude: 0, longitude: 0, declination: 0, azimuth: 0, wp: 0}})
+                        }}
+                        onAddGetChildren={() => this.on_get_children()}
+                        onAddSubmit={async () => {
+                            this.setState({plane_configs: {...state.plane_configs, [get_next_free_unsaved_plane_index()]: state.plane_config_tmp}});
+                            this.setDirty(true);
+                        }}
+                    />
                 </ConfigForm>
                 <FormSeparator heading={__("solar_forecast.content.solar_forecast_chart_heading")}/>
-                <FormRow label={__("solar_forecast.content.solar_forecast_now_label")} label_muted={("0" + new Date().getHours()).slice(-2) + ":00 " + __("solar_forecast.content.time_to") + " 23:59"}>
-                    <InputText value={does_forecast_exist() ? get_kwh_now_to_midnight() + " kWh" : __("solar_forecast.content.unknown_not_yet")}/>
+                <FormRow label={__("solar_forecast.content.next_update_in")} help={__("solar_forecast.content.next_update_in_help")}>
+                        <InputText value={get_next_update_string()}/>
+                    </FormRow>
+                <FormRow label={__("solar_forecast.content.solar_forecast_now_label")} label_muted={("0" + new Date(util.get_date_now_1m_update_rate()).getHours()).slice(-2) + ":00 " + __("solar_forecast.content.time_to") + " 23:59"}>
+                    <InputText
+                        value={util.get_value_with_unit(get_kwh_now_to_midnight(), "kWh", 2)}
+                    />
                 </FormRow>
-                <FormRow label={__("solar_forecast.content.solar_forecast_today_label")} label_muted={__("solar_forecast.content.solar_forecast_today_label_muted")}>
-                    <InputText value={does_forecast_exist() ? get_kwh_today()           + " kWh" : __("solar_forecast.content.unknown_not_yet")}/>
-                </FormRow>
-                <FormRow label={__("solar_forecast.content.solar_forecast_tomorrow_label")} label_muted={__("solar_forecast.content.solar_forecast_tomorrow_label_muted")}>
-                    <InputText value={does_forecast_exist() ? get_kwh_tomorrow()        + " kWh" : __("solar_forecast.content.unknown_not_yet")}/>
+                <FormRow label={__("solar_forecast.content.solar_forecast")} label_muted={__("solar_forecast.content.solar_forecast_today_label_muted")}>
+                    <div class="row mx-n1">
+                        <div class="col-md-6 px-1">
+                            <div class="input-group">
+                                <div class="input-group-prepend"><span class="heating-fixed-size input-group-text">{__("solar_forecast.content.solar_forecast_today_label")}</span></div>
+                                <InputText
+                                    value={util.get_value_with_unit(get_kwh_today(), "kWh", 2)}
+                                />
+                            </div>
+                        </div>
+                        <div class="col-md-6 px-1">
+                            <div class="input-group">
+                                <div class="input-group-prepend"><span class="heating-fixed-size input-group-text">{__("solar_forecast.content.solar_forecast_tomorrow_label")}</span></div>
+                                <InputText
+                                    value={util.get_value_with_unit(get_kwh_tomorrow(), "kWh", 2)}
+                                />
+                            </div>
+                        </div>
+                    </div>
                 </FormRow>
                 <div>
                     <div style="position: relative;"> {/* this plain div is neccessary to make the size calculation stable in safari. without this div the height continues to grow */}
@@ -483,45 +532,67 @@ export class SolarForecast extends ConfigComponent<"solar_forecast/config", {}, 
                             loading={__("solar_forecast.content.loading")}>
                             <UplotWrapper
                                 ref={this.uplot_wrapper_ref}
-                                class="solar-forecast--chart pb-3"
+                                class="solar-forecast-chart pb-3"
                                 sub_page="solar_forecast"
                                 color_cache_group="solar_forecast.default"
                                 show={true}
                                 on_mount={() => this.update_uplot()}
                                 legend_time_label={__("solar_forecast.content.time")}
                                 legend_time_with_minutes={true}
-                                legend_div_ref={this.uplot_legend_div_ref}
                                 aspect_ratio={3}
-                                x_height={30}
-                                x_format={{weekday: 'short', hour: '2-digit'}}
+                                x_height={50}
+                                x_format={{hour: '2-digit', minute: '2-digit'}}
                                 x_padding_factor={0}
+                                x_include_date={true}
                                 y_min={0}
-                                y_max={5}
-                                y_unit={"kWh"}
-                                y_label={"kWh"}
+                                y_unit={"W"}
+                                y_label={__("solar_forecast.script.power") + " [W]"}
                                 y_digits={2}
-                                y_skip_upper={true}
-                                y_sync_ref={this.uplot_wrapper_flags_ref}
-                                default_fill={true}
                                 only_show_visible={true}
-                                padding={[null, 5, null, null] as uPlot.Padding}
+                                padding={[null, 20, null, null]}
                             />
                         </UplotLoader>
                     </div>
                 </div>
-                <CollapsedSection label={__("solar_forecast.content.more_information")}>
-                    <FormRow label={__("solar_forecast.content.rate_limit_label")} label_muted={__("solar_forecast.content.rate_limit_label_muted")}>
-                        <InputText value={this.state.state.rate_limit === -1 ? __("solar_forecast.content.unknown_not_yet") : this.state.state.rate_limit}/>
-                    </FormRow>
-                    <FormRow label={__("solar_forecast.content.remaining_requests_label")} label_muted={__("solar_forecast.content.remaining_requests_label_muted")}>
-                        <InputText value={this.state.state.rate_remaining === -1 ?  __("solar_forecast.content.unknown_not_yet") : this.state.state.rate_remaining}/>
-                    </FormRow>
-                    <FormRow label={__("solar_forecast.content.next_api_call_label")} label_muted={__("solar_forecast.content.next_api_call_label_muted")}>
-                        <InputText value={this.state.state.next_api_call === 0 ? __("solar_forecast.content.unknown") : new Date(this.state.state.next_api_call*60*1000).toLocaleString()}/>
-                    </FormRow>
-                </CollapsedSection>
             </SubPage>
         );
+    }
+}
+
+export class SolarForecastStatus extends Component
+{
+    render() {
+        const config = API.get('solar_forecast/config')
+        if (!util.render_allowed() || !config.enable)
+            return <StatusSection name="solar_forecast" />
+
+        return <StatusSection name="solar_forecast">
+            <FormRow label={__("solar_forecast.content.solar_forecast_now_label")} label_muted={("0" + new Date(util.get_date_now_1m_update_rate()).getHours()).slice(-2) + ":00 " + __("solar_forecast.content.time_to") + " 23:59"}>
+                <InputText
+                    value={util.get_value_with_unit(get_kwh_now_to_midnight(), "kWh", 2)}
+                />
+            </FormRow>
+            <FormRow label={__("solar_forecast.content.solar_forecast")} label_muted={__("solar_forecast.content.solar_forecast_today_label_muted")}>
+                <div class="row mx-n1">
+                    <div class="col-md-6 px-1">
+                        <div class="input-group">
+                            <div class="input-group-prepend"><span class="heating-fixed-size input-group-text">{__("solar_forecast.content.solar_forecast_today_label")}</span></div>
+                            <InputText
+                                value={util.get_value_with_unit(get_kwh_today(), "kWh", 2)}
+                            />
+                        </div>
+                    </div>
+                    <div class="col-md-6 px-1">
+                        <div class="input-group">
+                            <div class="input-group-prepend"><span class="heating-fixed-size input-group-text">{__("solar_forecast.content.solar_forecast_tomorrow_label")}</span></div>
+                            <InputText
+                                value={util.get_value_with_unit(get_kwh_tomorrow(), "kWh", 2)}
+                            />
+                        </div>
+                    </div>
+                </div>
+            </FormRow>
+        </StatusSection>;
     }
 }
 

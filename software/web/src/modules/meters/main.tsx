@@ -43,7 +43,7 @@ import { InputTime } from "../../ts/components/input_time";
 import { InputText } from "../../ts/components/input_text";
 import { NavbarItem } from "../../ts/components/navbar_item";
 import { StatusSection } from "../../ts/components/status_section";
-import { HelpCircle, Zap, ZapOff, ChevronRight, BarChart2 } from "react-feather";
+import { HelpCircle, Zap, ZapOff, BarChart2 } from "react-feather";
 
 export function MetersNavbar() {
     return <NavbarItem name="meters" module="meters" title={__("meters.navbar.meters")} symbol={<BarChart2 />} />;
@@ -76,7 +76,6 @@ interface MetersState {
     addMeter: MeterConfig;
     editMeterSlot: number;
     editMeter: MeterConfig;
-    extraShow: boolean[/*meter_slot*/];
 }
 
 export function get_meter_power_index(value_ids: Readonly<number[]>) {
@@ -97,7 +96,7 @@ export function get_meter_power_index(value_ids: Readonly<number[]>) {
     return idx;
 }
 
-function calculate_live_data(offset: number, samples_per_second: number, samples: number[/*meter_slot*/][]): CachedData {
+function calculate_live_data(now: number, offset: number, samples_per_second: number, samples: number[/*meter_slot*/][]): CachedData {
     let timestamp_slot_count: number = 0;
 
     if (samples_per_second == 0) { // implies atmost one sample
@@ -111,7 +110,6 @@ function calculate_live_data(offset: number, samples_per_second: number, samples
     }
 
     let data: CachedData = {timestamps: new Array(timestamp_slot_count), samples: new Array(METERS_SLOTS)};
-    let now = Date.now();
     let start: number;
     let step: number;
 
@@ -142,7 +140,7 @@ function calculate_live_data(offset: number, samples_per_second: number, samples
     return data;
 }
 
-function calculate_history_data(offset: number, samples: number[/*meter_slot*/][]): CachedData {
+function calculate_history_data(now: number, offset: number, samples: number[/*meter_slot*/][]): CachedData {
     const HISTORY_MINUTE_INTERVAL = 4;
 
     let timestamp_slot_count: number = 0;
@@ -154,7 +152,6 @@ function calculate_history_data(offset: number, samples: number[/*meter_slot*/][
     }
 
     let data: CachedData = {timestamps: new Array(timestamp_slot_count), samples: new Array(METERS_SLOTS)};
-    let now = Date.now();
     let step = HISTORY_MINUTE_INTERVAL * 60 * 1000;
 
     // (timestamp_slot_count - 1) because step defines the gaps between two samples.
@@ -189,11 +186,14 @@ function array_append<T>(a: Array<T>, b: Array<T>, tail: number): Array<T> {
 type MetersConfig = API.getType['meters/0/config'];
 
 export class Meters extends ConfigComponent<'meters/0/config', MetersProps, MetersState> {
+    live_processing = false;
     live_initialized = false;
     live_data: CachedData = {timestamps: [], samples: []};
-    pending_live_data: CachedData;
+    pending_live_data: CachedData = {timestamps: [], samples: []};
+    history_processing = false;
     history_initialized = false;
     history_data: CachedData = {timestamps: [], samples: []};
+    pending_history_data: CachedData = {timestamps: [], samples: []};
     uplot_loader_live_ref = createRef();
     uplot_loader_history_ref = createRef();
     uplot_wrapper_live_ref = createRef();
@@ -204,8 +204,8 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
 
     constructor() {
         super('meters/0/config',
-              __("meters.script.save_failed"),
-              __("meters.script.reboot_content_changed"), {
+              () => __("meters.script.save_failed"),
+              () => __("meters.script.reboot_content_changed"), {
                   states: {},
                   configs_plot: {},
                   configs_table: {},
@@ -216,19 +216,18 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
                   addMeter: [MeterClassID.None, null],
                   editMeterSlot: null,
                   editMeter: [MeterClassID.None, null],
-                  extraShow: new Array<boolean>(7),
               });
-
-        this.state.extraShow.fill(false);
 
         for (let meter_slot = 0; meter_slot < METERS_SLOTS; ++meter_slot) {
             this.live_data.samples.push([]);
+            this.pending_live_data.samples.push([]);
             this.history_data.samples.push([]);
+            this.pending_history_data.samples.push([]);
         }
 
         util.addApiEventListener('info/modules', () => {
-            this.update_live_cache();
-            this.update_history_cache();
+            this.initialize_live_cache();
+            this.initialize_history_cache();
         });
 
         util.addApiEventListener_unchecked('evse/meter_config', () => {
@@ -320,14 +319,11 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
         }
 
         util.addApiEventListener("meters/live_samples", () => {
-            if (!this.live_initialized) {
-                // received live_samples before live cache initialization
-                this.update_live_cache();
-                return;
-            }
+            this.initialize_live_cache();
 
+            let now = Date.now();
             let live = API.get("meters/live_samples");
-            let live_extra = calculate_live_data(0, live.samples_per_second, live.samples);
+            let live_extra = calculate_live_data(now, 0, live.samples_per_second, live.samples);
 
             this.pending_live_data.timestamps.push(...live_extra.timestamps);
 
@@ -336,48 +332,32 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
             }
 
             if (this.pending_live_data.timestamps.length >= 5) {
-                this.live_data.timestamps = array_append(this.live_data.timestamps, this.pending_live_data.timestamps, 720);
-
-                for (let meter_slot = 0; meter_slot < METERS_SLOTS; ++meter_slot) {
-                    this.live_data.samples[meter_slot] = array_append(this.live_data.samples[meter_slot], this.pending_live_data.samples[meter_slot], 720);
-                }
-
-                this.pending_live_data.timestamps = [];
-                this.pending_live_data.samples = [];
-
-                for (let meter_slot = 0; meter_slot < METERS_SLOTS; ++meter_slot) {
-                    this.pending_live_data.samples.push([]);
-                }
-
-                if (this.state.chart_selected == "live") {
+                if (this.merge_pending_live_data() && this.state.chart_selected == "live") {
                     this.update_live_uplot();
                 }
             }
         });
 
         util.addApiEventListener("meters/history_samples", () => {
-            if (!this.history_initialized) {
-                // received history_samples before history cache initialization
-                this.update_history_cache();
-                return;
-            }
+            this.initialize_history_cache();
 
+            let now = Date.now();
             let history = API.get("meters/history_samples");
-            let history_samples: number[][] = new Array(METERS_SLOTS);
+            let history_extra = calculate_history_data(now, 0, history.samples);
+
+            this.pending_history_data.timestamps.push(...history_extra.timestamps);
 
             for (let meter_slot = 0; meter_slot < METERS_SLOTS; ++meter_slot) {
-                if (history.samples[meter_slot] !== null) {
-                    history_samples[meter_slot] = array_append(this.history_data.samples[meter_slot], history.samples[meter_slot], 720);
+                this.pending_history_data.samples[meter_slot].push(...history_extra.samples[meter_slot]);
+            }
+
+            if (this.merge_pending_history_data()) {
+                if (this.state.chart_selected.startsWith("history_")) {
+                    this.update_history_uplot();
                 }
+
+                this.update_status_uplot();
             }
-
-            this.history_data = calculate_history_data(0, history_samples);
-
-            if (this.state.chart_selected.startsWith("history_")) {
-                this.update_history_uplot();
-            }
-
-            this.update_status_uplot();
         });
     }
 
@@ -387,22 +367,30 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
         }
     }
 
-    update_live_cache() {
-        this.update_live_cache_async()
+    initialize_live_cache() {
+        if (this.live_processing || this.live_initialized) {
+            return;
+        }
+
+        this.live_processing = true;
+
+        this.initialize_live_cache_async()
             .then((success: boolean) => {
                 if (!success) {
                     window.setTimeout(() => {
-                        this.update_live_cache();
+                        this.initialize_live_cache();
                     }, 100);
 
                     return;
                 }
 
+                this.live_processing = false;
                 this.update_live_uplot();
             });
     }
 
-    async update_live_cache_async() {
+    async initialize_live_cache_async() {
+        let now = Date.now();
         let response: string = '';
 
         try {
@@ -415,8 +403,25 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
         let payload = JSON.parse(response);
 
         this.live_initialized = true;
-        this.live_data = calculate_live_data(payload.offset, payload.samples_per_second, payload.samples);
-        this.pending_live_data = {timestamps: [], samples: []}
+        this.live_data = calculate_live_data(now, payload.offset, payload.samples_per_second, payload.samples);
+
+        this.merge_pending_live_data();
+        return true;
+    }
+
+    merge_pending_live_data() {
+        if (!this.live_initialized) {
+            return false;
+        }
+
+        this.live_data.timestamps = array_append(this.live_data.timestamps, this.pending_live_data.timestamps, 720);
+
+        for (let meter_slot = 0; meter_slot < METERS_SLOTS; ++meter_slot) {
+            this.live_data.samples[meter_slot] = array_append(this.live_data.samples[meter_slot], this.pending_live_data.samples[meter_slot], 720);
+        }
+
+        this.pending_live_data.timestamps = [];
+        this.pending_live_data.samples = [];
 
         for (let meter_slot = 0; meter_slot < METERS_SLOTS; ++meter_slot) {
             this.pending_live_data.samples.push([]);
@@ -425,23 +430,31 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
         return true;
     }
 
-    update_history_cache() {
-        this.update_history_cache_async()
+    initialize_history_cache() {
+        if (this.history_processing || this.history_initialized) {
+            return;
+        }
+
+        this.history_processing = true;
+
+        this.initialize_history_cache_async()
             .then((success: boolean) => {
                 if (!success) {
                     window.setTimeout(() => {
-                        this.update_history_cache();
+                        this.initialize_history_cache();
                     }, 100);
 
                     return;
                 }
 
+                this.history_processing = false;
                 this.update_history_uplot();
                 this.update_status_uplot();
             });
     }
 
-    async update_history_cache_async() {
+    async initialize_history_cache_async() {
+        let now = Date.now();
         let response: string = '';
 
         try {
@@ -454,7 +467,29 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
         let payload = JSON.parse(response);
 
         this.history_initialized = true;
-        this.history_data = calculate_history_data(payload.offset, payload.samples);
+        this.history_data = calculate_history_data(now, payload.offset, payload.samples);
+
+        this.merge_pending_history_data();
+        return true;
+    }
+
+    merge_pending_history_data() {
+        if (!this.history_initialized) {
+            return false;
+        }
+
+        this.history_data.timestamps = array_append(this.history_data.timestamps, this.pending_history_data.timestamps, 720);
+
+        for (let meter_slot = 0; meter_slot < METERS_SLOTS; ++meter_slot) {
+            this.history_data.samples[meter_slot] = array_append(this.history_data.samples[meter_slot], this.pending_history_data.samples[meter_slot], 720);
+        }
+
+        this.pending_history_data.timestamps = [];
+        this.pending_history_data.samples = [];
+
+        for (let meter_slot = 0; meter_slot < METERS_SLOTS; ++meter_slot) {
+            this.pending_history_data.samples.push([]);
+        }
 
         return true;
     }
@@ -542,7 +577,7 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
             await API.save_unchecked(
                 `meters/${meter_slot}/config`,
                 this.state.configs_table[meter_slot],
-                __("meters.script.save_failed"),
+                () => __("meters.script.save_failed"),
                 meter_slot == METERS_SLOTS - 1 ? this.reboot_string : undefined);
         }
     }
@@ -573,8 +608,8 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
             <SubPage name="meters" colClasses="col-xl-10">
                 {show_plot ? <><PageHeader title={__("meters.content.meters")}/>
 
-                <FormSeparator heading={__("meters.status.power_history")} first={true} colClasses={"justify-content-between align-items-center col"} extraClasses={"pr-0 pr-lg-3"} >
-                    <div class="mb-2">
+                <FormSeparator heading={__("meters.status.power_history")} first={true} >
+                    <div class="mb-2 ml-auto col-auto">
                         <InputSelect value={this.state.chart_selected} onValue={(v) => {
                             let chart_selected: "history_48"|"history_24"|"history_12"|"history_6"|"history_3"|"live" = v as any;
 
@@ -625,12 +660,13 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
                                             legend_time_label={__("meters.script.time")}
                                             legend_time_with_seconds={true}
                                             aspect_ratio={3}
-                                            x_height={30}
+                                            x_height={35}
+                                            x_format={{hour: '2-digit', minute: '2-digit'}}
                                             x_padding_factor={0}
                                             x_include_date={false}
                                             y_diff_min={100}
                                             y_unit="W"
-                                            y_label={__("meters.script.power") + " [Watt]"}
+                                            y_label={__("meters.script.power") + " [W]"}
                                             y_digits={0} />
                         </UplotLoader>
                         <UplotLoader ref={this.uplot_loader_history_ref}
@@ -648,12 +684,13 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
                                             legend_time_with_seconds={false}
                                             aspect_ratio={3}
                                             x_height={50}
+                                            x_format={{hour: '2-digit', minute: '2-digit'}}
                                             x_padding_factor={0}
                                             x_include_date={true}
                                             y_min={0}
                                             y_max={1500}
                                             y_unit="W"
-                                            y_label={__("meters.script.power") + " [Watt]"}
+                                            y_label={__("meters.script.power") + " [W]"}
                                             y_digits={0} />
                         </UplotLoader>
                     </div>
@@ -859,16 +896,16 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
                                                 <Button size="sm" className="form-control" variant="danger" style="height: calc(1.5em + .5rem + 2px);" onClick={async () => {
                                                     const modal = util.async_modal_ref.current;
                                                     if (!await modal.show({
-                                                            title: __("meters.content.reset_modal"),
-                                                            body: __("meters.content.reset_modal_body")(get_meter_name(state.configs_table, meter_slot)),
-                                                            no_text: __("meters.content.reset_modal_abort"),
-                                                            yes_text: __("meters.content.reset_modal_confirm"),
+                                                            title: () => __("meters.content.reset_modal"),
+                                                            body: () => __("meters.content.reset_modal_body")(get_meter_name(state.configs_table, meter_slot)),
+                                                            no_text: () => __("meters.content.reset_modal_abort"),
+                                                            yes_text: () => __("meters.content.reset_modal_confirm"),
                                                             no_variant: "secondary",
                                                             yes_variant: "danger"
                                                         }))
                                                         return;
 
-                                                    API.call_unchecked(`meters/${meter_slot}/reset`, null, __("meters.content.reset_failed"))
+                                                    API.call_unchecked(`meters/${meter_slot}/reset`, null, () => __("meters.content.reset_failed"))
                                                     }}>{__("meters.content.reset")}</Button>
                                             </div>
                                         </div>
@@ -919,12 +956,7 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
 
                                 return {
                                     columnValues: [
-                                        <span class="row mx-n1 align-items-center"><span class="col-auto px-1"><Button className="mr-2" size="sm"
-                                            onClick={() => {
-                                                this.setState({extraShow: state.extraShow.map((show, i) => meter_slot == i ? !show : show)});
-                                            }}>
-                                            <ChevronRight {...{id:`meter-${meter_slot}-chevron`, class: state.extraShow[meter_slot] ? "rotated-chevron" : "unrotated-chevron"} as any}/>
-                                            </Button></span><span class="col px-1">{get_meter_name(state.configs_table, meter_slot)}</span></span>,
+                                        get_meter_name(state.configs_table, meter_slot),
                                         util.hasValue(power) ? util.toLocaleFixed(power, 0) + " W" : undefined,
                                         util.hasValue(energy_import) ? util.toLocaleFixed(energy_import, 3) + " kWh" : undefined,
                                         util.hasValue(energy_export) ? util.toLocaleFixed(energy_export, 3) + " kWh" : undefined,
@@ -936,7 +968,6 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
                                             )}
                                         </ButtonGroup>
                                     ],
-                                    extraShow: this.state.extraShow[meter_slot],
                                     extraFieldName: __("meters.content.detailed_values"),
                                     extraValue: extraValue,
                                     fieldWithBox: [true, true, true, true, false],
@@ -961,7 +992,7 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
                                         }
 
                                         for (let meter_class in config_plugins) {
-                                            classes.push([meter_class.toString(), config_plugins[meter_class].name])
+                                            classes.push([meter_class.toString(), config_plugins[meter_class].name()])
                                         }
 
                                         let rows: ComponentChild[] = [<>
@@ -1039,7 +1070,7 @@ export class Meters extends ConfigComponent<'meters/0/config', MetersProps, Mete
                                 }
 
                                 for (let meter_class in config_plugins) {
-                                    classes.push([meter_class.toString(), config_plugins[meter_class].name])
+                                    classes.push([meter_class.toString(), config_plugins[meter_class].name()])
                                 }
 
                                 let rows: ComponentChild[] = [
@@ -1184,7 +1215,7 @@ export class MetersStatus extends Component<{}, MetersStatusState> {
                         <div style="position: relative;"> {/* this plain div is neccessary to make the size calculation stable in safari. without this div the height continues to grow */}
                             <UplotLoader ref={this.uplot_loader_ref}
                                         show={true}
-                                        marker_class={'h4'}
+                                        marker_class="h4"
                                         no_data={__("meters.content.no_data")}
                                         loading={__("meters.content.loading")} >
                                 <UplotWrapper ref={this.uplot_wrapper_ref}
@@ -1204,12 +1235,13 @@ export class MetersStatus extends Component<{}, MetersStatusState> {
                                             legend_time_with_seconds={false}
                                             aspect_ratio={3}
                                             x_height={50}
+                                            x_format={{hour: '2-digit', minute: '2-digit'}}
                                             x_padding_factor={0}
                                             x_include_date={true}
                                             y_min={0}
                                             y_max={1500}
                                             y_unit="W"
-                                            y_label={__("meters.script.power") + " [Watt]"}
+                                            y_label={__("meters.script.power") + " [W]"}
                                             y_digits={0} />
                             </UplotLoader>
                         </div>

@@ -14,30 +14,20 @@ let x = {
             "config_error_phase_switching": "Phasenumschaltung oder Schütz nicht konfiguriert",
             "config_error_no_max_current": "Maximaler Gesamtstrom der Wallboxen nicht konfiguriert",
             "config_error_no_chargers": "Keine Wallboxen konfiguriert",
-            "config_error_excess_no_meter": "Überschussladen aktiviert aber kein Stromzähler eingerichtet"
+            "config_error_excess_no_meter": "Überschussladen aktiviert aber kein Stromzähler eingerichtet oder Stromzähler liefert keine Gesamtleistung",
+            "config_error_dlm_no_meter": "Dynamisches Lastmanagement aktiviert aber kein Stromzähler eingerichtet oder Stromzähler liefert keine gerichteten Phasenströme"
         },
         "navbar": {
-            "power_manager_settings": "Einstellungen",
             "pv_excess_settings": "PV-Überschussladen"
         },
         "content": {
-            "page_header": "Energy Manager",
-
-            "enable_pm": "Power Manager aktiviert",
-            "enable_pm_desc": "Passt die verfügbare Ladeleistung automatisch an",
+            "em_proxy_warning": "Wenn der Energy Manager von einem anderen Lastmanager gesteuert wird, muss PV-Überschussladen auf dem Lastmanager aktiviert werden und nicht hier.",
             "cm_requirements_warning": null,
-            "cm_multiple_chargers_warning": "Um das PV-Überschussladen mit dieser Wallbox zu nutzen, sollten im Lastmanagement keine weiteren Wallboxen als kontrollierte Wallboxen eingetragen sein.",
 
-            "contactor_installed": "Schütz angeschlossen",
-            "contactor_installed_desc": "Der Energiemanager verfügt über ein Schütz, mit dem die von ihm kontrollierten Wallboxen zwischen ein- und dreiphasigem Anschluss umgeschaltet werden können.",
             "phase_switching_mode": "Phasenumschaltung",
-            "fixed_single_phase": "Fest einphasig angeschlossen",
-            "fixed_three_phases": "Fest dreiphasig angeschlossen",
             "automatic": "Automatisch",
-            "always_single_phase": "Immer einphasig",
-            "always_three_phases": "Immer dreiphasig",
-            "pv1p_fast3p": "PV-Modus einphasig, Schnell-Modus dreiphasig",
             "external_control": "Externe Steuerung (EVCC)",
+            "external_control_unavailable": "Externe Steuerung (EVCC) – keine kontrollierte Wallbox für Phasenumschaltung",
             "external_control_notification": "Externe Steuerung für die Phasenumschaltung ist aktiv. Dadurch werden alle Einstellungen im Zusammenhang mit PV-Überschussladen deaktiviert.",
 
             "header_excess_charging": "Photovoltaik-Überschussladen",
@@ -51,6 +41,7 @@ let x = {
             "meter_slot_grid_power_select": "Auswählen...",
             "meter_slot_grid_power_none": "Kein Stromzähler konfiguriert",
             "meter_slot_grid_power_missing_value": "Summe der gerichteten Wirkleistung fehlt",
+            "meter_slot_grid_power_in_use_by_battery": "als Batteriespeicher-Stromzähler ausgewählt",
             "guaranteed_power": "Min + PV: Mindestladeleistung",
             "guaranteed_power_muted": "Leistung, die im Min + PV-Modus zum Laden von Fahrzeugen aus dem Netz bezogen werden darf.",
             "target_power_from_grid": "Soll-Netzbezug",
@@ -59,9 +50,12 @@ let x = {
             "control_behavior_muted": <><a href="{{{manual_url}}}">siehe Betriebsanleitung für Details</a></>,
             "target_power_n200": "Sehr konservativ (− 200 W)",
             "target_power_n100": "Konservativ (− 100 W)",
-            "target_power_n50": "Leicht konservativ (− 50 W) – lädt Batteriespeicher zuerst",
-            "target_power_0": "Ausgeglichen (± 0 W) – empfohlen ohne Batteriespeicher",
-            "target_power_p50": "Leicht aggressiv (+ 50 W) – verwendet Batteriespeicher für Fahrzeugladevorgänge",
+            "target_power_n50_with_battery_meter": "Leicht konservativ (− 50 W)",
+            "target_power_n50_without_battery_meter": "Leicht konservativ (− 50 W) – lädt Batteriespeicher zuerst",
+            "target_power_0_with_battery_meter": "Ausgeglichen (± 0 W)",
+            "target_power_0_without_battery_meter": "Ausgeglichen (± 0 W) – empfohlen ohne Batteriespeicher",
+            "target_power_p50_with_battery_meter": "Leicht aggressiv (+ 50 W)",
+            "target_power_p50_without_battery_meter": "Leicht aggressiv (+ 50 W) – verwendet Batteriespeicher für Fahrzeugladevorgänge",
             "target_power_p100": "Aggressiv (+ 100 W)",
             "target_power_p200": "Sehr aggressiv (+ 200 W)",
             "cloud_filter": "Wolkenfilter",
@@ -71,9 +65,21 @@ let x = {
             "cloud_filter_medium": "Mittel",
             "cloud_filter_strong": "Stark",
 
-            "header_expert_settings": "Experteneinstellungen",
-            "hysteresis_time": "Hysterese-Zeit",
-            "hysteresis_time_muted": "Minimale Wartezeit vor Phasenumschaltungen bzw. Anfang und Ende eines Ladevorganges, um die Ladeelektronik des Fahrzeuges nicht durch häufige Schaltvorgänge zu belasten."
+            "header_battery_storage": "Batteriespeicher",
+            "meter_slot_battery_power": "Stromzähler",
+            "meter_slot_battery_power_muted": "des Batteriespeichers",
+            "meter_slot_battery_power_none": "Kein Speicher",
+            "meter_slot_battery_power_missing_value": "Summe der gerichteten Wirkleistung oder gerichtete DC-Leistung fehlen",
+            "meter_slot_battery_power_in_use_by_grid": "als Netzbezugs-Stromzähler ausgewählt",
+            "battery_mode": "Speicherpriorität",
+            "battery_mode_prefer_chargers": "Wallboxen bevorzugen, überschüssige Leistung für Speicher",
+            "battery_mode_prefer_battery": "Speicher bevorzugen, überschüssige Leistung für Wallboxen",
+            "battery_inverted": "Energieflussrichtung des Speichers",
+            "battery_inverted_n": "Normal: positive Leistung beim Laden, negative Leistung beim Entladen",
+            "battery_inverted_i": "Invertiert: negative Leistung beim Laden, positive Leistung beim Entladen",
+            "battery_deadzone": "Bezugs- und Einspeise-Toleranz",
+            "battery_deadzone_muted": "am Netzanschluss, während der Speicher aktiv ist",
+            "battery_deadzone_help": "Die meisten Batteriespeicher erlauben einen gewisse Bezug und Einspeisung beim Entladen bzw. Laden. Die Toleranz sollte auf das 1,5-fache des erwarteten Bezugs und Einspeisung gestellt werden. Lässt der Speicher einen Bezug von 50 W und eine Einspeisung von -50 W zu, sollte die Toleranz auf 75 W gestellt werden."
         },
         "automation": {
             "slot": "Blockierungsslot",

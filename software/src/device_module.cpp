@@ -22,16 +22,6 @@
 #include "event_log_prefix.h"
 #include "main_dependencies.h"
 
-int device_module_printfln(const char *fmt, ...)
-{
-    va_list args;
-    va_start(args, fmt);
-    int result = logger.printfln(fmt, args);
-    va_end(args);
-
-    return result;
-}
-
 void DeviceModuleBase::pre_setup()
 {
     identity = Config::Object({
@@ -46,7 +36,9 @@ void DeviceModuleBase::pre_setup()
 
 void DeviceModuleBase::register_urls()
 {
-    api.addCommand(url_prefix + "/reflash", Config::Null(), {}, [this]() {
+    String url_prefix_str(url_prefix);
+
+    api.addCommand(url_prefix_str + "/reflash", Config::Null(), {}, [this](String &/*errmsg*/) {
         uint16_t device_id = get_device_id();
         TF_TFP *tfp = tf_hal_get_tfp(&hal, nullptr, nullptr, &device_id, false);
 
@@ -55,13 +47,13 @@ void DeviceModuleBase::register_urls()
         }
     }, true);
 
-    api.addCommand(url_prefix + "/reset", Config::Null(), {}, [this]() {
+    api.addCommand(url_prefix_str + "/reset", Config::Null(), {}, [this](String &/*errmsg*/) {
         reset();
 
         initialized = false;
     }, true);
 
-    api.addState(url_prefix + "/identity", &identity);
+    api.addState(url_prefix_str + "/identity", &identity);
 }
 
 uint16_t DeviceModuleBase::get_device_id()
@@ -85,13 +77,13 @@ void DeviceModuleBase::update_identity(TF_TFP *tfp)
     defer {tf_unknown_destroy(&unknown);};
 
     if (rc != TF_E_OK) {
-        device_module_printfln("Creation of unknown device failed with rc %i", rc);
+        logger.printfln("Creation of unknown device failed with rc %i", rc);
         return;
     }
 
     rc = tf_unknown_get_identity(&unknown, uid, connected_uid, &position, hw_version, fw_version, &device_identifier);
     if (rc != TF_E_OK) {
-        device_module_printfln("Getting identity of unknown device failed with rc %i", rc);
+        logger.printfln("Getting identity of unknown device failed with rc %i", rc);
     }
 
     String value(uid);

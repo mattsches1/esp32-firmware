@@ -1,5 +1,6 @@
 /* esp32-firmware
  * Copyright (C) 2020-2021 Erik Fleckstein <erik@tinkerforge.com>
+ * Copyright (C) 2024 Olaf Lüke <olaf@tinkerforge.com>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -58,9 +59,9 @@ void MqttAutoDiscovery::setup()
 
     prepare_topics();
 
-    task_scheduler.scheduleOnce([this](){
+    task_id = task_scheduler.scheduleOnce([this](){
         this->announce_next_topic(0);
-    }, 1000);
+    }, 1_s);
 
     // <discovery_prefix>/+/<node_id>/+/config
     String discovery_topic;
@@ -79,6 +80,16 @@ void MqttAutoDiscovery::setup()
 void MqttAutoDiscovery::register_urls()
 {
     api.addPersistentConfig("mqtt/auto_discovery_config", &config);
+}
+
+void MqttAutoDiscovery::register_events()
+{
+#if MODULE_SYSTEM_AVAILABLE()
+    event.registerEvent("system/i18n_config", {"language"}, [this](const Config */*language*/) {
+        reschedule_announce_next_topic();
+        return EventResult::OK;
+    });
+#endif
 }
 
 void MqttAutoDiscovery::prepare_topics()
@@ -161,13 +172,24 @@ void MqttAutoDiscovery::check_discovery_topic(const char *topic, size_t topic_le
     mqtt.publish(tp, String(), true);
 }
 
+void MqttAutoDiscovery::reschedule_announce_next_topic()
+{
+    if (config_in_use.get("auto_discovery_mode")->asEnum<MqttAutoDiscoveryMode>() == MqttAutoDiscoveryMode::DISCOVERY_DISABLED)
+        return;
+
+    task_scheduler.cancel(task_id);
+    task_id = task_scheduler.scheduleOnce([this](){
+        this->announce_next_topic(0);
+    }, 1_s);
+}
+
 void MqttAutoDiscovery::announce_next_topic(uint32_t topic_num)
 {
-    uint32_t delay_ms = 0;
+    seconds_t delay = 0_s;
 
     if (mqtt.state.get("connection_state")->asEnum<MqttConnectionState>() != MqttConnectionState::Connected) {
         topic_num = 0;
-        delay_ms = 5 * 1000;
+        delay = 5_s;
     } else {
         // deal with one topic
         if (api.hasFeature(mqtt_discovery_topic_infos[topic_num].feature)) {
@@ -175,7 +197,11 @@ void MqttAutoDiscovery::announce_next_topic(uint32_t topic_num)
             if (static_info) { // No static info? Skip topic.
                 const String &client_name = mqtt.client_name;
                 const String &topic_prefix = mqtt.global_topic_prefix;
+#if MODULE_SYSTEM_AVAILABLE()
+                const char *name = (system_.get_system_language() == Language::English) ? mqtt_discovery_topic_infos[topic_num].name_en : mqtt_discovery_topic_infos[topic_num].name_de;
+#else
                 const char *name = mqtt_discovery_topic_infos[topic_num].name_de;
+#endif
 
                 // FIXME: convert to StringBuilder and TFJson
                 String payload;
@@ -241,11 +267,11 @@ void MqttAutoDiscovery::announce_next_topic(uint32_t topic_num)
 
         if (++topic_num >= TOPIC_COUNT) {
             topic_num = 0;
-            delay_ms = 15 * 60 * 1000;
+            delay = 15_m;
         }
     }
 
-    task_scheduler.scheduleOnce([this, topic_num](){
+    task_id = task_scheduler.scheduleOnce([this, topic_num](){
         this->announce_next_topic(topic_num);
-    }, delay_ms);
+    }, delay);
 }

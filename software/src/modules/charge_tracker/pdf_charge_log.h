@@ -17,6 +17,8 @@
  * Boston, MA 02111-1307, USA.
  */
 
+#pragma once
+
 #include <stdint.h>
 #include <algorithm>
 
@@ -30,4 +32,4 @@ int init_pdf_generator(WebServerRequest *request,
                        int letterhead_lines,
                        const char *table_header,
                        uint16_t tracked_charges,
-                       std::function<int(const char **)> table_lines_cb);
+                       const std::function<int(const char **)> &table_lines_cb);

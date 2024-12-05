@@ -23,7 +23,9 @@ let x = {
             "average_price_today": "Durchschnittspreis heute",
             "average_price_tomorrow": "Durchschnittspreis morgen",
             "pv_yield_forecast_today": "PV-Ertragsprognose heute",
-            "pv_yield_forecast_tomorrow": "PV-Ertragsprognose morgen"
+            "pv_yield_forecast_tomorrow": "PV-Ertragsprognose morgen",
+            "setting": "Einstellung",
+            "unconfigured": "nicht konfiguriert"
         },
         "script": {
             "save_failed": "Speichern der Displayeinstellungen fehlgeschlagen",

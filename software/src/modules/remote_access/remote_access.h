@@ -17,6 +17,8 @@
  * Boston, MA 02111-1307, USA.
  */
 
+#pragma once
+
 #include <WireGuard-ESP32.h>
 #include <esp_http_client.h>
 #include <queue>
@@ -52,6 +54,7 @@ public:
     void pre_setup() override;
     void setup() override;
     void register_urls() override;
+    void register_events() override;
 
 private:
     void resolve_management();
@@ -74,6 +77,7 @@ private:
     int inner_socket = -1;
     uint16_t in_seq_number = 0;
     bool management_request_done = false;
+    uint64_t task_id = 0;
 
     std::unique_ptr<AsyncHTTPSClient> https_client;
     String response_body;
