@@ -51,7 +51,6 @@
                 "description": "Time for which the charging is interrupted when switching phases"
             },
 
-            "low_level_state": "Low Level State",
             "channel_states": {
                 "title": "Channel states",
                 "description": "States of I/O channels (left=output, right=input)"

@@ -147,7 +147,7 @@ function array_append<T>(a: Array<T>, b: Array<T>, tail: number): Array<T> {
     return a.slice(-tail);
 }
 
-export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {status_ref?: RefObject<PhaseSwitcherStatus>},PhaseSwitcherConfig & PhaseSwitcherState> {
+export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {status_ref?: RefObject<PhaseSwitcherStatus>}, PhaseSwitcherState> {
     live_initialized = false;
     live_data: CachedData = {timestamps: [], samples: []};
     pending_live_data: CachedData;
@@ -160,16 +160,10 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {sta
 
     constructor() {
         super('phase_switcher/config',
-                __("phase_switcher.script.save_failed"),
-                __("phase_switcher.script.reboot_content_changed"), {
+                () => __("phase_switcher.script.save_failed"),
+                () => __("phase_switcher.script.reboot_content_changed"), {
                     chart_selected: "history_48",
                 });
-
-        for (let channel_index = 0; channel_index < 3; ++channel_index) {
-        // for (let meter_slot = 0; meter_slot < METERS_SLOTS; ++meter_slot) {
-            this.live_data.samples.push([]);
-            this.history_data.samples.push([]);
-        }
 
         util.addApiEventListener('phase_switcher/state', () => {
             this.setState({state: API.get('phase_switcher/state')});
@@ -620,7 +614,7 @@ export class PhaseSwitcher extends ConfigComponent<'phase_switcher/config', {sta
                     </div>
 
                     {/* Low Level State */}
-                    <CollapsedSection label={__("phase_switcher.content.low_level_state")}>
+                    <CollapsedSection>
                         <FormRow label={__("phase_switcher.content.channel_states.title")} label_muted={__("phase_switcher.content.channel_states.description")}>
                             <div class="row mx-n1">
                                 <div class="mb-1 col-6 px-1">
@@ -725,7 +719,7 @@ export class PhaseSwitcherStatus extends Component<{}, PhaseSwitcherStatusState>
                 <FormRow label={__("phase_switcher.status.quick_charging")}>
                     <Button variant="primary" className="form-control"
                         disabled={!(state.state.sequencer_state == 1 || state.state.sequencer_state == 50)}
-                        onClick={() =>  API.call('phase_switcher/start_quick_charging', {}, __("phase_switcher.script.start_quick_charging_failed"))}>
+                        onClick={() =>  API.call('phase_switcher/start_quick_charging', {}, () => __("phase_switcher.script.start_quick_charging_failed"))}>
                         {__("phase_switcher.status.start_quick_charging")}
                     </Button>                            
                 </FormRow>

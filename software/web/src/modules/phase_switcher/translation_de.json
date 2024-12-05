@@ -51,7 +51,6 @@
                 "description": "Zeit, für die das Laden bei einer Umschaltung unterbrochen wird"
             },
 
-            "low_level_state": "Low-Level-Zustand",
             "channel_states": {
                 "title": "Kanalzustände",
                 "description": "Zustand der E/A-Kanäle (links=Ausgänge, rechts=Eingänge)"
