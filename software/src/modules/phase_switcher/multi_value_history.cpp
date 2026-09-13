@@ -18,7 +18,13 @@
  */
 
 #include "multi_value_history.h"
-#include "../meter/module_dependencies.h"
+#include "generated/module_dependencies.h"
+#include "modules/web_server/web_server.h"
+#include "tools.h"
+#include "tools/printf.h"
+#include <esp_timer.h>
+
+extern WebServer server;
 
 #include "gcc_warnings.h"
 #ifdef __GNUC__
@@ -56,7 +62,7 @@ void MultiValueHistory::setup()
             history[j].push(val_min);
         }
 
-        for (size_t i = 0; i < live[i].size(); ++i) {
+        for (size_t i = 0; i < live[j].size(); ++i) {
             //float f = 5000.0 * sin(PI/120.0 * i) + 5000.0;
             // Use negative state to mark that these are pre-filled.
             live[i].push(val_min);
@@ -75,17 +81,17 @@ void MultiValueHistory::register_urls(String base_url)
     server.on(("/" + base_url + "/history").c_str(), HTTP_GET, [this](WebServerRequest request) {
         const size_t buf_size = MULTI_VALUE_RING_BUF_SIZE * MULTI_VALUE_HISTORY_NUMBER_OF_VALUES * (chars_per_value + 3) + 100;
         std::unique_ptr<char[]> buf{new char[buf_size]};
-        size_t buf_written = format_history(millis(), buf.get(), buf_size);
+        size_t buf_written = format_history(static_cast<uint32_t>(esp_timer_get_time() / 1000), buf.get(), buf_size);
         
-        return request.send(200, "application/json; charset=utf-8", buf.get(), static_cast<ssize_t>(buf_written));
+        return request.send(200, "application/json; charset=utf-8", buf.get(), buf_written);
     });
 
     server.on(("/" + base_url + "/live").c_str(), HTTP_GET, [this](WebServerRequest request) {
         const size_t buf_size = MULTI_VALUE_RING_BUF_SIZE * 3 * (chars_per_value + 3) + 100;
         std::unique_ptr<char[]> buf{new char[buf_size]};
-        size_t buf_written = format_live(millis(), buf.get(), buf_size);
+        size_t buf_written = format_live(static_cast<uint32_t>(esp_timer_get_time() / 1000), buf.get(), buf_size);
 
-        return request.send(200, "application/json; charset=utf-8", buf.get(), static_cast<ssize_t>(buf_written));
+        return request.send(200, "application/json; charset=utf-8", buf.get(), buf_written);
     });
 
 
@@ -134,7 +140,7 @@ void MultiValueHistory::add_sample(float sample[MULTI_VALUE_HISTORY_NUMBER_OF_VA
 void MultiValueHistory::tick(uint32_t now, bool update_history, MULTI_VALUE_HISTORY_VALUE_TYPE *live_sample[MULTI_VALUE_HISTORY_NUMBER_OF_VALUES], MULTI_VALUE_HISTORY_VALUE_TYPE *history_sample[MULTI_VALUE_HISTORY_NUMBER_OF_VALUES])
 {
     MULTI_VALUE_HISTORY_VALUE_TYPE val_min = std::numeric_limits<MULTI_VALUE_HISTORY_VALUE_TYPE>::lowest();
-    MULTI_VALUE_HISTORY_VALUE_TYPE live_val[MULTI_VALUE_HISTORY_NUMBER_OF_VALUES];
+    MULTI_VALUE_HISTORY_VALUE_TYPE *live_val = live_sample_values;
 
     if (sample_count > 0) {
         for(int j = 0; j < MULTI_VALUE_HISTORY_NUMBER_OF_VALUES; ++j){
@@ -162,7 +168,9 @@ void MultiValueHistory::tick(uint32_t now, bool update_history, MULTI_VALUE_HIST
         live[j].push(live_val[j]);
     }
 
-    *live_sample = live_val;
+    for (int j = 0; j < MULTI_VALUE_HISTORY_NUMBER_OF_VALUES; ++j) {
+        live_sample[j] = &live_val[j];
+    }
     live_last_update = now;
     end_this_interval = live_last_update;
 
@@ -184,7 +192,7 @@ void MultiValueHistory::tick(uint32_t now, bool update_history, MULTI_VALUE_HIST
     }
 
     if (update_history) {
-        MULTI_VALUE_HISTORY_VALUE_TYPE history_val[MULTI_VALUE_HISTORY_NUMBER_OF_VALUES];
+        MULTI_VALUE_HISTORY_VALUE_TYPE *history_val = history_sample_values;
 
         if (valid_samples_this_interval == 0) {
             for(int j = 0; j < MULTI_VALUE_HISTORY_NUMBER_OF_VALUES; ++j){
@@ -201,7 +209,9 @@ void MultiValueHistory::tick(uint32_t now, bool update_history, MULTI_VALUE_HIST
             sum_this_interval[j] = 0;
         }
 
-        *history_sample = history_val;
+        for (int j = 0; j < MULTI_VALUE_HISTORY_NUMBER_OF_VALUES; ++j) {
+            history_sample[j] = &history_val[j];
+        }
         history_last_update = now;
 
         samples_last_interval = all_samples_this_interval;
@@ -220,7 +230,7 @@ size_t MultiValueHistory::format_live(uint32_t now, char *buf, size_t buf_size)
     size_t buf_written = 0;
     uint32_t offset = now - live_last_update;
 
-    buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, "{\"offset\":%u,\"samples_per_second\":%f,\"samples\":[", offset, static_cast<double>(samples_per_second()));
+    buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, "{\"offset\":%lu,\"samples_per_second\":%f,\"samples\":[", static_cast<unsigned long>(offset), static_cast<double>(samples_per_second()));
 
     if (buf_written < buf_size) {
         buf_written += format_live_samples(buf + buf_written, buf_size - buf_written);
@@ -274,7 +284,7 @@ size_t MultiValueHistory::format_history(uint32_t now, char *buf, size_t buf_siz
     size_t buf_written = 0;
     uint32_t offset = now - history_last_update;
 
-    buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, "{\"offset\":%u,\"samples\":[", offset);
+    buf_written += snprintf_u(buf + buf_written, buf_size - buf_written, "{\"offset\":%lu,\"samples\":[", static_cast<unsigned long>(offset));
 
     if (buf_written < buf_size) {
         buf_written += format_history_samples(buf + buf_written, buf_size - buf_written);

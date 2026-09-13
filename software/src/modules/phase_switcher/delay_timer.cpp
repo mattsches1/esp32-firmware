@@ -16,7 +16,7 @@
  */
 #include "delay_timer.h"
 
-#include "event_log.h"
+#include "generated/module_dependencies.h"
 #include "tools.h"
 
 extern EventLog logger;
@@ -25,12 +25,12 @@ bool DelayTimer::on_delay(bool signal, uint32_t delay_ms)
 {
     if (!signal) start_time_on = millis();
     current_value_on_delay = min((uint32_t)(millis() - start_time_on), delay_ms);
-    return (deadline_elapsed(start_time_on + delay_ms) && millis() > delay_ms);
+    return millis() - start_time_on >= delay_ms;
 }
 
 bool DelayTimer::off_delay(bool signal, uint32_t delay_ms)
 {
     if (signal) start_time_off = millis();
     current_value_off_delay = min((uint32_t)(millis() - start_time_off), delay_ms);
-    return (!deadline_elapsed(start_time_off + delay_ms) && millis() > delay_ms);
+    return millis() - start_time_off >= delay_ms;
 }

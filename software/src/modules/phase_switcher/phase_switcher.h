@@ -21,6 +21,7 @@
 #include "bindings/bricklet_industrial_digital_in_4_v2.h"
 
 #include "config.h"
+#include "modules/event_log/event_log.h"
 
 #include "bricklet.h"
 #include "device_module.h"
@@ -168,5 +169,7 @@ private:
     bool contactor_error;
 
     MultiValueHistory power_history;
+    bool initialized = false;
+    uint32_t history_last_slot = 0;
 };
                                     
