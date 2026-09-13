@@ -22,11 +22,14 @@
 #include "generated/module_dependencies.h"
 #include "tools.h"
 #include "modules/web_server/web_server.h"
+#include "tools/string_builder.h"
 #include "modules.h"
 #include "delay_timer.h"
 
 extern TF_HAL hal;
 extern WebServer server;
+
+static constexpr size_t PHASE_SWITCHER_HISTORY_JSON_SIZE = HISTORY_RING_BUF_SIZE * 3 * 12 + 100;
 
 void PhaseSwitcher::pre_setup()
 {
@@ -115,7 +118,7 @@ void PhaseSwitcher::setup()
 
     api.addFeature("phase_switcher");
 
-    task_scheduler.scheduleWithFixedDelay([this](){
+    task_scheduler.scheduleUncancelable([this](){
         this->handle_button();
         this->handle_evse();
         this->sequencer();
@@ -123,151 +126,31 @@ void PhaseSwitcher::setup()
         this->contactor_check();
     }, 0_ms, 250_ms);
 
-    task_scheduler.scheduleWithFixedDelay([this](){
+    task_scheduler.scheduleUncancelable([this](){
         this->monitor_requested_phases();
     }, 100_ms, 1000_ms);
 
-    task_scheduler.scheduleWithFixedDelay([this](){
+    task_scheduler.scheduleUncancelable([this](){
         update_all_data();
     }, 150_ms, 500_ms);
 
-    power_history.setup();
-
-#if 0
-
-    chars_per_value = max(String(MULTI_VALUE_HISTORY_VALUE_MIN).length(), String(MULTI_VALUE_HISTORY_VALUE_MAX).length());
-    // val_min values are replaced with null -> require at least 4 chars per value.
-    chars_per_value = max(4U, chars_per_value);
-    // For ',' between the values.
-    ++chars_per_value;
-
-
-    history_chars_per_value = max(String(METER_VALUE_HISTORY_VALUE_MIN).length(), String(METER_VALUE_HISTORY_VALUE_MAX).length());
-    // val_min values are replaced with null -> require at least 4 chars per value.
-    history_chars_per_value = max(4U, history_chars_per_value);
-    // For ',' between the values.
-    ++history_chars_per_value;
-
-    task_scheduler.scheduleWithFixedDelay([this](){
-        uint32_t now = millis();
-        uint32_t current_history_slot = now / (HISTORY_MINUTE_INTERVAL * 60 * 1000);
-        bool update_history = current_history_slot != last_history_slot;
-        METER_VALUE_HISTORY_VALUE_TYPE live_samples[METERS_SLOTS];
-        METER_VALUE_HISTORY_VALUE_TYPE history_samples[METERS_SLOTS];
-        bool valid_samples[METERS_SLOTS];
-        METER_VALUE_HISTORY_VALUE_TYPE val_min = std::numeric_limits<METER_VALUE_HISTORY_VALUE_TYPE>::lowest();
-
-        for (uint32_t slot = 0; slot < METERS_SLOTS; slot++) {
-            MeterSlot &meter_slot = this->meter_slots[slot];
-
-            if (meter_slot.meter->get_class() != MeterClassID::None) {
-                meter_slot.power_history.tick(now, update_history, &live_samples[slot], &history_samples[slot]);
-                valid_samples[slot] = true;
-            }
-            else {
-                valid_samples[slot] = false;
-            }
-        }
-
+    requested_power_history.setup();
+    charging_power_history.setup();
+    requested_phases_history.setup();
+    task_scheduler.scheduleUncancelable([this](){
+        micros_t now = now_us();
+        const uint32_t current_history_slot = (now / minutes_t{HISTORY_MINUTE_INTERVAL}).as<uint32_t>();
+        const bool update_history = current_history_slot != last_history_slot;
+        int32_t live_sample;
+        int32_t history_sample;
+        requested_power_history.tick(now, update_history, &live_sample, &history_sample);
+        charging_power_history.tick(now, update_history, &live_sample, &history_sample);
+        requested_phases_history.tick(now, update_history, &live_sample, &history_sample);
         last_live_update = now;
-        end_this_interval = last_live_update;
-
-        if (samples_this_interval == 0) {
-            begin_this_interval = last_live_update;
-        }
-
-        ++samples_this_interval;
-
-#if MODULE_WS_AVAILABLE()
-        {
-            const size_t buf_size = METERS_SLOTS * history_chars_per_value + 100;
-            char *buf_ptr = static_cast<char *>(malloc(sizeof(char) * buf_size));
-            size_t buf_written = 0;
-
-            buf_written += snprintf_u(buf_ptr + buf_written, buf_size - buf_written, "{\"topic\":\"meters/live_samples\",\"payload\":{\"samples_per_second\":%f,\"samples\":[", static_cast<double>(live_samples_per_second()));
-
-            if (buf_written < buf_size) {
-                for (uint32_t slot = 0; slot < METERS_SLOTS && buf_written < buf_size; slot++) {
-                    if (!valid_samples[slot]) {
-                        buf_written += snprintf_u(buf_ptr + buf_written, buf_size - buf_written, slot == 0 ? "[%s]" : ",[%s]", "");
-                    }
-                    else if (live_samples[slot] == val_min) {
-                        buf_written += snprintf_u(buf_ptr + buf_written, buf_size - buf_written, slot == 0 ? "[%s]" : ",[%s]", "null");
-                    }
-                    else {
-                        buf_written += snprintf_u(buf_ptr + buf_written, buf_size - buf_written, slot == 0 ? "[%d]" : ",[%d]", static_cast<int>(live_samples[slot]));
-                    }
-                }
-
-                if (buf_written < buf_size) {
-                    buf_written += snprintf_u(buf_ptr + buf_written, buf_size - buf_written, "%s", "]}}\n");
-                }
-            }
-
-            if (buf_written > 0) {
-                ws.web_sockets.sendToAllOwned(buf_ptr, static_cast<size_t>(buf_written));
-            }
-        }
-#endif
-
         if (update_history) {
             last_history_update = now;
-            samples_last_interval = samples_this_interval;
-            begin_last_interval = begin_this_interval;
-            end_last_interval = end_this_interval;
-
-            samples_this_interval = 0;
-            begin_this_interval = 0;
-            end_this_interval = 0;
-
-#if MODULE_WS_AVAILABLE()
-            {
-                const size_t buf_size = METERS_SLOTS * history_chars_per_value + 100;
-                char *buf_ptr = static_cast<char *>(malloc(sizeof(char) * buf_size));
-                size_t buf_written = 0;
-
-                buf_written += snprintf_u(buf_ptr + buf_written, buf_size - buf_written, "%s", "{\"topic\":\"meters/history_samples\",\"payload\":{\"samples\":[");
-
-                if (buf_written < buf_size) {
-                    for (uint32_t slot = 0; slot < METERS_SLOTS && buf_written < buf_size; slot++) {
-                        if (!valid_samples[slot]) {
-                            buf_written += snprintf_u(buf_ptr + buf_written, buf_size - buf_written, slot == 0 ? "[%s]" : ",[%s]", "");
-                        }
-                        else if (history_samples[slot] == val_min) {
-                            buf_written += snprintf_u(buf_ptr + buf_written, buf_size - buf_written, slot == 0 ? "[%s]" : ",[%s]", "null");
-                        }
-                        else {
-                            buf_written += snprintf_u(buf_ptr + buf_written, buf_size - buf_written, slot == 0 ? "[%d]" : ",[%d]", static_cast<int>(history_samples[slot]));
-                        }
-                    }
-
-                    if (buf_written < buf_size) {
-                        buf_written += snprintf_u(buf_ptr + buf_written, buf_size - buf_written, "%s", "]}}\n");
-                    }
-                }
-
-                if (buf_written > 0) {
-                    ws.web_sockets.sendToAllOwned(buf_ptr, static_cast<size_t>(buf_written));
-                }
-            }
-#endif
         }
-
         last_history_slot = current_history_slot;
-    }, 0_ms, 500_ms);
-
-
-
-#endif
-
-    task_scheduler.scheduleWithFixedDelay([this](){
-        uint32_t now = millis();
-        const uint32_t current_history_slot = now / (MULTI_VALUE_HISTORY_MINUTE_INTERVAL * 60 * 1000);
-        const bool update_history = current_history_slot != history_last_slot;
-        MULTI_VALUE_HISTORY_VALUE_TYPE *live_samples[MULTI_VALUE_HISTORY_NUMBER_OF_VALUES];
-        MULTI_VALUE_HISTORY_VALUE_TYPE *history_samples[MULTI_VALUE_HISTORY_NUMBER_OF_VALUES];
-        power_history.tick(now, update_history, live_samples, history_samples);
-        history_last_slot = current_history_slot;
     }, 0_ms, 500_ms);
 
 
@@ -337,7 +220,28 @@ void PhaseSwitcher::register_urls()
         start_quick_charging();
     }, true);
 
-    power_history.register_urls("phase_switcher");
+    server.on("/phase_switcher/history", HTTP_GET, [this](WebServerRequest request) {
+        StringBuilder sw;
+        if (!sw.setCapacity(PHASE_SWITCHER_HISTORY_JSON_SIZE)) {
+            return request.send_plain(500, "Failed to allocate buffer");
+        }
+        request.beginChunkedResponse_json(200);
+        auto result = send_history(request, sw);
+        if (result.error != ESP_OK)
+            return result;
+        return request.endChunkedResponse();
+    });
+    server.on("/phase_switcher/live", HTTP_GET, [this](WebServerRequest request) {
+        StringBuilder sw;
+        if (!sw.setCapacity(PHASE_SWITCHER_HISTORY_JSON_SIZE)) {
+            return request.send_plain(500, "Failed to allocate buffer");
+        }
+        request.beginChunkedResponse_json(200);
+        auto result = send_live(request, sw);
+        if (result.error != ESP_OK)
+            return result;
+        return request.endChunkedResponse();
+    });
 
     server.on("/phase_switcher/start_debug", HTTP_GET, [this](WebServerRequest request) {
         task_scheduler.scheduleOnce([this](){
@@ -356,6 +260,40 @@ void PhaseSwitcher::register_urls()
     });
 }
 
+WebServerRequestReturnProtect PhaseSwitcher::send_live(WebServerRequest request, StringWriter &sw)
+{
+    sw.printf("{\"offset\":%lu,\"samples_per_second\":%f,\"samples\":[", (now_us() - last_live_update).to<millis_t>().as<uint32_t>(), static_cast<double>(requested_power_history.samples_per_second()));
+
+    ValueHistory *histories[] = {&requested_power_history, &charging_power_history, &requested_phases_history};
+    for (size_t i = 0; i < 3; ++i) {
+        sw.puts(i == 0 ? "[" : ",[" );
+        histories[i]->format_live_samples(&sw);
+        sw.puts("]");
+        SEND_CHUNK_OR_FAIL(request, sw);
+        sw.clear();
+    }
+
+    SEND_CHUNK_OR_FAIL_LEN(request, "]}", 2);
+    return request.unsafe_ResponseAlreadySent();
+}
+
+WebServerRequestReturnProtect PhaseSwitcher::send_history(WebServerRequest request, StringWriter &sw)
+{
+    sw.printf("{\"offset\":%lu,\"samples\":[", (now_us() - last_history_update).to<millis_t>().as<uint32_t>());
+
+    ValueHistory *histories[] = {&requested_power_history, &charging_power_history, &requested_phases_history};
+    for (size_t i = 0; i < 3; ++i) {
+        sw.puts(i == 0 ? "[" : ",[" );
+        histories[i]->format_history_samples(&sw);
+        sw.puts("]");
+        SEND_CHUNK_OR_FAIL(request, sw);
+        sw.clear();
+    }
+
+    SEND_CHUNK_OR_FAIL_LEN(request, "]}", 2);
+    return request.unsafe_ResponseAlreadySent();
+}
+
 uint8_t PhaseSwitcher::get_active_phases()
 {
     if (!api.hasFeature("evse")) {
@@ -366,7 +304,9 @@ uint8_t PhaseSwitcher::get_active_phases()
     bool channel_state_1 = (api.getState("evse/state", false)->get("contactor_state")->asUint() == 3);
     bool channel_state[4];
 
-    int retval = tf_industrial_digital_in_4_v2_get_value(&digital_in_bricklet.device, channel_state);
+    int retval = io_scheduler.hal_call([&]() {
+        return tf_industrial_digital_in_4_v2_get_value(&digital_in_bricklet.device, channel_state);
+    });
     if (retval != TF_E_OK) {
         logger.printfln("Industrial digital in relay get value failed (rc %d).", retval);
         return 0;
@@ -819,9 +759,13 @@ void PhaseSwitcher::write_outputs()
     int retval;
     for (int channel = 0; channel <= 3; channel++) {
         if (channel_request[channel])
-            retval = tf_industrial_quad_relay_v2_set_monoflop(&quad_relay_bricklet.device, channel, true, 10000);
+            retval = io_scheduler.hal_call([&]() {
+                return tf_industrial_quad_relay_v2_set_monoflop(&quad_relay_bricklet.device, channel, true, 10000);
+            });
         else
-            retval  = tf_industrial_quad_relay_v2_set_selected_value(&quad_relay_bricklet.device, channel, false);
+            retval = io_scheduler.hal_call([&]() {
+                return tf_industrial_quad_relay_v2_set_selected_value(&quad_relay_bricklet.device, channel, false);
+            });
 
         if (retval != TF_E_OK) {
             logger.printfln("Industrial quad relay set monoflop or value failed for channel %d (rc %d).", channel, retval);
@@ -841,7 +785,9 @@ void PhaseSwitcher::contactor_check()
     bool input_phase[4], output_phase[4], value[4];
     int retval;
 
-    retval = tf_industrial_digital_in_4_v2_get_value(&digital_in_bricklet.device, value);
+    retval = io_scheduler.hal_call([&]() {
+        return tf_industrial_digital_in_4_v2_get_value(&digital_in_bricklet.device, value);
+    });
     if (retval != TF_E_OK) {
         logger.printfln("Industrial digital in relay get value failed (rc %d).", retval);
         return;
@@ -850,7 +796,9 @@ void PhaseSwitcher::contactor_check()
     input_phase[2] = value[2];
     input_phase[3] = value[3];
 
-    retval = tf_industrial_quad_relay_v2_get_value(&quad_relay_bricklet.device, value);
+    retval = io_scheduler.hal_call([&]() {
+        return tf_industrial_quad_relay_v2_get_value(&quad_relay_bricklet.device, value);
+    });
     if (retval != TF_E_OK) {
         logger.printfln("Industrial quad relay get value failed (rc %d).", retval);
         return;
@@ -919,7 +867,9 @@ void PhaseSwitcher::update_all_data()
     bool channel_state[4];
     int retval;
 
-    retval = tf_industrial_quad_relay_v2_get_value(&quad_relay_bricklet.device, channel_state);
+    retval = io_scheduler.hal_call([&]() {
+        return tf_industrial_quad_relay_v2_get_value(&quad_relay_bricklet.device, channel_state);
+    });
     if (retval != TF_E_OK) {
         logger.printfln("Industrial quad relay get value failed (rc %d).", retval);
         return;
@@ -927,7 +877,9 @@ void PhaseSwitcher::update_all_data()
     for (int i = 0; i <= 3; ++i)
         api_low_level_state.get("output_channels")->get(i)->updateBool(channel_state[i]);
 
-    retval = tf_industrial_digital_in_4_v2_get_value(&digital_in_bricklet.device, channel_state);
+    retval = io_scheduler.hal_call([&]() {
+        return tf_industrial_digital_in_4_v2_get_value(&digital_in_bricklet.device, channel_state);
+    });
     if (retval != TF_E_OK) {
         logger.printfln("Industrial digital in relay get value failed (rc %d).", retval);
         return;
@@ -945,8 +897,9 @@ void PhaseSwitcher::update_all_data()
     if (api.hasFeature("meters")){
         actual_charging_power = api.getState("meters/0/values", false)->get(0)->asFloat();
     }
-    float samples[3] = {(float)available_charging_power, (float)actual_charging_power, (float)requested_phases_pending};
-    power_history.add_sample(samples);
+    requested_power_history.add_sample(static_cast<float>(available_charging_power));
+    charging_power_history.add_sample(static_cast<float>(actual_charging_power));
+    requested_phases_history.add_sample(static_cast<float>(requested_phases_pending));
 
 }
 

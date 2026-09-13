@@ -15,6 +15,12 @@ let x = {
         },
         "content": {
             "phase_switcher": "Phase Switcher",
+            "history_48": "History (48 h)",
+            "history_24": "History (24 h)",
+            "history_12": "History (12 h)",
+            "history_6": "History (6 h)",
+            "history_3": "History (3 h)",
+            "live": "Live (6 min)",
             "state": "State",
             "sequencer_state" :"State",
             "charging_power" : {
@@ -57,8 +63,7 @@ let x = {
             "reboot": "Reboot",
             "save": "Save",
 
-            "low_level_state": "Low Level State",
-            "low_level_state_show": "Show / Hide",
+            "details": "Details",
             "channel_states": {
                 "title": "Channel states",
                 "description": "States of I/O channels (left=output, right=input)"
