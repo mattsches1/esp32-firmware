@@ -15,6 +15,12 @@ let x = {
         },
         "content": {
             "phase_switcher": "Phasenumschaltung",
+            "history_48": "Verlauf (48 h)",
+            "history_24": "Verlauf (24 h)",
+            "history_12": "Verlauf (12 h)",
+            "history_6": "Verlauf (6 h)",
+            "history_3": "Verlauf (3 h)",
+            "live": "Live (6 min)",
             "state": "Status",
             "sequencer_state": "Status",
             "charging_power" : {
@@ -57,8 +63,7 @@ let x = {
             "reboot": "Neu starten",
             "save": "Speichern",
 
-            "low_level_state": "Low-Level-Zustand",
-            "low_level_state_show": "Anzeigen / Verstecken",
+            "details": "Details",
             "channel_states": {
                 "title": "Kanalzustände",
                 "description": "Zustand der E/A-Kanäle (links=Ausgänge, rechts=Eingänge)"

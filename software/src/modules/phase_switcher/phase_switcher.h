@@ -22,12 +22,13 @@
 
 #include "config.h"
 #include "modules/event_log/event_log.h"
+#include "modules/web_server/web_server.h"
 
 #include "bricklet.h"
 #include "device_module.h"
 
 #include "delay_timer.h"
-#include "multi_value_history.h"
+#include "modules/meters/value_history.h"
 
 #define EVSE_START_TIMEOUT 30000
 #define EVSE_START_RETRIES 3
@@ -123,7 +124,8 @@ private:
     void write_outputs();
     void contactor_check();
     void update_all_data();
-    void update_history();
+    WebServerRequestReturnProtect send_history(WebServerRequest request, StringWriter &sw);
+    WebServerRequestReturnProtect send_live(WebServerRequest request, StringWriter &sw);
     
     QuadRelayBricklet quad_relay_bricklet = QuadRelayBricklet(
             TF_INDUSTRIAL_QUAD_RELAY_V2_DEVICE_IDENTIFIER,
@@ -168,8 +170,11 @@ private:
     uint8_t auto_start_charging;
     bool contactor_error;
 
-    MultiValueHistory power_history;
-    bool initialized = false;
-    uint32_t history_last_slot = 0;
+    ValueHistory requested_power_history;
+    ValueHistory charging_power_history;
+    ValueHistory requested_phases_history;
+    micros_t last_live_update = 0_us;
+    micros_t last_history_update = 0_us;
+    uint32_t last_history_slot = 0;
 };
                                     
