@@ -18,17 +18,13 @@
 
 #include "bindings/errors.h"
 
-#include "api.h"
-#include "event_log.h"
-#include "task_scheduler.h"
+#include "event_log_prefix.h"
+#include "generated/module_dependencies.h"
 #include "tools.h"
-#include "web_server.h"
+#include "modules/web_server/web_server.h"
 #include "modules.h"
 #include "delay_timer.h"
 
-extern EventLog logger;
-
-extern TaskScheduler task_scheduler;
 extern TF_HAL hal;
 extern WebServer server;
 
@@ -125,19 +121,19 @@ void PhaseSwitcher::setup()
         this->sequencer();
         this->write_outputs();
         this->contactor_check();
-    }, 0, 250);
+    }, 0_ms, 250_ms);
 
     task_scheduler.scheduleWithFixedDelay([this](){
         this->monitor_requested_phases();
-    }, 100, 1000);
+    }, 100_ms, 1000_ms);
 
     task_scheduler.scheduleWithFixedDelay([this](){
         update_all_data();
-    }, 150, 500);
+    }, 150_ms, 500_ms);
 
     power_history.setup();
 
-// !!!
+#if 0
 
     chars_per_value = max(String(MULTI_VALUE_HISTORY_VALUE_MIN).length(), String(MULTI_VALUE_HISTORY_VALUE_MAX).length());
     // val_min values are replaced with null -> require at least 4 chars per value.
@@ -258,11 +254,21 @@ void PhaseSwitcher::setup()
         }
 
         last_history_slot = current_history_slot;
-    }, 0, 500);
+    }, 0_ms, 500_ms);
 
 
 
-// !!!
+#endif
+
+    task_scheduler.scheduleWithFixedDelay([this](){
+        uint32_t now = millis();
+        const uint32_t current_history_slot = now / (MULTI_VALUE_HISTORY_MINUTE_INTERVAL * 60 * 1000);
+        const bool update_history = current_history_slot != history_last_slot;
+        MULTI_VALUE_HISTORY_VALUE_TYPE *live_samples[MULTI_VALUE_HISTORY_NUMBER_OF_VALUES];
+        MULTI_VALUE_HISTORY_VALUE_TYPE *history_samples[MULTI_VALUE_HISTORY_NUMBER_OF_VALUES];
+        power_history.tick(now, update_history, live_samples, history_samples);
+        history_last_slot = current_history_slot;
+    }, 0_ms, 500_ms);
 
 
     initialized = true;
@@ -315,19 +321,19 @@ void PhaseSwitcher::register_urls()
     if (!initialized)
         return;
 
-    api.addPersistentConfig("phase_switcher/config", &api_config, {}, 1000);
+    api.addPersistentConfig("phase_switcher/config", &api_config);
 
-    api.addState("phase_switcher/state", &api_state, {}, 1000);
+    api.addState("phase_switcher/state", &api_state);
  
-    api.addState("phase_switcher/low_level_state", &api_low_level_state, {}, 1000);
+    api.addState("phase_switcher/low_level_state", &api_low_level_state);
 
-    api.addCommand("phase_switcher/available_charging_power", &api_available_charging_power, {}, [this](){
+    api.addCommand("phase_switcher/available_charging_power", &api_available_charging_power, {}, [this](Language /*language*/, String &/*errmsg*/){
         if (enabled && !quick_charging_active){
             set_available_charging_power(api_available_charging_power.get("power")->asUint());
         }
     }, false);
 
-    api.addCommand("phase_switcher/start_quick_charging", Config::Null(), {}, [this](){
+    api.addCommand("phase_switcher/start_quick_charging", Config::Null(), {}, [this](Language /*language*/, String &/*errmsg*/){
         start_quick_charging();
     }, true);
 
@@ -337,16 +343,16 @@ void PhaseSwitcher::register_urls()
         task_scheduler.scheduleOnce([this](){
             logger.printfln("Phase switcher: Enabling debug mode");
             debug = true;
-        }, 0);
-        return request.send(200);
+        }, 0_ms);
+        return request.send_plain(200);
     });
 
     server.on("/phase_switcher/stop_debug", HTTP_GET, [this](WebServerRequest request){
         task_scheduler.scheduleOnce([this](){
             logger.printfln("Phase switcher: Disabling debug mode");
             debug = false;
-        }, 0);
-        return request.send(200);
+        }, 0_ms);
+        return request.send_plain(200);
     });
 }
 
@@ -495,13 +501,13 @@ void PhaseSwitcher::handle_button()
     if (button_state)
         button_released_time = millis();
 
-    if (deadline_elapsed(button_released_time + QUICK_CHARGE_DELAY_TIME) && quick_charging_requested){
+    if (millis() - button_released_time >= QUICK_CHARGE_DELAY_TIME && quick_charging_requested){
         if (debug) logger.printfln("    Phase switcher: Button released, initiating quick charging");
         start_quick_charging();
         quick_charging_requested = false;
     }
 
-    if (deadline_elapsed(button_pressed_time + QUICK_CHARGE_BUTTON_PRESSED_TIME)){
+    if (millis() - button_pressed_time >= QUICK_CHARGE_BUTTON_PRESSED_TIME){
         if (debug) logger.printfln("    Phase switcher: Quick charging command received and stored");
         quick_charging_requested = true;
     }
@@ -631,7 +637,7 @@ void PhaseSwitcher::sequencer_state_cancelling_evse_start()
 {
     static uint32_t watchdog_start = 0;
 
-    if (deadline_elapsed(watchdog_start + EVSE_STOP_TIMEOUT)){
+    if (millis() - watchdog_start >= EVSE_STOP_TIMEOUT){
         logger.printfln("Phase switcher: Sending stop API request to EVSE.");
         api.callCommand("evse/stop_charging", nullptr);
         watchdog_start = millis();
@@ -650,7 +656,7 @@ void PhaseSwitcher::sequencer_state_waiting_for_evse_start()
     static uint32_t watchdog_start = 0;
     static uint8_t start_retries = 0;
 
-    if (deadline_elapsed(watchdog_start + EVSE_START_TIMEOUT)){
+    if (millis() - watchdog_start >= EVSE_START_TIMEOUT){
         if (start_retries < EVSE_START_RETRIES){
             logger.printfln("Phase switcher: Sending start API request to EVSE.");
             api.callCommand("evse/start_charging", nullptr);
@@ -688,7 +694,7 @@ void PhaseSwitcher::sequencer_state_active()
         init = true;
     }
 
-    bool minimum_duration_elapsed = deadline_elapsed(last_state_change + api_config_in_use.get("minimum_duration")->asUint() * 1000);
+    bool minimum_duration_elapsed = millis() - last_state_change >= api_config_in_use.get("minimum_duration")->asUint() * 1000;
 
     if (requested_phases_pending_delayed != last_requested_phases_pending_delayed && minimum_duration_elapsed){
         logger.printfln("Phase switcher: Change to %d phase charging requested while charging with %d phases. Requesting EVSE to stop charging.", requested_phases_pending_delayed, last_requested_phases_pending_delayed);
@@ -719,7 +725,7 @@ void PhaseSwitcher::sequencer_state_waiting_for_evse_stop()
 {
     static uint32_t watchdog_start = 0;
 
-    if (deadline_elapsed(watchdog_start + EVSE_STOP_TIMEOUT)){
+    if (millis() - watchdog_start >= EVSE_STOP_TIMEOUT){
         logger.printfln("Phase switcher: Sending stop API request to EVSE.");
         api.callCommand("evse/stop_charging", nullptr);
         watchdog_start = millis();
@@ -740,7 +746,7 @@ void PhaseSwitcher::sequencer_state_waiting_for_evse_stop()
 
 void PhaseSwitcher::sequencer_state_pausing_while_switching()
 {
-    if (deadline_elapsed(last_state_change + api_config_in_use.get("pause_time")->asUint() * 1000)){
+    if (millis() - last_state_change >= api_config_in_use.get("pause_time")->asUint() * 1000){
         logger.printfln("Phase switcher: Pause time elapsed, restarting charging with %d phases.", requested_phases);
         logger.printfln("Phase switcher: Waiting for EVSE to start charging.");
         set_current(api_available_charging_power.get("power")->asUint(), requested_phases);
@@ -855,7 +861,7 @@ void PhaseSwitcher::contactor_check()
 
     for (int i = 1; i <= 3; i++){
         if (input_phase[i] == output_phase[i]) watchdog_start[i] = millis();
-        if (deadline_elapsed(watchdog_start[i] + 2000)){
+        if (millis() - watchdog_start[i] >= 2000){
             if (!contactor_error[i]){
                 logger.printfln("Phase switcher: Contactor error phase %d set", i);
                 contactor_error[i] = true;
