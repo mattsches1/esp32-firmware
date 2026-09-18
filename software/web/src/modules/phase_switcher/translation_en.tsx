@@ -34,7 +34,7 @@ let x = {
   
             "configuration": "Configuration",
             "phase_switcher_enabled": "Enable phase switcher",
-            "phase_switcher_enabled_desc": "Activates the automatic switching between one or several phases and the charging current calculation via the available power.",
+            "phase_switcher_enabled_desc": "Auto­matic­ally switch phases depending on the available power",
 
             "operating_mode" : "Operating mode",
             "one_phase_static" : "single phase only",

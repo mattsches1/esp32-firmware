@@ -312,15 +312,6 @@ export class PhaseSwitcher extends ConfigComponent<"phase_switcher/config", {sta
                         ]}
                     />
                 </FormRow>
-                <FormRow label={__("phase_switcher.content.delay_time.title")} label_muted={__("phase_switcher.content.delay_time.description")}>
-                    <InputText value={format_seconds(phase_state.delay_time)} />
-                </FormRow>
-                <FormRow label={__("phase_switcher.content.minimum_duration.title")} label_muted={__("phase_switcher.content.minimum_duration.description")}>
-                    <InputText value={format_seconds(minimum_duration)} />
-                </FormRow>
-                <FormRow label={__("phase_switcher.content.pause_time.title")} label_muted={__("phase_switcher.content.pause_time.description")}>
-                    <InputText value={format_seconds(pause_time)} />
-                </FormRow>
                 <FormRow
                     label={__("phase_switcher.content.meter")}
                     label_suffix={<span class="d-inline-flex float-end align-items-center">
@@ -374,10 +365,16 @@ export class PhaseSwitcher extends ConfigComponent<"phase_switcher/config", {sta
                     </div>
                 </FormRow>
                 <FormRow label={__("phase_switcher.content.minimum_duration.title")} label_muted={__("phase_switcher.content.minimum_duration.description")}>
-                    <InputNumber min={10} max={3600} value={state.minimum_duration} unit="s" onValue={this.set("minimum_duration")} />
+                    <div class="row gx-2 gy-1">
+                        <div class="col-md-6"><InputNumber min={10} max={3600} value={state.minimum_duration} unit="s" onValue={this.set("minimum_duration")} /></div>
+                        <div class="col-md-6"><InputText value={format_seconds(minimum_duration)} /></div>
+                    </div>
                 </FormRow>
                 <FormRow label={__("phase_switcher.content.pause_time.title")} label_muted={__("phase_switcher.content.pause_time.description")}>
-                    <InputNumber min={10} max={3600} value={state.pause_time} unit="s" onValue={this.set("pause_time")} />
+                    <div class="row gx-2 gy-1">
+                        <div class="col-md-6"><InputNumber min={10} max={3600} value={state.pause_time} unit="s" onValue={this.set("pause_time")} /></div>
+                        <div class="col-md-6"><InputText value={format_seconds(pause_time)} /></div>
+                    </div>
                 </FormRow>
                 <CollapsedSection heading={__("phase_switcher.content.details")}>
                     <FormRow label={__("phase_switcher.content.channel_states.title")} label_muted={__("phase_switcher.content.channel_states.description")}>
