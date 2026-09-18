@@ -30,12 +30,12 @@
 #include "delay_timer.h"
 #include "modules/meters/value_history.h"
 
-#define EVSE_START_TIMEOUT 30000
+static constexpr millis_t EVSE_START_TIMEOUT = 30_s;
 #define EVSE_START_RETRIES 3
-#define EVSE_STOP_TIMEOUT 10000
+static constexpr millis_t EVSE_STOP_TIMEOUT = 10_s;
 
-#define QUICK_CHARGE_BUTTON_PRESSED_TIME 2000
-#define QUICK_CHARGE_DELAY_TIME 1000
+static constexpr millis_t QUICK_CHARGE_BUTTON_PRESSED_TIME = 2_s;
+static constexpr millis_t QUICK_CHARGE_DELAY_TIME = 1_s;
 
 #define MIN_POWER_ONE_PHASE (6 * 230)
 #define MIN_POWER_TWO_PHASES (6 * 230 * 2)
@@ -161,7 +161,7 @@ private:
     uint8_t requested_phases_pending, requested_phases_pending_delayed, requested_phases; 
     uint16_t available_charging_power;
     PhaseSwitcherState sequencer_state;
-    uint32_t last_state_change;
+    micros_t last_state_change = 0_us;
     bool delayed_phase_request[3] = {false, false, false};
     DelayTimer delay_timer[3];
 

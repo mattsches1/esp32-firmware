@@ -28,7 +28,7 @@ public:
     uint32_t current_value_on_delay, current_value_off_delay;
 
 private:
-    uint32_t start_time_on = 0;
-    uint32_t start_time_off = -100000;
+    micros_t start_time_on = 0_us;
+    micros_t start_time_off = -100_s;
 };
                                     
