@@ -47,7 +47,7 @@ interface PhaseSwitcherPageState {
     chart_selected: PhaseSwitcherChartSelection;
 }
 
-type PhaseSwitcherChartSelection = "history_24"|"history_12"|"history_6"|"history_3"|"live";
+type PhaseSwitcherChartSelection = "history_12"|"history_6"|"history_3"|"live";
 
 export function PhaseSwitcherNavbar() {
     return <NavbarItem name="phase_switcher" module="phase_switcher" title={__("phase_switcher.navbar.phase_switcher")} symbol={<Activity />} />;
@@ -204,8 +204,7 @@ class PhaseSwitcherChart extends Component<PhaseSwitcherChartProps> {
             return;
         }
 
-        const history_tail = selected == "history_24" ? 360
-            : selected == "history_12" ? 180
+        const history_tail = selected == "history_12" ? 180
             : selected == "history_6" ? 90
             : 45;
         const sample_count = Math.min(value_count, history_tail);
@@ -322,7 +321,6 @@ export class PhaseSwitcher extends ConfigComponent<"phase_switcher/config", {sta
                                 this.setState({chart_selected: value as PhaseSwitcherChartSelection});
                             }}
                             items={[
-                                ["history_24", translate_unchecked("phase_switcher.content.history_24")],
                                 ["history_12", translate_unchecked("phase_switcher.content.history_12")],
                                 ["history_6", translate_unchecked("phase_switcher.content.history_6")],
                                 ["history_3", translate_unchecked("phase_switcher.content.history_3")],
