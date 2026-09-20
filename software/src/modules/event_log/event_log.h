@@ -50,32 +50,40 @@ public:
     size_t print_plain(const char *buf, size_t len);
 
     [[gnu::format(__printf__, 2, 0)]] size_t vprintfln_plain(const char *fmt, va_list args);
-    [[gnu::format(__printf__, 2, 3)]] size_t printfln_plain(const char *fmt, ...);
+    [[gnu::format(__printf__, 2, 3)]] size_t  printfln_plain(const char *fmt, ...);
 
     [[gnu::format(__printf__, 4, 0)]] size_t vprintfln_prefixed(const char *prefix, size_t prefix_len, const char *fmt, va_list args);
-    [[gnu::format(__printf__, 4, 5)]] size_t printfln_prefixed(const char *prefix, size_t prefix_len, const char *fmt, ...);
+    [[gnu::format(__printf__, 4, 5)]] size_t  printfln_prefixed(const char *prefix, size_t prefix_len, const char *fmt, ...);
 
     void trace_timestamp(size_t trace_buf_idx);
     size_t trace_plain(size_t trace_buf_idx, const char *buf, size_t len);
 
     [[gnu::format(__printf__, 3, 0)]] size_t vtracefln_plain(size_t trace_buf_idx, const char *fmt, va_list args);
-    [[gnu::format(__printf__, 3, 4)]] size_t tracefln_plain(size_t trace_buf_idx, const char *fmt, ...);
+    [[gnu::format(__printf__, 3, 4)]] size_t  tracefln_plain(size_t trace_buf_idx, const char *fmt, ...);
 
     [[gnu::format(__printf__, 5, 0)]] size_t vtracefln_prefixed(size_t trace_buf_idx, const char *prefix, size_t prefix_len, const char *fmt, va_list args);
-    [[gnu::format(__printf__, 5, 6)]] size_t tracefln_prefixed(size_t trace_buf_idx, const char *prefix, size_t prefix_len, const char *fmt, ...);
+    [[gnu::format(__printf__, 5, 6)]] size_t  tracefln_prefixed(size_t trace_buf_idx, const char *prefix, size_t prefix_len, const char *fmt, ...);
+
+    [[gnu::format(__printf__, 4, 0)]] size_t vtrace_bricklet_error_prefixed(const char *prefix, size_t prefix_len, const char *fmt, va_list args);
+    [[gnu::format(__printf__, 4, 5)]] size_t  trace_bricklet_error_prefixed(const char *prefix, size_t prefix_len, const char *fmt, ...);
 
     // The following functions are intentionally not implemented.
     // They are just here for IDE auto-completion to pick them up
     [[gnu::format(__printf__, 2, 3)]] size_t vprintfln(const char *fmt, ...);
+    [[gnu::format(__printf__, 2, 3)]] size_t  printfln(const char *fmt, ...);
     [[gnu::format(__printf__, 2, 3)]] size_t vprintfln_continue(const char *fmt, ...);
-    [[gnu::format(__printf__, 2, 3)]] size_t printfln(const char *fmt, ...);
-    [[gnu::format(__printf__, 2, 3)]] size_t printfln_continue(const char *fmt, ...);
+    [[gnu::format(__printf__, 2, 3)]] size_t  printfln_continue(const char *fmt, ...);
+
     [[gnu::format(__printf__, 2, 3)]] size_t printfln_debug(const char *fmt, ...);
-    [[gnu::format(__printf__, 2, 3)]] size_t vtracefln(const char *fmt, ...);
-    [[gnu::format(__printf__, 2, 3)]] size_t vtracefln_continue(const char *fmt, ...);
-    [[gnu::format(__printf__, 2, 3)]] size_t tracefln(const char *fmt, ...);
-    [[gnu::format(__printf__, 2, 3)]] size_t tracefln_continue(const char *fmt, ...);
-    [[gnu::format(__printf__, 2, 3)]] size_t tracefln_debug(const char *fmt, ...);
+
+    [[gnu::format(__printf__, 3, 4)]] size_t vtracefln(size_t trace_buf_idx, const char *fmt, ...);
+    [[gnu::format(__printf__, 3, 4)]] size_t  tracefln(size_t trace_buf_idx, const char *fmt, ...);
+    [[gnu::format(__printf__, 3, 4)]] size_t vtracefln_continue(size_t trace_buf_idx, const char *fmt, ...);
+    [[gnu::format(__printf__, 3, 4)]] size_t  tracefln_continue(size_t trace_buf_idx, const char *fmt, ...);
+
+    [[gnu::format(__printf__, 3, 4)]] size_t tracefln_debug(size_t trace_buf_idx, const char *fmt, ...);
+
+    [[gnu::format(__printf__, 3, 4)]] size_t trace_bricklet_error(int rc, const char *fmt, ...);
 
     // Returns id of allocated buffer
     size_t alloc_trace_buffer(const char *name, size_t size=HimemBuffer::MIN_BUFFER_SIZE);
@@ -103,21 +111,28 @@ private:
     size_t trace_buffers_in_use = 0;
     size_t trace_buffer_size_allocd = 0;
     static constexpr size_t MAX_TRACE_BUFFERS_SIZE = 4 << 20;
+
+    size_t bricklet_trace_buffer_idx;
 #endif
 
     ConfigRoot boot_id;
 };
 
-#define vprintfln(fmt, args)          vprintfln_prefixed(event_log_prefix, event_log_prefix_len, fmt, args)
-#define vprintfln_continue(fmt, args) vprintfln_prefixed("", 0, "    " fmt, args)
-#define  printfln(fmt, ...)            printfln_prefixed(event_log_prefix, event_log_prefix_len, fmt __VA_OPT__(,) __VA_ARGS__)
-#define  printfln_continue(fmt, ...)   printfln_prefixed("", 0, "    " fmt __VA_OPT__(,) __VA_ARGS__)
-#define  printfln_debug(fmt, ...)      printfln_prefixed(event_log_prefix, event_log_prefix_len, "[%s:%d] " fmt, __FILE__, __LINE__ __VA_OPT__(,) __VA_ARGS__)
+#define vprintfln(fmt, args)                         vprintfln_prefixed(event_log_prefix, event_log_prefix_len, fmt, args)
+#define vprintfln_continue(fmt, args)                vprintfln_prefixed("", 0, "    " fmt, args)
+#define  printfln(fmt, ...)                           printfln_prefixed(event_log_prefix, event_log_prefix_len, fmt __VA_OPT__(,) __VA_ARGS__)
+#define  printfln_continue(fmt, ...)                  printfln_prefixed("", 0, "    " fmt __VA_OPT__(,) __VA_ARGS__)
+#define  printfln_debug(fmt, ...)                     printfln_prefixed(event_log_prefix, event_log_prefix_len, "[%s:%d] " fmt, __FILE__, __LINE__ __VA_OPT__(,) __VA_ARGS__)
+
 #define vtracefln(trace_buf_idx, fmt, args)          vtracefln_prefixed(trace_buf_idx, trace_log_prefix, trace_log_prefix_len, fmt, args)
 #define vtracefln_continue(trace_buf_idx, fmt, args) vtracefln_prefixed(trace_buf_idx, "", 0, "    " fmt, args)
 #define  tracefln(trace_buf_idx, fmt, ...)            tracefln_prefixed(trace_buf_idx, trace_log_prefix, trace_log_prefix_len, fmt __VA_OPT__(,) __VA_ARGS__)
 #define  tracefln_continue(trace_buf_idx, fmt, ...)   tracefln_prefixed(trace_buf_idx, "", 0, "    " fmt __VA_OPT__(,) __VA_ARGS__)
 #define  tracefln_debug(trace_buf_idx, fmt, ...)      tracefln_prefixed(trace_buf_idx, trace_log_prefix, trace_log_prefix_len, "[%s:%d] " fmt, __FILE__, __LINE__ __VA_OPT__(,) __VA_ARGS__)
+
+#define  trace_bricklet_error(rc, fmt, ...)           trace_bricklet_error_prefixed(trace_log_prefix, trace_log_prefix_len, fmt ": %s (%d)" __VA_OPT__(,) __VA_ARGS__, tf_hal_strerror(rc), rc)
+
+extern "C" const char * tf_hal_strerror(int rc);
 
 // To capture ESP-IDF log messages, use
 // esp_log_set_vprintf(tf_event_log_vprintfln);

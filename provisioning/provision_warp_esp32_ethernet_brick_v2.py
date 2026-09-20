@@ -13,6 +13,7 @@ from pathlib import Path
 import contextlib
 import queue
 import serial
+import typing
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QPixmap, QColorConstants
 from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPlainTextEdit, QAbstractSlider, QLabel, QSplashScreen
@@ -200,11 +201,26 @@ class P:
 
     def set_iso15118_enabled(ip, enable):
         P.api_put(ip, "iso15118/config", {
-                      "autocharge": False,
-                      "read_soc": enable,
-                      "charge_via_iso15118": False,
-                      "min_charge_current": 1000
+                    "autocharge": False,
+                    "read_soc": enable,
+                    "charge_via_iso15118": False,
+                    "min_charge_current": None,
+                    "fast_timeout": None
                   }, error_message=f"Failed to {'enable' if enable else 'disable'} ISO 15118")
+
+    def is_lid(x: typing.Literal['open', 'closed']):
+        return (x == 'open') == P.io4.get_value()[0]
+
+    def wait_for_lid(x: typing.Literal['open', 'closed'], debounce_s=1):
+        if not P.is_lid(x):
+            print(x[:5].title(), "lid!")
+
+        start = time.monotonic()
+        while time.monotonic() - start < debounce_s:
+            time.sleep(0.01)
+            if not P.is_lid(x):
+                start = time.monotonic()
+
 
     def test_bricklet_ports_warp4(ipcon):
         enums = enumerate_devices(ipcon)
@@ -361,6 +377,8 @@ class P:
                           "subnet": ethernet_subnet,
                           "dns": ethernet_dns,
                           "dns2": "0.0.0.0",
+                          "enable_ipv6": False,
+                          "ip6": [],
                       }, error_message="Failed to set ethernet config!")
 
             if use_local_ntp:
@@ -843,13 +861,7 @@ class P:
             print("Starting NTP server")
             threading.Thread(target=start_ntpserver, args=("0.0.0.0", 1234)).start()
 
-        if P.io4.get_value()[0]:
-            print("Close lid!")
-
-        while P.io4.get_value()[0]:
-            time.sleep(0.1)
-
-        time.sleep(1)
+        P.wait_for_lid('closed')
 
         stage = 0
 
@@ -1181,20 +1193,14 @@ class P:
         time.sleep(0.25)
         P.ps.set_beep(523, 0, 1000)
 
-        if not P.io4.get_value()[0]:
-            print("Open lid!")
+        P.wait_for_lid('open')
 
-        while not P.io4.get_value()[0]:
-            time.sleep(0.1)
-
-        time.sleep(1)
-
-        while P.io4.get_value()[0]:
+        while P.is_lid('open'):
             print(green(f"ESPs in testers {', '.join(str(x) for x in relay_to_serial.keys())} tested successfully. Press one of the print buttons!"))
 
             relay_to_pressed = {}
 
-            while not any(relay_to_pressed.values()) and P.io4.get_value()[0]:
+            while not any(relay_to_pressed.values()) and P.is_lid('open'):
                 time.sleep(0.01)
                 relay_to_pressed = {k: (P.btns[k].get_button_state() == BrickletRGBLEDButton.BUTTON_STATE_PRESSED) for k, v in relay_to_serial.items()}
 

@@ -138,8 +138,7 @@ class Stage3:
                  get_meter_voltages_function,
                  set_iso15118_enabled_function,
                  get_iso15118_ev_mac_function,
-                 get_iso15118_attenuation_profile_function,
-                 set_evse_no_pwm_test_mode_function):
+                 get_iso15118_attenuation_profile_function):
         self.generation = generation
         self.is_front_panel_button_pressed_function = is_front_panel_button_pressed_function
         self.has_evse_error_function = has_evse_error_function
@@ -154,7 +153,6 @@ class Stage3:
         self.set_iso15118_enabled_function = set_iso15118_enabled_function
         self.get_iso15118_ev_mac_function = get_iso15118_ev_mac_function
         self.get_iso15118_attenuation_profile_function = get_iso15118_attenuation_profile_function
-        self.set_evse_no_pwm_test_mode_function = set_evse_no_pwm_test_mode_function
 
         self.ipcon = IPConnection()
         self.inventory = Inventory(self.ipcon)
@@ -182,7 +180,7 @@ class Stage3:
                 elif tries > 1:
                     print('WARNING: Could not complete action for device at position {0}, {1} tries left: {2}'.format(position, tries, e))
                 else:
-                    fatal_error('Could not complete action for device at position {0}: {1}'.format(position, e))
+                    fatal_error('Could not complete action for device at position {0}: {1}'.format(position, e), other_exception=e)
 
     # internal
     def action_loop(self, stop_queue, enabled_ref):
@@ -222,7 +220,7 @@ class Stage3:
                     elif tries[position] > 1:
                         print('WARNING: Could not complete action {0} for device at position {1}, {2} tries left: {3}'.format(position[1], position[0], tries[position], e))
                     else:
-                        fatal_error('Could not complete action {0} for device at position {1}: {2}'.format(position[1], position[0], e))
+                        fatal_error('Could not complete action {0} for device at position {1}: {2}'.format(position[1], position[0], e), other_exception=e)
                 else:
                     event = events.pop(position, None)
 
@@ -501,7 +499,7 @@ class Stage3:
         try:
             self.ipcon.connect(IPCON_HOST, 4223)
         except Exception as e:
-            fatal_error('Could not connect to brickd: {0}'.format(e))
+            fatal_error('Could not connect to brickd: {0}'.format(e), other_exception=e)
 
         print('Enumerating Bricklets')
 
@@ -554,18 +552,18 @@ class Stage3:
                         try:
                             device.set_status_led_config(BrickletColorV2.STATUS_LED_CONFIG_OFF)
                         except Exception as e:
-                            fatal_error('Could not disable status LED for Color Bricklet 2.0 at postion {0}: {1}'.format(full_position, e))
+                            fatal_error('Could not disable status LED for Color Bricklet 2.0 at postion {0}: {1}'.format(full_position, e), other_exception=e)
                     elif bricklet_entry.device_identifier == BrickletNFC.DEVICE_IDENTIFIER:
                         try:
                             device.set_mode(BrickletNFC.MODE_SIMPLE)
                         except Exception as e:
-                            fatal_error('Could not set simple mode for NFC Bricklet at postion {0}: {1}'.format(full_position, e))
+                            fatal_error('Could not set simple mode for NFC Bricklet at postion {0}: {1}'.format(full_position, e), other_exception=e)
                     elif bricklet_entry.device_identifier == BrickletLEDStripV2.DEVICE_IDENTIFIER:
                         try:
                             device.set_chip_type(BrickletLEDStripV2.CHIP_TYPE_WS2812)
                             device.set_channel_mapping(BrickletLEDStripV2.CHANNEL_MAPPING_GRB)
                         except Exception as e:
-                            fatal_error('Could not set chip type and channel mapping for LED Strip Bricklet 2.0 at postion {0}: {1}'.format(full_position, e))
+                            fatal_error('Could not set chip type and channel mapping for LED Strip Bricklet 2.0 at postion {0}: {1}'.format(full_position, e), other_exception=e)
 
                     self.devices[full_position] = device
 
@@ -955,7 +953,6 @@ class Stage3:
         assert self.reset_dc_fault_function != None
         assert self.get_evse_uptime_function != None
         assert self.reset_evse_function != None
-        assert self.set_evse_no_pwm_test_mode_function != None
 
         report = result["electrical_tests"]
 
@@ -1146,8 +1143,6 @@ class Stage3:
         if not self.check_iec_state('A'):
             fatal_error('Charger not in IEC state A')
 
-        self.set_evse_no_pwm_test_mode_function(True)
-
         # step 02: test voltage L1
         self.change_cp_pe_state('C')
         time.sleep(RELAY_SETTLE_DURATION + EVSE_SETTLE_DURATION)
@@ -1256,9 +1251,6 @@ class Stage3:
 
         self.verify_evse_not_crashed()
 
-        # switch back to normal test mode before RCD test to avoid the error state waiting times
-        self.set_evse_no_pwm_test_mode_function(False)
-
         # step 08: test RCD positive
         self.change_meter_state('Type2-L1')
         time.sleep(RELAY_SETTLE_DURATION)
@@ -1359,8 +1351,7 @@ def main():
                     get_meter_voltages_function=lambda: None,
                     set_iso15118_enabled_function=lambda: None,
                     get_iso15118_ev_mac_function=lambda: None,
-                    get_iso15118_attenuation_profile_function=lambda: None,
-                    set_evse_no_pwm_test_mode_function=lambda: None)
+                    get_iso15118_attenuation_profile_function=lambda: None)
 
     stage3.setup()
 

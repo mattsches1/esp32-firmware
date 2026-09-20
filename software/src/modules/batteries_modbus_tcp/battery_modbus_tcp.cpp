@@ -29,6 +29,7 @@
 #include "generated/battery_modbus_tcp_specs.h"
 #include "tools.h"
 #include "tools/memory.h"
+#include "tools/hexdump.h"
 #include "modules/modbus_tcp_client/modbus_tcp_tools.h"
 
 #include "gcc_warnings.h"
@@ -253,11 +254,10 @@ static void next_writer_step(BatteryModbusTCP::WriterContext *ctx)
     const BatteryModbusTCP::RegisterBlockSpec *register_block = &ctx->table->register_blocks[ctx->index];
     TFModbusTCPFunctionCode function_code;
     uint16_t data_count;
+    size_t buffer_len;
     const void *buffer;
     void *buffer_to_check = nullptr;
-    size_t buffer_to_check_len = 0;
     void *buffer_to_compare = nullptr;
-    size_t buffer_to_compare_len = 0;
     void *buffer_to_free = nullptr;
     bool has_step2 = false;
     TFModbusTCPFunctionCode step2_function_code = TFModbusTCPFunctionCode::WriteSingleCoil; // initialize to silence the compiler about capturing an uninitialized value. will only be used if has_step2 is true
@@ -266,9 +266,9 @@ static void next_writer_step(BatteryModbusTCP::WriterContext *ctx)
     case ModbusFunctionCode::ReadCoils:
         function_code = TFModbusTCPFunctionCode::ReadCoils;
         data_count = register_block->values_count;
+        buffer_len = (data_count + 7u) / 8u;
         buffer_to_check = register_block->buffer;
-        buffer_to_check_len = (data_count + 7u) / 8u;
-        buffer_to_free = malloc(buffer_to_check_len);
+        buffer_to_free = malloc(buffer_len);
         buffer = buffer_to_free;
 
         if (buffer == nullptr) {
@@ -285,9 +285,9 @@ static void next_writer_step(BatteryModbusTCP::WriterContext *ctx)
     case ModbusFunctionCode::ReadDiscreteInputs:
         function_code = TFModbusTCPFunctionCode::ReadDiscreteInputs;
         data_count = register_block->values_count;
+        buffer_len = (data_count + 7u) / 8u;
         buffer_to_check = register_block->buffer;
-        buffer_to_check_len = (data_count + 7u) / 8u;
-        buffer_to_free = malloc(buffer_to_check_len);
+        buffer_to_free = malloc(buffer_len);
         buffer = buffer_to_free;
 
         if (buffer == nullptr) {
@@ -304,9 +304,9 @@ static void next_writer_step(BatteryModbusTCP::WriterContext *ctx)
     case ModbusFunctionCode::ReadHoldingRegisters:
         function_code = TFModbusTCPFunctionCode::ReadHoldingRegisters;
         data_count = register_block->values_count;
+        buffer_len = sizeof(uint16_t) * data_count;
         buffer_to_check = register_block->buffer;
-        buffer_to_check_len = sizeof(uint16_t) * data_count;
-        buffer_to_free = malloc(buffer_to_check_len);
+        buffer_to_free = malloc(buffer_len);
         buffer = buffer_to_free;
 
         if (buffer == nullptr) {
@@ -323,9 +323,9 @@ static void next_writer_step(BatteryModbusTCP::WriterContext *ctx)
     case ModbusFunctionCode::ReadInputRegisters:
         function_code = TFModbusTCPFunctionCode::ReadInputRegisters;
         data_count = register_block->values_count;
+        buffer_len = sizeof(uint16_t) * data_count;
         buffer_to_check = register_block->buffer;
-        buffer_to_check_len = sizeof(uint16_t) * data_count;
-        buffer_to_free = malloc(buffer_to_check_len);
+        buffer_to_free = malloc(buffer_len);
         buffer = buffer_to_free;
 
         if (buffer == nullptr) {
@@ -342,30 +342,35 @@ static void next_writer_step(BatteryModbusTCP::WriterContext *ctx)
     case ModbusFunctionCode::WriteSingleCoil:
         function_code = TFModbusTCPFunctionCode::WriteSingleCoil;
         data_count = register_block->values_count;
+        buffer_len = (data_count + 7u) / 8u;
         buffer = register_block->buffer;
         break;
 
     case ModbusFunctionCode::WriteSingleRegister:
         function_code = TFModbusTCPFunctionCode::WriteSingleRegister;
         data_count = register_block->values_count;
+        buffer_len = sizeof(uint16_t) * data_count;
         buffer = register_block->buffer;
         break;
 
     case ModbusFunctionCode::WriteMultipleCoils:
         function_code = TFModbusTCPFunctionCode::WriteMultipleCoils;
         data_count = register_block->values_count;
+        buffer_len = (data_count + 7u) / 8u;
         buffer = register_block->buffer;
         break;
 
     case ModbusFunctionCode::WriteMultipleRegisters:
         function_code = TFModbusTCPFunctionCode::WriteMultipleRegisters;
         data_count = register_block->values_count;
+        buffer_len = sizeof(uint16_t) * data_count;
         buffer = register_block->buffer;
         break;
 
     case ModbusFunctionCode::MaskWriteRegister:
         function_code = TFModbusTCPFunctionCode::MaskWriteRegister;
         data_count = register_block->values_count;
+        buffer_len = sizeof(uint16_t) * data_count;
         buffer = register_block->buffer;
         break;
 
@@ -373,7 +378,8 @@ static void next_writer_step(BatteryModbusTCP::WriterContext *ctx)
     case ModbusFunctionCode::ReadMaskWriteMultipleRegisters:
         function_code = TFModbusTCPFunctionCode::ReadHoldingRegisters;
         data_count = register_block->values_count / 2;
-        buffer_to_free = malloc(sizeof(uint16_t) * data_count);
+        buffer_len = sizeof(uint16_t) * data_count;
+        buffer_to_free = malloc(buffer_len);
         buffer = buffer_to_free;
 
         if (buffer == nullptr) {
@@ -399,9 +405,9 @@ static void next_writer_step(BatteryModbusTCP::WriterContext *ctx)
     case ModbusFunctionCode::IfDifferentWriteSingleCoil:
         function_code = TFModbusTCPFunctionCode::ReadCoils;
         data_count = register_block->values_count;
+        buffer_len = (data_count + 7u) / 8u;
         buffer_to_compare = register_block->buffer;
-        buffer_to_compare_len = (data_count + 7u) / 8u;
-        buffer_to_free = malloc(buffer_to_compare_len);
+        buffer_to_free = malloc(buffer_len);
         buffer = buffer_to_free;
 
         if (buffer == nullptr) {
@@ -420,9 +426,9 @@ static void next_writer_step(BatteryModbusTCP::WriterContext *ctx)
     case ModbusFunctionCode::IfDifferentWriteSingleRegister:
         function_code = TFModbusTCPFunctionCode::ReadHoldingRegisters;
         data_count = register_block->values_count;
+        buffer_len = sizeof(uint16_t) * data_count;
         buffer_to_compare = register_block->buffer;
-        buffer_to_compare_len = sizeof(uint16_t) * data_count;
-        buffer_to_free = malloc(buffer_to_compare_len);
+        buffer_to_free = malloc(buffer_len);
         buffer = buffer_to_free;
 
         if (buffer == nullptr) {
@@ -441,9 +447,9 @@ static void next_writer_step(BatteryModbusTCP::WriterContext *ctx)
     case ModbusFunctionCode::IfDifferentWriteMultipleCoils:
         function_code = TFModbusTCPFunctionCode::ReadCoils;
         data_count = register_block->values_count;
+        buffer_len = (data_count + 7u) / 8u;
         buffer_to_compare = register_block->buffer;
-        buffer_to_compare_len = (data_count + 7u) / 8u;
-        buffer_to_free = malloc(buffer_to_compare_len);
+        buffer_to_free = malloc(buffer_len);
         buffer = buffer_to_free;
 
         if (buffer == nullptr) {
@@ -462,9 +468,9 @@ static void next_writer_step(BatteryModbusTCP::WriterContext *ctx)
     case ModbusFunctionCode::IfDifferentWriteMultipleRegisters:
         function_code = TFModbusTCPFunctionCode::ReadHoldingRegisters;
         data_count = register_block->values_count;
+        buffer_len = sizeof(uint16_t) * data_count;
         buffer_to_compare = register_block->buffer;
-        buffer_to_compare_len = sizeof(uint16_t) * data_count;
-        buffer_to_free = malloc(buffer_to_compare_len);
+        buffer_to_free = malloc(buffer_len);
         buffer = buffer_to_free;
 
         if (buffer == nullptr) {
@@ -483,7 +489,8 @@ static void next_writer_step(BatteryModbusTCP::WriterContext *ctx)
     case ModbusFunctionCode::IfDifferentMaskWriteRegister:
         function_code = TFModbusTCPFunctionCode::ReadHoldingRegisters;
         data_count = register_block->values_count / 2;
-        buffer_to_free = malloc(sizeof(uint16_t) * data_count);
+        buffer_len = sizeof(uint16_t) * data_count;
+        buffer_to_free = malloc(buffer_len);
         buffer = buffer_to_free;
 
         if (buffer == nullptr) {
@@ -503,7 +510,8 @@ static void next_writer_step(BatteryModbusTCP::WriterContext *ctx)
     case ModbusFunctionCode::IfDifferentReadMaskWriteMultipleRegisters:
         function_code = TFModbusTCPFunctionCode::ReadHoldingRegisters;
         data_count = register_block->values_count / 2;
-        buffer_to_free = malloc(sizeof(uint16_t) * data_count);
+        buffer_len = sizeof(uint16_t) * data_count;
+        buffer_to_free = malloc(buffer_len);
         buffer = buffer_to_free;
 
         if (buffer == nullptr) {
@@ -538,14 +546,14 @@ static void next_writer_step(BatteryModbusTCP::WriterContext *ctx)
 
     ctx->transact_pending = true;
 
-    static_cast<TFModbusTCPSharedClient *>(ctx->client)->transact(ctx->device_address,
-                                                                  function_code,
-                                                                  register_block->start_address,
-                                                                  data_count,
-                                                                  const_cast<void *>(buffer),
-                                                                  2_s,
-    [ctx, register_block, data_count, buffer, buffer_to_check, buffer_to_check_len,
-     has_step2, step2_function_code, buffer_to_compare, buffer_to_compare_len, buffer_to_free]
+    ctx->shared_client->transact(ctx->device_address,
+                                 function_code,
+                                 register_block->start_address,
+                                 data_count,
+                                 const_cast<void *>(buffer),
+                                 2_s,
+    [ctx, register_block, function_code, data_count, buffer_len, buffer, buffer_to_check,
+     has_step2, step2_function_code, buffer_to_compare, buffer_to_free]
     (TFModbusTCPClientTransactionResult result, const char *error_message) {
         if (ctx->destroy_requested) {
             ctx->transact_pending = false;
@@ -558,7 +566,7 @@ static void next_writer_step(BatteryModbusTCP::WriterContext *ctx)
         char description[128];
 
         if (result != TFModbusTCPClientTransactionResult::Success) {
-            trace("b%lu t%d ww m%c em%c i%zu/%zu%s e%d%s%s",
+            trace("b%lu t%d ww m%c em%c i%zu/%zu%s fc%u sa%u dc%u e%d%s%s",
                   ctx->slot,
                   ctx->test ? 1 : 0,
                   get_battery_mode_as_char(ctx->mode),
@@ -566,6 +574,9 @@ static void next_writer_step(BatteryModbusTCP::WriterContext *ctx)
                   ctx->index + 1,
                   ctx->table->register_blocks_count,
                   has_step2 ? " s1/2" : "",
+                  static_cast<uint8_t>(function_code),
+                  register_block->start_address,
+                  data_count,
                   static_cast<int>(result),
                   error_message != nullptr ? " / " : "",
                   error_message != nullptr ? error_message : "");
@@ -588,8 +599,27 @@ static void next_writer_step(BatteryModbusTCP::WriterContext *ctx)
             return;
         }
 
+        trace("b%lu t%d ww m%c em%c i%zu/%zu%s fc%u sa%u dc%u",
+              ctx->slot,
+              ctx->test ? 1 : 0,
+              get_battery_mode_as_char(ctx->mode),
+              get_battery_mode_as_char(ctx->table->effective_mode),
+              ctx->index + 1,
+              ctx->table->register_blocks_count,
+              has_step2 ? " s1/2" : "",
+              static_cast<uint8_t>(function_code),
+              register_block->start_address,
+              data_count);
+
+        char data_buf[125 * 4 + 1]; // 4 nibble per register for 125 registers plus \n
+        size_t data_buf_used = hexdump(static_cast<const uint8_t *>(buffer), buffer_len, data_buf, ARRAY_SIZE(data_buf), HexdumpCase::Lower);
+        data_buf[data_buf_used] = '\n';
+        ++data_buf_used;
+
+        logger.trace_plain(batteries_modbus_tcp.trace_buffer_index, data_buf, data_buf_used);
+
         if (buffer_to_check != nullptr) {
-            ctx->precondition_met = memcmp(buffer, buffer_to_check, buffer_to_check_len) == 0;
+            ctx->precondition_met = memcmp(buffer, buffer_to_check, buffer_len) == 0;
 
             if (ctx->precondition_met) {
                 ctx->last_precondition_not_met_index_plus_one = 0;
@@ -656,11 +686,13 @@ static void next_writer_step(BatteryModbusTCP::WriterContext *ctx)
         if (has_step2) {
             bool skip_step2;
             uint16_t step2_data_count;
+            size_t step2_buffer_len;
             void *step2_buffer;
 
             if (buffer_to_compare != nullptr) {
-                skip_step2 = memcmp(buffer, buffer_to_compare, buffer_to_compare_len) == 0;
+                skip_step2 = memcmp(buffer, buffer_to_compare, buffer_len) == 0;
                 step2_data_count = register_block->values_count;
+                step2_buffer_len = buffer_len;
                 step2_buffer = register_block->buffer;
             }
             else if (register_block->function_code == ModbusFunctionCode::ReadMaskWriteSingleRegister
@@ -674,6 +706,7 @@ static void next_writer_step(BatteryModbusTCP::WriterContext *ctx)
 
                 skip_step2 = false;
                 step2_data_count = data_count;
+                step2_buffer_len = buffer_len;
                 step2_buffer = buffer_to_free;
             }
             else if (register_block->function_code == ModbusFunctionCode::IfDifferentMaskWriteRegister
@@ -696,10 +729,12 @@ static void next_writer_step(BatteryModbusTCP::WriterContext *ctx)
 
                 if (register_block->function_code == ModbusFunctionCode::IfDifferentMaskWriteRegister) {
                     step2_data_count = register_block->values_count;
+                    step2_buffer_len = sizeof(uint16_t) * step2_data_count;
                     step2_buffer = register_block->buffer;
                 }
                 else {
                     step2_data_count = data_count;
+                    step2_buffer_len = buffer_len;
                     step2_buffer = buffer_to_free;
                 }
             }
@@ -708,13 +743,14 @@ static void next_writer_step(BatteryModbusTCP::WriterContext *ctx)
             }
 
             if (!skip_step2) {
-                static_cast<TFModbusTCPSharedClient *>(ctx->client)->transact(ctx->device_address,
-                                                                              step2_function_code,
-                                                                              register_block->start_address,
-                                                                              step2_data_count,
-                                                                              step2_buffer,
-                                                                              2_s,
-                [ctx, buffer_to_free](TFModbusTCPClientTransactionResult step2_result, const char *step2_error_message) {
+                ctx->shared_client->transact(ctx->device_address,
+                                             step2_function_code,
+                                             register_block->start_address,
+                                             step2_data_count,
+                                             step2_buffer,
+                                             2_s,
+                [ctx, register_block, buffer_to_free, step2_function_code, step2_data_count, step2_buffer_len, step2_buffer]
+                (TFModbusTCPClientTransactionResult step2_result, const char *step2_error_message) {
                     if (ctx->destroy_requested) {
                         ctx->transact_pending = false;
 
@@ -724,24 +760,27 @@ static void next_writer_step(BatteryModbusTCP::WriterContext *ctx)
                     }
 
                     if (step2_result != TFModbusTCPClientTransactionResult::Success) {
-                        trace("b%lu t%d ww m%c em%c i%zu/%zu s2/2 e%d%s%s",
+                        trace("b%lu t%d ww m%c em%c i%zu/%zu s2/2 fc%u sa%u dc%u e%d%s%s",
                               ctx->slot,
                               ctx->test ? 1 : 0,
                               get_battery_mode_as_char(ctx->mode),
                               get_battery_mode_as_char(ctx->table->effective_mode),
                               ctx->index + 1,
                               ctx->table->register_blocks_count,
+                              static_cast<uint8_t>(step2_function_code),
+                              register_block->start_address,
+                              step2_data_count,
                               static_cast<int>(step2_result),
                               step2_error_message != nullptr ? " / " : "",
                               step2_error_message != nullptr ? step2_error_message : "");
 
-                        char description_[128];
+                        char step2_description[128];
 
                         writer_logfln(ctx, true,
                                       ctx->language == Language::English
                                       ? "Setting mode %s failed at register block %zu of %zu: %s (%d)%s%s"
                                       : "Setzen des Modus %s (Schritt 2) schlug fehl bei Registerblock %zu von %zu: %s (%d)%s%s",
-                                      get_battery_mode_description(ctx->mode, ctx->table->effective_mode, ctx->language, description_, std::size(description_)),
+                                      get_battery_mode_description(ctx->mode, ctx->table->effective_mode, ctx->language, step2_description, std::size(step2_description)),
                                       ctx->index + 1, ctx->table->register_blocks_count,
                                       get_tf_modbus_tcp_client_transaction_result_name(step2_result),
                                       static_cast<int>(step2_result),
@@ -754,6 +793,24 @@ static void next_writer_step(BatteryModbusTCP::WriterContext *ctx)
                         last_writer_step(ctx, false);
                         return;
                     }
+
+                    trace("b%lu t%d ww m%c em%c i%zu/%zu s2/2 fc%u sa%u dc%u",
+                          ctx->slot,
+                          ctx->test ? 1 : 0,
+                          get_battery_mode_as_char(ctx->mode),
+                          get_battery_mode_as_char(ctx->table->effective_mode),
+                          ctx->index + 1,
+                          ctx->table->register_blocks_count,
+                          static_cast<uint8_t>(step2_function_code),
+                          register_block->start_address,
+                          step2_data_count);
+
+                    char step2_data_buf[125 * 4 + 1]; // 4 nibble per register for 125 registers plus \n
+                    size_t step2_data_buf_used = hexdump(static_cast<uint8_t *>(step2_buffer), step2_buffer_len, step2_data_buf, ARRAY_SIZE(step2_data_buf), HexdumpCase::Lower);
+                    step2_data_buf[step2_data_buf_used] = '\n';
+                    ++step2_data_buf_used;
+
+                    logger.trace_plain(batteries_modbus_tcp.trace_buffer_index, step2_data_buf, step2_data_buf_used);
 
                     ++ctx->index;
                     ctx->transact_pending = false;
@@ -779,7 +836,7 @@ static void next_writer_step(BatteryModbusTCP::WriterContext *ctx)
 BatteryModbusTCP::WriterContext *BatteryModbusTCP::create_writer(BatteryModbusTCP *battery,
                                                                  uint32_t slot,
                                                                  bool test,
-                                                                 TFModbusTCPSharedClient *client,
+                                                                 TFModbusTCPSharedClient *shared_client,
                                                                  uint8_t device_address,
                                                                  uint16_t transaction_id_mask,
                                                                  uint16_t repeat_interval, // seconds
@@ -800,7 +857,7 @@ BatteryModbusTCP::WriterContext *BatteryModbusTCP::create_writer(BatteryModbusTC
     ctx->language = language;
     ctx->battery = battery;
     ctx->slot = slot;
-    ctx->client = client;
+    ctx->shared_client = shared_client;
     ctx->device_address = device_address;
     ctx->transaction_id_mask = transaction_id_mask;
     ctx->repeat_interval = repeat_interval;
@@ -953,12 +1010,7 @@ static void read_kostal_plenticore_byte_order(BatteryModbusTCP::DiscoverContext 
 
     ctx->transact_pending = true;
 
-    static_cast<TFModbusTCPSharedClient *>(ctx->client)->transact(ctx->device_address,
-                                                                  TFModbusTCPFunctionCode::ReadHoldingRegisters,
-                                                                  5,
-                                                                  1,
-                                                                  ctx->buffer,
-                                                                  2_s,
+    ctx->shared_client->transact(ctx->device_address, TFModbusTCPFunctionCode::ReadHoldingRegisters, 5, 1, ctx->buffer, 2_s,
     [ctx](TFModbusTCPClientTransactionResult result, const char *error_message) {
         if (ctx->destroy_requested) {
             free_discover(ctx);
@@ -1004,7 +1056,7 @@ static void read_kostal_plenticore_byte_order(BatteryModbusTCP::DiscoverContext 
 BatteryModbusTCP::DiscoverContext *BatteryModbusTCP::create_discover(BatteryModbusTCP *battery,
                                                                      uint32_t slot,
                                                                      bool test,
-                                                                     TFModbusTCPSharedClient *client,
+                                                                     TFModbusTCPSharedClient *shared_client,
                                                                      uint8_t device_address,
                                                                      uint16_t transaction_id_mask,
                                                                      VLogFLnFunction &&vlogfln,
@@ -1017,7 +1069,7 @@ BatteryModbusTCP::DiscoverContext *BatteryModbusTCP::create_discover(BatteryModb
     discover->language = language;
     discover->battery = battery;
     discover->slot = slot;
-    discover->client = client;
+    discover->shared_client = shared_client;
     discover->device_address = device_address;
     discover->transaction_id_mask = transaction_id_mask;
     discover->vlogfln = std::move(vlogfln);
@@ -1312,7 +1364,7 @@ void BatteryModbusTCP::update_pending_mode()
     bool start_discover;
     BatteryMode next_mode;
 
-    if (requested_mode == BatteryMode::None || connected_client == nullptr || testing) {
+    if (requested_mode == BatteryMode::None || shared_client == nullptr || shared_client->get_connection_status() != TFGenericTCPClientConnectionStatus::Connected || testing) {
         table = nullptr;
         start_discover = false;
         next_mode = BatteryMode::None;
@@ -1340,7 +1392,7 @@ void BatteryModbusTCP::update_pending_mode()
 
     trace("b%lu t0 %s r%c%s m%c->%c%s",
           slot,
-          connected_client != nullptr ? "ce" : "nc",
+          shared_client != nullptr && shared_client->get_connection_status() == TFGenericTCPClientConnectionStatus::Connected ? "ce" : "nc",
           get_battery_mode_as_char(requested_mode),
           testing ? " tg" : "",
           get_battery_mode_as_char(pending_mode),
@@ -1354,7 +1406,8 @@ void BatteryModbusTCP::update_pending_mode()
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wsuggest-attribute=format"
 #endif
-        discover_ctx = create_discover(this, slot, false, static_cast<TFModbusTCPSharedClient *>(connected_client),
+        discover_ctx = create_discover(this, slot, false,
+                                       static_cast<TFModbusTCPSharedClient *>(shared_client),
                                        device_address, transaction_id_mask,
         [this](bool event_log, const char *fmt, va_list args) {
             if (!event_log) {
@@ -1417,7 +1470,7 @@ void BatteryModbusTCP::update_pending_mode()
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wsuggest-attribute=format"
 #endif
-        writer_ctx = create_writer(this, slot, false, static_cast<TFModbusTCPSharedClient *>(connected_client),
+        writer_ctx = create_writer(this, slot, false, static_cast<TFModbusTCPSharedClient *>(shared_client),
                                    device_address, transaction_id_mask, repeat_interval, pending_mode, table,
         [this](bool event_log, const char *fmt, va_list args) {
             if (!event_log) {

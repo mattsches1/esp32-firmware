@@ -380,12 +380,6 @@ def set_evse_test_mode(password=0xdeadbeef, name=''):
         if retry_wrapper(lambda: evse.get_test_mode(), "read back EVSE test mode"):
             break
 
-def set_evse_no_pwm_test_mode(enable):
-    if enable:
-        set_evse_test_mode(0xbeefdead, 'no-PWM ')
-    else:
-        set_evse_test_mode()
-
 def reset_evse():
     global evse
     retry_wrapper(lambda: evse.reset(), "reset EVSE")
@@ -399,8 +393,8 @@ class Scanner:
         else:
             try:
                 subprocess.check_call(['numlockx', 'on'])
-            except:
-                fatal_error('Could not turn numlock on. Is numlockx installed?')
+            except Exception as e:
+                fatal_error('Could not turn numlock on. Is numlockx installed?', other_exception=e)
 
         self.qr_charger_code = None
         self.qr_gen = None
@@ -669,15 +663,16 @@ def set_iso15118_enabled(enable: bool):
         "autocharge": False,
         "read_soc": enable,
         "charge_via_iso15118": False,
-        "min_charge_current": 1000
+        "min_charge_current": None,
+        "fast_timeout": None
         }).encode('utf-8'))
     try:
         with urllib.request.urlopen(req, timeout=6) as f:
             f.read()
     except urllib.error.HTTPError as e:
-        fatal_error("Failed to enable ISO 15118: {} {}".format(e, e.read()))
+        fatal_error("Failed to enable ISO 15118: {} {}".format(e, e.read()), other_exception=e)
     except Exception as e:
-        fatal_error("Failed to enable ISO 15118: {}".format(e))
+        fatal_error("Failed to enable ISO 15118: {}".format(e), other_exception=e)
 
 
 def get_iso15118_ev_mac():
@@ -685,9 +680,9 @@ def get_iso15118_ev_mac():
         with urllib.request.urlopen("http://{}/iso15118/state_slac/pev_mac".format(host), timeout=5) as f:
             return ":".join([hex(x)[2:] for x in json.loads(f.read())])
     except urllib.error.HTTPError as e:
-        fatal_error("Failed to get ISO 15118 EV MAC address: {} {}".format(e, e.read()))
+        fatal_error("Failed to get ISO 15118 EV MAC address: {} {}".format(e, e.read()), other_exception=e)
     except Exception as e:
-        fatal_error("Failed to get ISO 15118 EV MAC address: {}".format(e))
+        fatal_error("Failed to get ISO 15118 EV MAC address: {}".format(e), other_exception=e)
 
 
 def get_iso15118_attenuation_profile():
@@ -695,9 +690,9 @@ def get_iso15118_attenuation_profile():
         with urllib.request.urlopen("http://{}/iso15118/state_slac/attenuation_profile".format(host), timeout=5) as f:
             return json.loads(f.read())
     except urllib.error.HTTPError as e:
-        fatal_error("Failed to get ISO 15118 attenuation profile: {} {}".format(e, e.read()))
+        fatal_error("Failed to get ISO 15118 attenuation profile: {} {}".format(e, e.read()), other_exception=e)
     except Exception as e:
-        fatal_error("Failed to get ISO 15118 attenuation profile: {}".format(e))
+        fatal_error("Failed to get ISO 15118 attenuation profile: {}".format(e), other_exception=e)
 
 def upload_iso15118_pib():
     set_iso15118_enabled(True)
@@ -710,9 +705,9 @@ def upload_iso15118_pib():
         with urllib.request.urlopen(req, timeout=6) as f:
             f.read()
     except urllib.error.HTTPError as e:
-        fatal_error("Failed to upload ISO 15118 PIB: {} {}".format(e, e.read()))
+        fatal_error("Failed to upload ISO 15118 PIB: {} {}".format(e, e.read()), other_exception=e)
     except Exception as e:
-        fatal_error("Failed to upload ISO 15118 PIB: {}".format(e))
+        fatal_error("Failed to upload ISO 15118 PIB: {}".format(e), other_exception=e)
 
     start = time.time()
     ex = None
@@ -729,12 +724,12 @@ def upload_iso15118_pib():
                 break
         except urllib.error.HTTPError as e:
             ex = str(e) + e.read().decode('utf-8')
-            #fatal_error("Failed to read back ISO 15118 PIB: {} {}".format(e, e.read()))
+            #fatal_error("Failed to read back ISO 15118 PIB: {} {}".format(e, e.read()), other_exception=e)
         except Exception as e:
             ex = e
-            #fatal_error("Failed to read back ISO 15118 PIB: {}".format(e))
+            #fatal_error("Failed to read back ISO 15118 PIB: {}".format(e), other_exception=e)
     if ex is not None:
-        fatal_error("Failed to read back ISO 15118 PIB: {}".format(ex))
+        fatal_error("Failed to read back ISO 15118 PIB: {}".format(ex), other_exception=ex)
 
     set_iso15118_enabled(False)
 
@@ -781,13 +776,12 @@ def led_wrap():
                         get_meter_voltages_function=get_meter_voltages,
                         set_iso15118_enabled_function=set_iso15118_enabled,
                         get_iso15118_ev_mac_function=get_iso15118_ev_mac,
-                        get_iso15118_attenuation_profile_function=get_iso15118_attenuation_profile,
-                        set_evse_no_pwm_test_mode_function=set_evse_no_pwm_test_mode)
+                        get_iso15118_attenuation_profile_function=get_iso15118_attenuation_profile)
 
         stage3.setup()
         stage3.set_led_strip_color((0, 0, 255))
     except BaseException as e:
-        print(red('Setup failed:'))
+        print(red(f'Setup failed: {e}'))
         orig_print(red(traceback.format_exc().rstrip()))
 
         commit_message += ' (setup failure)'
@@ -899,7 +893,7 @@ def led_wrap():
 
         print(green('Done!'))
     except BaseException as e:
-        print(red('Aftermath failed:'))
+        print(red(f'Aftermath failed: {e}'))
         orig_print(red(traceback.format_exc().rstrip()))
 
         stage3.set_led_strip_color((255, 0, 0))
@@ -1052,9 +1046,9 @@ def flash_firmware(firmware_path, ssid, do_factory_reset=True):
         except urllib.error.HTTPError as e:
             print("HTTP error", e)
             if e.code == 423:
-                fatal_error("Charger blocked firmware update. Is the EVSE working correctly?")
+                fatal_error("Charger blocked firmware update. Is the EVSE working correctly?", other_exception=e)
             else:
-                fatal_error(e.read().decode("utf-8"))
+                fatal_error(e.read().decode("utf-8"), other_exception=e)
         except urllib.error.URLError as e:
             print("URL error", e)
             if i != 4:
@@ -1062,8 +1056,8 @@ def flash_firmware(firmware_path, ssid, do_factory_reset=True):
                 time.sleep(3)
             else:
                 if isinstance(e.reason, ConnectionResetError):
-                    fatal_error("Charger blocked firmware update. Is the EVSE working correctly?")
-                fatal_error("Can't flash firmware!")
+                    fatal_error("Charger blocked firmware update. Is the EVSE working correctly?", other_exception=e)
+                fatal_error("Can't flash firmware!", other_exception=e)
 
     time.sleep(3)
     connect_to_ethernet(ssid, "firmware_update/validate")
@@ -1193,9 +1187,9 @@ def main(stage3, scanner, result):
                     if len(response) > 0:
                         print(response)
                 except urllib.error.HTTPError as e:
-                    fatal_error(f"Failed to write factory data: {e} {e.read()}")
+                    fatal_error(f"Failed to write factory data: {e} {e.read()}", other_exception=e)
                 except Exception as e:
-                    fatal_error(f"Failed to write factory data: {e}")
+                    fatal_error(f"Failed to write factory data: {e}", other_exception=e)
 
                 result["factory_data_written"] = True
                 validate_factory_data = True
@@ -1289,8 +1283,8 @@ def main(stage3, scanner, result):
 
         try:
             ipcon.connect(host, 4223)
-        except Exception:
-            fatal_error("Failed to connect to ESP proxy. Is the router's DHCP cache full?")
+        except Exception as e:
+            fatal_error("Failed to connect to ESP proxy. Is the router's DHCP cache full?", other_exception=e)
 
         dprint("post ipcon connect")
 
@@ -1349,9 +1343,9 @@ def main(stage3, scanner, result):
                     if len(response) > 0:
                         print(response)
                 except urllib.error.HTTPError as e:
-                    fatal_error("Failed to configure user {}: {} {}".format(i, e, e.read()))
+                    fatal_error("Failed to configure user {}: {} {}".format(i, e, e.read()), other_exception=e)
                 except Exception as e:
-                    fatal_error("Failed to configure user {}: {}".format(i, e))
+                    fatal_error("Failed to configure user {}: {}".format(i, e), other_exception=e)
 
         dprint("post user config")
 
@@ -1374,9 +1368,9 @@ def main(stage3, scanner, result):
             if len(response) > 0:
                 print(response)
         except urllib.error.HTTPError as e:
-            fatal_error("Failed to configure NFC tags: {} {}".format(e, e.read()))
+            fatal_error("Failed to configure NFC tags: {} {}".format(e, e.read()), other_exception=e)
         except Exception as e:
-            fatal_error("Failed to configure NFC tags: {}".format(e))
+            fatal_error("Failed to configure NFC tags: {}".format(e), other_exception=e)
         result["nfc_tags_configured"] = True
 
         dprint("post nfc config")
@@ -1475,9 +1469,9 @@ def main(stage3, scanner, result):
                     if len(response) > 0:
                         print(response)
                 except urllib.error.HTTPError as e:
-                    fatal_error(f"Failed to erase other app partition: {e} {e.read()}")
+                    fatal_error(f"Failed to erase other app partition: {e} {e.read()}", other_exception=e)
                 except Exception as e:
-                    fatal_error(f"Failed to erase other app partition: {e}")
+                    fatal_error(f"Failed to erase other app partition: {e}", other_exception=e)
     finally:
         if browser is not None:
             try:

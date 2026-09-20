@@ -77,6 +77,8 @@ void MqttAutoDiscovery::stop()
 
     task_scheduler.cancel(this->task_id);
     this->task_id = 0;
+    task_scheduler.cancel(this->refresh_task_id);
+    this->refresh_task_id = 0;
 
     // <discovery_prefix>/+/<node_id>/+/config
     String discovery_topic;
@@ -142,6 +144,15 @@ void MqttAutoDiscovery::register_events()
         return EventResult::OK;
     });
 #endif
+    if (api.getState("charge_manager/supported_charge_modes", false) != nullptr) {
+        event.registerEvent("charge_manager/supported_charge_modes", {}, [this](const Config *) {
+            if (this->task_id != 0) {
+                this->next_topic = 0;
+                task_scheduler.rescheduleNow(this->task_id);
+            }
+            return EventResult::OK;
+        });
+    }
 }
 
 size_t MqttAutoDiscovery::get_discovery_topic(size_t topic_idx, char *buf, size_t buf_len)
@@ -220,6 +231,16 @@ void MqttAutoDiscovery::announce_next_topic()
     if (++this->next_topic >= MQTT_DISCOVERY_TOPIC_COUNT) {
         this->next_topic = 0;
         task_scheduler.updateCurrentTaskDelay(15_min);
+        // HA does not re-evaluate old state messages when discovery changes a template.
+        // Allow discovery processing to finish, then resend through the normal API backend.
+        task_scheduler.cancel(this->refresh_task_id);
+        this->refresh_task_id = task_scheduler.scheduleOnce([this]() {
+            this->refresh_task_id = 0;
+            for (const auto &info : mqtt_discovery_topic_infos) {
+                if (info.type != MqttDiscoveryType::CommandOnly)
+                    mqtt.refresh_state(info.path);
+            }
+        }, 1_s);
     } else {
         task_scheduler.updateCurrentTaskDelay(0_us);
     }
@@ -234,6 +255,7 @@ void MqttAutoDiscovery::announce_next_topic()
             entity_enabled = api.hasFeature(info.feature);
             break;
 
+        case MqttDiscoveryCheckType::ChargeModeSelect:
         case MqttDiscoveryCheckType::ApiBool: {
             const Config *cfg = api.getState(info.api_check_path, false);
             if (cfg == nullptr)
@@ -278,6 +300,24 @@ void MqttAutoDiscovery::announce_next_topic()
         }
         default:
             esp_system_abortf<96>("Unknown MqttDiscoveryCheckType %d", static_cast<int>(info.check_type));
+    }
+
+    const MqttDiscoveryChargeMode *supported_modes[MQTT_DISCOVERY_CHARGE_MODE_COUNT];
+    size_t supported_mode_count = 0;
+    if (entity_enabled && info.check_type == MqttDiscoveryCheckType::ChargeModeSelect) {
+        const Config *modes = api.getState("charge_manager/supported_charge_modes", false);
+        if (modes != nullptr) {
+            for (const auto &mode : mqtt_discovery_charge_modes) {
+                for (size_t i = 0; i < modes->count(); ++i) {
+                    if (modes->get(i)->asUint() == mode.id) {
+                        supported_modes[supported_mode_count++] = &mode;
+                        break;
+                    }
+                }
+            }
+        }
+        // Do not advertise an empty selector or fall back to unsupported modes.
+        entity_enabled = supported_mode_count > 0;
     }
 
     CoolString topic;
@@ -329,13 +369,15 @@ void MqttAutoDiscovery::announce_next_topic()
     // 7*64: topic_prefix (four times) and client name (thrice)
     // 13: component (max length is "binary_sensor")
     // 250: device_info
-    constexpr size_t json_doc_size = MQTT_DISCOVERY_MAX_JSON_LENGTH + 265 + 7 * 64 + 13 + 250;
+    // 128: dynamically generated meter value_template
+    constexpr size_t json_doc_size = MQTT_DISCOVERY_MAX_JSON_LENGTH + 265 + 7 * 64 + 13 + 250 + 128;
 
     // TODO: can we afford a 2k stack buffer here?
 
-    char *buf = static_cast<char *>(malloc(json_doc_size));
-    memset(buf, 0, json_doc_size);
-    TFJsonSerializer json(buf, json_doc_size);
+    const size_t buffer_size = json_doc_size + (info.check_type == MqttDiscoveryCheckType::ChargeModeSelect ? MQTT_DISCOVERY_MAX_CHARGE_MODE_JSON_LENGTH : 0);
+    char *buf = static_cast<char *>(malloc(buffer_size));
+    memset(buf, 0, buffer_size);
+    TFJsonSerializer json(buf, buffer_size);
 
     json.addObject();
 
@@ -381,10 +423,28 @@ void MqttAutoDiscovery::announce_next_topic()
     // Inject pre-formatted static_info as raw JSON object members
     json._addJson(static_info, strlen(static_info));
 
+    if (info.check_type == MqttDiscoveryCheckType::ChargeModeSelect) {
+        String value_template = "{% set m = {";
+        json.addMemberArray("options");
+        for (size_t i = 0; i < supported_mode_count; ++i) {
+            const auto &mode = *supported_modes[i];
+            const char *mode_name = default_language == Language::English ? mode.name_en : mode.name_de;
+            json.addString(mode_name);
+            if (i != 0)
+                value_template += ", ";
+            value_template += String(mode.id) + ": '" + mode_name + "'";
+        }
+        json.endArray();
+        // The read-only sensors still display modes outside the selectable subset.
+        value_template += "} %}{{ m.get(value_json.mode, 'None') }}";
+        json.addMemberString("value_template", value_template.c_str());
+    }
+
     // For MeterValue entities, inject dynamically-resolved value_template
     if (info.check_type == MqttDiscoveryCheckType::MeterValue && resolved_meter_index >= 0) {
         assert(info.value_fractional_digits >= 0);
-        json.addMemberStringF("value_template", "{{value_json[%d] | round(%d)}}", resolved_meter_index, info.value_fractional_digits);
+        // MQTT sensors interpret 'None' as unknown, null measurements must not be rounded.
+        json.addMemberStringF("value_template", "{{value_json[%d] | round(%d) if value_json[%d] is not none else 'None'}}", resolved_meter_index, info.value_fractional_digits, resolved_meter_index);
     }
 
     json.addMemberObject("device");

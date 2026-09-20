@@ -46,18 +46,33 @@ METER_VALUE_IDS = [
 meters_max_slots = util.get_env_metadata()['options']['meters_max_slots']
 warp_edition = util.get_env_metadata()['options']['hostname_prefix']
 
-charge_mode_names_de = [
-    "Schnell",
-    "Aus",
-    "PV",
-    "Min + PV",
-]
-charge_mode_names_en = [
-    "Fast",
-    "Off",
-    "PV",
-    "Min + PV",
-]
+# ConfigChargeMode IDs; 4 is Default, not a selectable charging mode.
+charge_mode_names_de = {
+    0: "Schnell",
+    1: "Aus",
+    2: "PV",
+    3: "Min + PV",
+    5: "Min",
+    6: "Eco",
+    7: "Eco + PV",
+    8: "Eco + Min",
+    9: "Eco + Min + PV",
+}
+charge_mode_names_en = {
+    0: "Fast",
+    1: "Off",
+    2: "PV",
+    3: "Min + PV",
+    5: "Min",
+    6: "Eco",
+    7: "Eco + PV",
+    8: "Eco + Min",
+    9: "Eco + Min + PV",
+}
+
+# Default is a valid reported state (e.g. an unmanaged EVSE), but not a selector option.
+charge_mode_state_names_de = {**charge_mode_names_de, 4: "Standardmodus"}
+charge_mode_state_names_en = {**charge_mode_names_en, 4: "Default mode"}
 
 charger_state_names_de = [
     "Nicht verbunden",
@@ -77,17 +92,17 @@ charger_state_names_en = [
 
 def command_template_for_select(names):
     """Generate a Jinja command_template that maps a selected option name back to a JSON mode payload."""
-    mapping = ", ".join(f"'{name}': {i}" for i, name in enumerate(names))
+    mapping = ", ".join(f"'{name}': {i}" for i, name in names.items())
     return "{%% set m = {%s} %%}{{ { 'mode': m.get(value, 0)} | tojson }}" % mapping
 
 
 def enum_value_template(json_field, names):
     """Generate a Jinja value_template that maps an integer enum field to its name.
-    Uses a Jinja `{% set map = {0: 'A', 1: 'B', ...} %}` lookup with a fallback to 'Unknown'."""
-    mapping = ", ".join(f"{i}: '{name}'" for i, name in enumerate(names))
+    Uses a Jinja lookup with 'None' (unknown MQTT sensor state) for unmapped IDs."""
+    mapping = ", ".join(f"{i}: '{name}'" for i, name in names.items())
     return (
         "{{% set m = {{ {mapping} }} %}}"
-        "{{{{ m.get(value_json.{field}, 'Unknown') }}}}"
+        "{{{{ m.get(value_json.{field}, 'None') }}}}"
     ).format(mapping=mapping, field=json_field)
 
 
@@ -137,6 +152,8 @@ def load_meter_value_entries(wanted_ids: list[int]) -> list:
 
     def get_device_class(unit: str, measurand: str) -> str | None:
         """Return the HA device_class string or None."""
+        if measurand == 'Capacity' and unit == 'kWh':
+            return 'energy_storage'
         if unit == '%':
             if measurand == 'State Of Charge':
                 return 'battery'
@@ -152,6 +169,9 @@ def load_meter_value_entries(wanted_ids: list[int]) -> list:
     # --- state_class mapping ----------------------------------------------
     def get_state_class(measurand: str, kind: str, unit: str) -> str:
         """Return the HA state_class string."""
+        # Battery capacity is a measurement, even when expressed in energy units.
+        if measurand == 'Capacity':
+            return 'measurement'
         # Energy values are totals (monotonically increasing or resettable)
         if measurand == 'Energy' or unit in ('kWh', 'kvarh', 'kVAh'):
             return 'total'
@@ -161,9 +181,6 @@ def load_meter_value_entries(wanted_ids: list[int]) -> list:
         # Run time is a total
         if measurand == 'Run Time':
             return 'total_increasing'
-        # Capacity is a measurement
-        if measurand == 'Capacity':
-            return 'measurement'
         # Everything else (voltage, current, power, frequency, temp, etc.)
         return 'measurement'
 
@@ -274,7 +291,6 @@ class Component(Enum):
     BUTTON = "button"
     NUMBER = "number"
     SELECT = "select"
-    TEXT = "text"
 
     def get_discovery_type(self) -> DiscoveryType:
         return {
@@ -284,7 +300,6 @@ class Component(Enum):
             Component.NUMBER: DiscoveryType.STATE_AND_UPDATE,
             Component.BUTTON: DiscoveryType.COMMAND_ONLY,
             Component.SELECT: DiscoveryType.STATE_AND_UPDATE,
-            Component.TEXT: DiscoveryType.STATE_ONLY,
         }[self]
 
 
@@ -300,6 +315,7 @@ class CheckType(Enum):
     FEATURE = "Feature"  # Check api.hasFeature(feature)
     API_BOOL = "ApiBool"  # Check API path exists and bool key is true. bool key is optional. If not present the existence of the path is enough to announce the entity.
     METER_VALUE = "MeterValue"  # Check meter config enabled + value_id present in value_ids
+    CHARGE_MODE_SELECT = "ChargeModeSelect"  # ApiBool plus runtime supported charging mode options
 
 
 @dataclass
@@ -455,12 +471,25 @@ entities = [
         availability=[],
         static_info_homeassistant={
             "icon": "mdi:ev-plug-type2",
+            "value_template": "{{value_json.charger_state}}",
+        },
+    ),
+    Entity(
+        component=Component.SENSOR,
+        feature=Feature.EVSE,
+        object_id="chargerstate_text",
+        path="evse/state",
+        name_de="Ladestatus (Text)",
+        name_en="Charge state (text)",
+        availability=[],
+        static_info_homeassistant={
+            "icon": "mdi:ev-plug-type2",
             "device_class": "enum",
-            "value_template": enum_value_template("charger_state", charger_state_names_de),
+            "value_template": enum_value_template("charger_state", dict(enumerate(charger_state_names_de))),
             "options": charger_state_names_de,
         },
         static_info_homeassistant_en={
-            "value_template": enum_value_template("charger_state", charger_state_names_en),
+            "value_template": enum_value_template("charger_state", dict(enumerate(charger_state_names_en))),
             "options": charger_state_names_en,
         },
     ),
@@ -475,12 +504,12 @@ entities = [
         static_info_homeassistant={
             "icon": "mdi:ev-station",
             "device_class": "enum",
-            "value_template": enum_value_template("mode", charge_mode_names_de),
-            "options": charge_mode_names_de,
+            "value_template": enum_value_template("mode", charge_mode_state_names_de),
+            "options": list(charge_mode_state_names_de.values()),
         },
         static_info_homeassistant_en={
-            "value_template": enum_value_template("mode", charge_mode_names_en),
-            "options": charge_mode_names_en,
+            "value_template": enum_value_template("mode", charge_mode_state_names_en),
+            "options": list(charge_mode_state_names_en.values()),
         },
         check_type=CheckType.FEATURE,
     ),
@@ -650,22 +679,18 @@ entities = [
         name_en="Active charge mode",
         availability=[
             MQTT_NOT_READ_ONLY,
-            AvailabilityEntry("power_manager/config", "{{ 'online' if value_json.enabled else 'offline' }}"),
+            AvailabilityEntry("charge_manager/config", "{{ 'online' if value_json.enable_charge_manager else 'offline' }}"),
         ],
         static_info_homeassistant={
             "icon": "mdi:ev-station",
-            "value_template": enum_value_template("mode", charge_mode_names_de),
             "command_template": command_template_for_select(charge_mode_names_de),
-            "options": charge_mode_names_de,
         },
         static_info_homeassistant_en={
-            "value_template": enum_value_template("mode", charge_mode_names_en),
             "command_template": command_template_for_select(charge_mode_names_en),
-            "options": charge_mode_names_en,
         },
-        check_type=CheckType.API_BOOL,
-        api_check_path="power_manager/config",
-        api_check_key="enabled",
+        check_type=CheckType.CHARGE_MODE_SELECT,
+        api_check_path="charge_manager/config",
+        api_check_key="enable_charge_manager",
     ),
     Entity(
         component=Component.SENSOR,
@@ -674,21 +699,21 @@ entities = [
         name_de="Aktueller Lademodus",
         name_en="Current charge mode",
         availability=[
-            AvailabilityEntry("power_manager/config", "{{ 'online' if value_json.enabled else 'offline' }}"),
+            AvailabilityEntry("charge_manager/config", "{{ 'online' if value_json.enable_charge_manager else 'offline' }}"),
         ],
         static_info_homeassistant={
             "icon": "mdi:ev-station",
             "device_class": "enum",
-            "value_template": enum_value_template("mode", charge_mode_names_de),
-            "options": charge_mode_names_de,
+            "value_template": enum_value_template("mode", charge_mode_state_names_de),
+            "options": list(charge_mode_state_names_de.values()),
         },
         static_info_homeassistant_en={
-            "value_template": enum_value_template("mode", charge_mode_names_en),
-            "options": charge_mode_names_en,
+            "value_template": enum_value_template("mode", charge_mode_state_names_en),
+            "options": list(charge_mode_state_names_en.values()),
         },
         check_type=CheckType.API_BOOL,
-        api_check_path="power_manager/config",
-        api_check_key="enabled",
+        api_check_path="charge_manager/config",
+        api_check_key="enable_charge_manager",
     ),
     Entity(
         component=Component.SENSOR,
@@ -699,7 +724,8 @@ entities = [
         availability=[AvailabilityEntry("solar_forecast/config", "{{ 'online' if value_json.enable else 'offline' }}")],
         static_info_homeassistant={
             "device_class": "energy",
-            "value_template": "{{(value_json.wh_tomorrow | float / 1000) | round(2)}}",
+            # The forecast API uses -1 for missing data; preserve genuine zero forecasts.
+            "value_template": "{{(value_json.wh_tomorrow | float / 1000) | round(2) if value_json.wh_tomorrow >= 0 else 'None'}}",
             "icon": "mdi:solar-power-variant-outline",
             "unit_of_measurement": "kWh",
         },
@@ -716,7 +742,7 @@ entities = [
         availability=[AvailabilityEntry("solar_forecast/config", "{{ 'online' if value_json.enable else 'offline' }}")],
         static_info_homeassistant={
             "device_class": "energy",
-            "value_template": "{{(value_json.wh_today | float / 1000) | round(2)}}",
+            "value_template": "{{(value_json.wh_today | float / 1000) | round(2) if value_json.wh_today >= 0 else 'None'}}",
             "icon": "mdi:solar-power-variant",
             "unit_of_measurement": "kWh",
         },
@@ -733,7 +759,7 @@ entities = [
         availability=[AvailabilityEntry("solar_forecast/config", "{{ 'online' if value_json.enable else 'offline' }}")],
         static_info_homeassistant={
             "device_class": "energy",
-            "value_template": "{{(value_json.wh_today_remaining | float / 1000) | round(2)}}",
+            "value_template": "{{(value_json.wh_today_remaining | float / 1000) | round(2) if value_json.wh_today_remaining >= 0 else 'None'}}",
             "icon": "mdi:solar-power",
             "unit_of_measurement": "kWh",
         },
@@ -750,8 +776,10 @@ entities = [
         name_en="Electricity market price",
         availability=[AvailabilityEntry("day_ahead_prices/config", "{{ 'online' if value_json.enable else 'offline' }}")],
         static_info_homeassistant={
-            "device_class": "monetary",
-            "value_template": "{{(value_json.current_price | float / 1000) | round(2)}}",
+            # A price per kWh is not a monetary total with a proper currency unit. Use 'measurement' instead of 'monetary'.
+            "state_class": "measurement",
+            # INT32_MAX denotes an unavailable price; negative prices are valid.
+            "value_template": "{{(value_json.current_price | float / 1000) | round(2) if value_json.current_price != 2147483647 else 'None'}}",
             "icon": "mdi:solar-power",
             "unit_of_measurement": "ct/kWh",
         },
@@ -778,7 +806,7 @@ entities = [
 if warp_edition == "warp4":
     entities.extend([
         Entity(
-            component=Component.TEXT,
+            component=Component.SENSOR,
             object_id="ev_name",
             path="ev/state",
             name_de="Fahrzeugname",
@@ -791,7 +819,7 @@ if warp_edition == "warp4":
             api_check_path="ev/state",
         ),
         Entity(
-            component=Component.TEXT,
+            component=Component.SENSOR,
             object_id="ev_mac",
             path="ev/state",
             name_de="Fahrzeug MAC Adresse",
@@ -811,7 +839,10 @@ if warp_edition == "warp4":
             name_en="Vehicle State of Charge",
             availability=[AvailabilityEntry("ev/state", "{{ 'online' if value_json.mac else 'offline' }}")],
             static_info_homeassistant={
-                "value_template": "{{value_json.soc | float}}"
+                "value_template": "{{value_json.soc | float if value_json.soc is not none else 'None'}}",
+                "device_class": "battery",
+                "unit_of_measurement": "%",
+                "state_class": "measurement",
             },
             check_type=CheckType.API_BOOL,
             api_check_path="ev/state",
@@ -824,13 +855,60 @@ if warp_edition == "warp4":
             name_en="Vehicle Battery Capacity",
             availability=[AvailabilityEntry("ev/state", "{{ 'online' if value_json.mac else 'offline' }}")],
             static_info_homeassistant={
-                "value_template": "{{value_json.capacity | float}}"
+                "value_template": "{{value_json.capacity | float if value_json.capacity is not none else 'None'}}",
+                "device_class": "energy_storage",
+                "unit_of_measurement": "kWh",
+                "state_class": "measurement",
             },
             check_type=CheckType.API_BOOL,
             api_check_path="ev/state",
         ),
     ])
 
+
+# Preserve the original entity IDs and value sources from the legacy meter API.
+for object_id, field, name_de, name_en, rounding, unit, device_class, state_class in [
+    ("powernow", "power", "Leistungsaufnahme", "Power draw", 0, "W", "power", "measurement"),
+    ("energyabs", "energy_abs", "Stromverbrauch absolut", "Energy consumption (absolute)", 3, "kWh", "energy", "total"),
+    ("energyrel", "energy_rel", "Stromverbrauch relativ", "Energy consumption (relative)", 3, "kWh", "energy", "total"),
+]:
+    entities.append(
+        Entity(
+            component=Component.SENSOR,
+            feature=Feature.METER,
+            object_id=object_id,
+            path="meter/values",
+            name_de=name_de,
+            name_en=name_en,
+            availability=[],
+            static_info_homeassistant={
+                "value_template": f"{{{{value_json.{field} | round({rounding}) if value_json.{field} is not none else 'None'}}}}",
+                "unit_of_measurement": unit,
+                "device_class": device_class,
+                "state_class": state_class,
+            },
+        )
+    )
+
+for phase in range(1, 4):
+    index = phase + 2
+    entities.append(
+        Entity(
+            component=Component.SENSOR,
+            feature=Feature.METER_PHASES,
+            object_id=f"current_l{phase}",
+            path="meter/all_values",
+            name_de=f"Strom L{phase}",
+            name_en=f"Current L{phase}",
+            availability=[],
+            static_info_homeassistant={
+                "value_template": f"{{{{value_json[{index}] | round(3) if value_json[{index}] is not none else 'None'}}}}",
+                "unit_of_measurement": "A",
+                "device_class": "current",
+                "state_class": "measurement",
+            },
+        )
+    )
 
 # meter value definitions, derived from meters/meter_value_id.csv.
 # Each tuple: (object_id_suffix, name_de, name_en, meter_value_id, rounding, unit, device_class, state_class)
@@ -891,6 +969,10 @@ cpp = tfutil.specialize_template(
     None,
     {
         "{{{topics}}}": ",\n".join(topics),
+        "{{{charge_modes}}}": ",\n".join(
+            f"    {{{mode}, {json.dumps(name)}, {json.dumps(charge_mode_names_en[mode])}}}"
+            for mode, name in charge_mode_names_de.items()
+        ),
     },
 )
 
@@ -903,6 +985,15 @@ h = tfutil.specialize_template(
         "{{{topic_count}}}": str(len(topics)),
         "{{{max_json_len}}}": str(max([x.get_json_len() for x in entities])),
         "{{{max_availability_count}}}": str(max([len(x.availability) for x in entities])),
+        "{{{charge_mode_count}}}": str(len(charge_mode_names_de)),
+        # Upper bound for runtime options and value_template, including JSON escaping.
+        "{{{max_charge_mode_json_len}}}": str(max(
+            len(json.dumps({
+                "options": list(names.values()),
+                "value_template": enum_value_template("mode", names),
+            }))
+            for names in (charge_mode_names_de, charge_mode_names_en)
+        )),
     },
 )
 

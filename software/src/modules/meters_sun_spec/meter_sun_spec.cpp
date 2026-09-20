@@ -21,7 +21,6 @@
 
 #include "event_log_prefix.h"
 #include "generated/module_dependencies.h"
-#include "generated/sun_spec_model_specs.h"
 #include "models/model_001.h"
 #include "tools/semantic_version.h"
 #include "tools/hexdump.h"
@@ -32,6 +31,7 @@
 #define SUN_SPEC_ID 0x53756E53
 #define COMMON_MODEL_ID 1
 #define NON_IMPLEMENTED_UINT16 0xFFFF
+#define SCAN_TIMEOUT 1_min
 #define SUCCESSFUL_PARSE_TIMEOUT 1_min
 
 #define trace(fmt, ...) \
@@ -66,6 +66,57 @@ static const uint16_t scan_base_addresses[] {
     0
 };
 
+static MeterLocation get_model_fixed_location(uint16_t model_id)
+{
+    switch (model_id) {
+    case 101: return MeterLocation::Inverter;
+    case 102: return MeterLocation::Inverter;
+    case 103: return MeterLocation::Inverter;
+    case 111: return MeterLocation::Inverter;
+    case 112: return MeterLocation::Inverter;
+    case 113: return MeterLocation::Inverter;
+    case 120: return MeterLocation::Inverter;
+    case 121: return MeterLocation::Inverter;
+    case 122: return MeterLocation::Inverter;
+    case 123: return MeterLocation::Inverter;
+    case 124: return MeterLocation::Inverter;
+    case 125: return MeterLocation::Inverter;
+    case 126: return MeterLocation::Inverter;
+    case 127: return MeterLocation::Inverter;
+    case 128: return MeterLocation::Inverter;
+    case 129: return MeterLocation::Inverter;
+    case 130: return MeterLocation::Inverter;
+    case 131: return MeterLocation::Inverter;
+    case 132: return MeterLocation::Inverter;
+    case 133: return MeterLocation::Inverter;
+    case 134: return MeterLocation::Inverter;
+    case 135: return MeterLocation::Inverter;
+    case 136: return MeterLocation::Inverter;
+    case 137: return MeterLocation::Inverter;
+    case 138: return MeterLocation::Inverter;
+    case 139: return MeterLocation::Inverter;
+    case 140: return MeterLocation::Inverter;
+    case 141: return MeterLocation::Inverter;
+    case 142: return MeterLocation::Inverter;
+    case 143: return MeterLocation::Inverter;
+    case 144: return MeterLocation::Inverter;
+    case 145: return MeterLocation::Inverter;
+    case 160: return MeterLocation::PV;
+    case 701: return MeterLocation::Inverter;
+    case 713: return MeterLocation::Battery;
+    case 801: return MeterLocation::Battery;
+    case 802: return MeterLocation::Battery;
+    case 803: return MeterLocation::Battery;
+    case 804: return MeterLocation::Battery;
+    case 805: return MeterLocation::Battery;
+    case 806: return MeterLocation::Battery;
+    case 807: return MeterLocation::Battery;
+    case 808: return MeterLocation::Battery;
+    case 809: return MeterLocation::Battery;
+    default:  return MeterLocation::Unknown;
+    }
+}
+
 MeterClassID MeterSunSpec::get_class() const
 {
     return MeterClassID::SunSpec;
@@ -84,14 +135,7 @@ void MeterSunSpec::setup(Config *ephemeral_config)
     dc_port_type      = ephemeral_config->get("dc_port_type")->asEnum<DCPortType>();
     model_parser      = MetersSunSpecParser::new_parser(slot, manufacturer_name.c_str(), model_name.c_str(), model_id, dc_port_type);
 
-    MeterLocation fixed_location = MeterLocation::Unknown;
-
-    for (size_t i = 0; i < sun_spec_model_specs_length; ++i) {
-        if (model_id == static_cast<uint16_t>(sun_spec_model_specs[i].model_id)) {
-            fixed_location = sun_spec_model_specs[i].fixed_location;
-            break;
-        }
-    }
+    MeterLocation fixed_location = get_model_fixed_location(model_id);
 
     if (fixed_location != MeterLocation::Unknown) {
         ephemeral_config->get("location")->updateEnum(fixed_location);
@@ -152,6 +196,7 @@ void MeterSunSpec::connect_callback(TFGenericTCPClientConnectResult result, TFGe
         return;
     }
 
+    last_connect = now_us();
     last_successful_parse = now_us();
 
     scan_start();
@@ -354,11 +399,18 @@ void MeterSunSpec::read_done()
 
 void MeterSunSpec::scan_start_delayed()
 {
-    task_scheduler.cancel(this->scan_task_id);
+    task_scheduler.cancel(scan_task_id);
 
-    this->scan_task_id = task_scheduler.scheduleOnce([this](){
-        this->scan_task_id = 0;
-        this->scan_start();
+    scan_task_id = task_scheduler.scheduleOnce([this](){
+        scan_task_id = 0;
+
+        if (deadline_elapsed(last_connect + SCAN_TIMEOUT)) {
+            logger.printfln_meter("Scan for SunSpec device takes too long ago, reconnecting to %s:%u", host.c_str(), port);
+            force_reconnect();
+            return;
+        }
+
+        scan_start();
     }, 10_s);
 }
 
