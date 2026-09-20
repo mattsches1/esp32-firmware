@@ -22,13 +22,13 @@
 class DelayTimer{
 
 public:
-    bool on_delay(bool signal, uint32_t delay_ms);
-    bool off_delay(bool signal, uint32_t delay_ms);
+    bool on_delay(bool signal, seconds_t delay);
+    bool off_delay(bool signal, seconds_t delay);
 
     uint32_t current_value_on_delay, current_value_off_delay;
 
 private:
-    micros_t start_time_on = 0_us;
-    micros_t start_time_off = -100_s;
+    micros_t deadline_on = 0_us;
+    micros_t deadline_off = 0_us;
 };
                                     

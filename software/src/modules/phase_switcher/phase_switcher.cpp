@@ -121,14 +121,11 @@ void PhaseSwitcher::setup()
     task_scheduler.scheduleUncancelable([this](){
         this->handle_button();
         this->handle_evse();
+        this->monitor_requested_phases();
         this->sequencer();
         this->write_outputs();
         this->contactor_check();
     }, 0_ms, 250_ms);
-
-    task_scheduler.scheduleUncancelable([this](){
-        this->monitor_requested_phases();
-    }, 100_ms, 1000_ms);
 
     task_scheduler.scheduleUncancelable([this](){
         update_all_data();
@@ -430,26 +427,24 @@ void PhaseSwitcher::handle_button()
         return;
     }
 
-    static micros_t button_pressed_time = 0_us;
-    static micros_t button_released_time = 0_us;
+    static uint32_t button_pressed_time, button_released_time;
     static bool quick_charging_requested = false;
-    const auto now = now_us();
 
     bool button_state = api.getState("evse/low_level_state", false)->get("gpio")->get(0)->asBool();
 
     if (!button_state)
-        button_pressed_time = now;
+        button_pressed_time = millis();
 
     if (button_state)
-        button_released_time = now;
+        button_released_time = millis();
 
-    if (now - button_released_time >= QUICK_CHARGE_DELAY_TIME && quick_charging_requested){
+    if (millis_t{millis() - button_released_time} >= QUICK_CHARGE_DELAY_TIME && quick_charging_requested){
         if (debug) logger.printfln("    Phase switcher: Button released, initiating quick charging");
         start_quick_charging();
         quick_charging_requested = false;
     }
 
-    if (now - button_pressed_time >= QUICK_CHARGE_BUTTON_PRESSED_TIME){
+    if (millis_t{millis() - button_pressed_time} >= QUICK_CHARGE_BUTTON_PRESSED_TIME){
         if (debug) logger.printfln("    Phase switcher: Quick charging command received and stored");
         quick_charging_requested = true;
     }
@@ -491,13 +486,18 @@ void PhaseSwitcher::monitor_requested_phases()
     if (quick_charging_active){
         requested_phases_pending_delayed = 3;
     } else {
+        for (int i=0; i<=2; i++){
+            if (delayed_phase_request[i]){
+                delayed_phase_request[i] = delay_timer[i].on_delay(delay_timer[i].off_delay((requested_phases_pending >= i+1), seconds_t{api_config_in_use.get("delay_time_less_phases")->asUint()}), seconds_t{api_config_in_use.get("delay_time_more_phases")->asUint()});
+            } else {
+                delayed_phase_request[i] = delay_timer[i].off_delay(delay_timer[i].on_delay((requested_phases_pending >= i+1), seconds_t{api_config_in_use.get("delay_time_more_phases")->asUint()}), seconds_t{api_config_in_use.get("delay_time_less_phases")->asUint()});
+            }
+        }
+
         requested_phases_pending_delayed = 0;
         for (int i=0; i<=2; i++){
             if (delayed_phase_request[i]){
-                delayed_phase_request[i] = delay_timer[i].on_delay(delay_timer[i].off_delay((requested_phases_pending >= i+1), api_config_in_use.get("delay_time_less_phases")->asUint() * 1000), api_config_in_use.get("delay_time_more_phases")->asUint() * 1000);
                 requested_phases_pending_delayed = i+1;
-            } else {
-                delayed_phase_request[i] = delay_timer[i].off_delay(delay_timer[i].on_delay((requested_phases_pending >= i+1), api_config_in_use.get("delay_time_more_phases")->asUint() * 1000), api_config_in_use.get("delay_time_less_phases")->asUint() * 1000);
             }
         }
     } 
@@ -505,7 +505,7 @@ void PhaseSwitcher::monitor_requested_phases()
     if (debug){
         static uint8_t sequencer_last_requested_phases_pending_delayed = requested_phases_pending_delayed;
         if (requested_phases_pending_delayed != sequencer_last_requested_phases_pending_delayed){
-            logger.printfln("  Phase switcher: requested_phases_pending_delayed changed from %d to %d; requested_phases_pending: %d", sequencer_last_requested_phases_pending_delayed, requested_phases_pending_delayed, requested_phases_pending);
+            logger.printfln("  Phase switcher: requested_phases_pending_delayed changed from %d to %d; requested_phases_pending: %d; requested_phases: %d", sequencer_last_requested_phases_pending_delayed, requested_phases_pending_delayed, requested_phases_pending, requested_phases);
             sequencer_last_requested_phases_pending_delayed = requested_phases_pending_delayed;
         }
     }    
@@ -567,6 +567,7 @@ void PhaseSwitcher::sequencer_state_standby()
         if (!quick_charging_active){
             requested_phases = requested_phases_pending_delayed;
             set_current(api_available_charging_power.get("power")->asUint(), requested_phases);
+            if (debug) logger.printfln("  Phase switcher: Sequencer state standby; delayed_phase_request[0]: %d; requested_phases: %d", delayed_phase_request[0], requested_phases);
         }
         sequencer_state = waiting_for_evse_start;
     } else if (charger_state == ready_for_charging || charger_state == charging){
@@ -577,18 +578,17 @@ void PhaseSwitcher::sequencer_state_standby()
 
 void PhaseSwitcher::sequencer_state_cancelling_evse_start()
 {
-    static micros_t watchdog_start = 0_us;
-    const auto now = now_us();
+    static uint32_t watchdog_start = 0;
 
-    if (now - watchdog_start >= EVSE_STOP_TIMEOUT){
+    if (millis_t{millis() - watchdog_start} >= EVSE_STOP_TIMEOUT){
         logger.printfln("Phase switcher: Sending stop API request to EVSE.");
         api.callCommand("evse/stop_charging", nullptr);
-        watchdog_start = now;
+        watchdog_start = millis();
     }
 
     if (charger_state != ready_for_charging && charger_state != charging){
         logger.printfln("Phase switcher: Charging stopped by EVSE, changing to standby state.");
-        watchdog_start = 0_us;
+        watchdog_start = 0;
         sequencer_state = standby;
     }
 
@@ -596,20 +596,19 @@ void PhaseSwitcher::sequencer_state_cancelling_evse_start()
 
 void PhaseSwitcher::sequencer_state_waiting_for_evse_start()
 {
-    static micros_t watchdog_start = 0_us;
+    static uint32_t watchdog_start = 0;
     static uint8_t start_retries = 0;
-    const auto now = now_us();
 
-    if (now - watchdog_start >= EVSE_START_TIMEOUT){
+    if (millis_t{millis() - watchdog_start} >= EVSE_START_TIMEOUT){
         if (start_retries < EVSE_START_RETRIES){
             logger.printfln("Phase switcher: Sending start API request to EVSE.");
             api.callCommand("evse/start_charging", nullptr);
-            watchdog_start = now;
+            watchdog_start = millis();
             start_retries++;
         } else {
             logger.printfln("Phase switcher: Tried to start EVSE for %d times. Aborting.", EVSE_START_RETRIES);
             start_retries = 0;
-            watchdog_start = 0_us;
+            watchdog_start = 0;
             sequencer_state = stopped_by_evse;
         }
     }
@@ -622,7 +621,7 @@ void PhaseSwitcher::sequencer_state_waiting_for_evse_start()
             logger.printfln("Phase switcher: Charging started by EVSE, changing to active state.");
             sequencer_state = active;
         }
-        watchdog_start = 0_us;
+        watchdog_start = 0;
         start_retries = 0;
     }
 
@@ -638,8 +637,7 @@ void PhaseSwitcher::sequencer_state_active()
         init = true;
     }
 
-    const auto now = now_us();
-    const bool minimum_duration_elapsed = now - last_state_change >= seconds_t{api_config_in_use.get("minimum_duration")->asUint()};
+    const bool minimum_duration_elapsed = now_us() - last_state_change >= seconds_t{api_config_in_use.get("minimum_duration")->asUint()};
 
     if (requested_phases_pending_delayed != last_requested_phases_pending_delayed && minimum_duration_elapsed){
         logger.printfln("Phase switcher: Change to %d phase charging requested while charging with %d phases. Requesting EVSE to stop charging.", requested_phases_pending_delayed, last_requested_phases_pending_delayed);
@@ -668,13 +666,12 @@ void PhaseSwitcher::sequencer_state_quick_charging()
 
 void PhaseSwitcher::sequencer_state_waiting_for_evse_stop()
 {
-    static micros_t watchdog_start = 0_us;
-    const auto now = now_us();
+    static uint32_t watchdog_start = 0;
 
-    if (now - watchdog_start >= EVSE_STOP_TIMEOUT){
+    if (millis_t{millis() - watchdog_start} >= EVSE_STOP_TIMEOUT){
         logger.printfln("Phase switcher: Sending stop API request to EVSE.");
         api.callCommand("evse/stop_charging", nullptr);
-        watchdog_start = now;
+        watchdog_start = millis();
     }
 
     if (charger_state != charging){
@@ -692,9 +689,7 @@ void PhaseSwitcher::sequencer_state_waiting_for_evse_stop()
 
 void PhaseSwitcher::sequencer_state_pausing_while_switching()
 {
-    const auto now = now_us();
-
-    if (now - last_state_change >= seconds_t{api_config_in_use.get("pause_time")->asUint()}){
+    if (now_us() - last_state_change >= seconds_t{api_config_in_use.get("pause_time")->asUint()}){
         logger.printfln("Phase switcher: Pause time elapsed, restarting charging with %d phases.", requested_phases);
         logger.printfln("Phase switcher: Waiting for EVSE to start charging.");
         set_current(api_available_charging_power.get("power")->asUint(), requested_phases);
@@ -738,21 +733,17 @@ void PhaseSwitcher::write_outputs()
 
     if (evse_relay_output && !contactor_error){
         if (enabled){
+            channel_request[1] = true;
             switch (requested_phases)
             {
             case 0:
                 break;
             case 1:
-                channel_request[1] = true;
-                break;
-            
+                break;            
             case 2:
-                channel_request[1] = true;
                 channel_request[2] = true;
                 break;
-
             default:
-                channel_request[1] = true;
                 channel_request[2] = true;
                 channel_request[3] = true;
                 break;
@@ -789,8 +780,7 @@ void PhaseSwitcher::contactor_check()
     }
 
     static bool contactor_error[4];
-    static micros_t watchdog_start[4]{};
-    const auto now = now_us();
+    static uint32_t watchdog_start[4];
     bool input_phase[4], output_phase[4], value[4];
     int retval;
 
@@ -817,8 +807,8 @@ void PhaseSwitcher::contactor_check()
     output_phase[3] = value[3];
 
     for (int i = 1; i <= 3; i++){
-        if (input_phase[i] == output_phase[i]) watchdog_start[i] = now;
-        if (now - watchdog_start[i] >= 2_s){
+        if (input_phase[i] == output_phase[i]) watchdog_start[i] = millis();
+        if (millis() - watchdog_start[i] >= 2000){
             if (!contactor_error[i]){
                 logger.printfln("Phase switcher: Contactor error phase %d set", i);
                 contactor_error[i] = true;
@@ -862,9 +852,9 @@ void PhaseSwitcher::update_all_data()
     api_state.get("time_since_state_change")->updateUint((now_us() - last_state_change).to<seconds_t>().as<uint32_t>());
 
     if (requested_phases_pending > requested_phases){
-        api_state.get("delay_time")->updateUint(delay_timer[requested_phases_pending-1].current_value_on_delay / 1000);
+        api_state.get("delay_time")->updateUint(delay_timer[requested_phases_pending-1].current_value_on_delay);
     } else if (requested_phases_pending < requested_phases){
-        api_state.get("delay_time")->updateUint(delay_timer[requested_phases-1].current_value_off_delay / 1000);
+        api_state.get("delay_time")->updateUint(delay_timer[requested_phases-1].current_value_off_delay);
     } else {
         api_state.get("delay_time")->updateUint(0);
     }
@@ -897,8 +887,8 @@ void PhaseSwitcher::update_all_data()
         api_low_level_state.get("input_channels")->get(i)->updateBool(channel_state[i]);
 
     for (int i = 0; i <= 2; ++i) {
-        api_low_level_state.get("current_on_delay_time")->get(i)->updateUint(delay_timer[i].current_value_on_delay / 1000);
-        api_low_level_state.get("current_off_delay_time")->get(i)->updateUint(delay_timer[i].current_value_off_delay / 1000);
+        api_low_level_state.get("current_on_delay_time")->get(i)->updateUint(delay_timer[i].current_value_on_delay);
+        api_low_level_state.get("current_off_delay_time")->get(i)->updateUint(delay_timer[i].current_value_off_delay);
     }
 
     // chart

@@ -21,22 +21,22 @@
 
 extern EventLog logger;
 
-bool DelayTimer::on_delay(bool signal, uint32_t delay_ms)
+bool DelayTimer::on_delay(bool signal, seconds_t delay)
 {
     const auto now = now_us();
-    const millis_t delay = millis_t{delay_ms};
-    if (!signal) start_time_on = now;
-    const millis_t elapsed = min((now - start_time_on).to<millis_t>(), delay);
-    current_value_on_delay = elapsed.as<uint32_t>();
-    return elapsed >= delay;
+    const micros_t delay_us = delay;
+    if (!signal) deadline_on = now + delay_us;
+    current_value_on_delay = (min(now + delay_us - deadline_on, delay_us)).to<seconds_t>().as<uint32_t>();
+
+    return deadline_elapsed(deadline_on);
 }
 
-bool DelayTimer::off_delay(bool signal, uint32_t delay_ms)
+bool DelayTimer::off_delay(bool signal, seconds_t delay)
 {
     const auto now = now_us();
-    const millis_t delay = millis_t{delay_ms};
-    if (signal) start_time_off = now;
-    const millis_t elapsed = min((now - start_time_off).to<millis_t>(), delay);
-    current_value_off_delay = elapsed.as<uint32_t>();
-    return elapsed >= delay;
+    const micros_t delay_us = delay;
+    if (signal) deadline_off = now + delay_us;
+    current_value_off_delay = (min(now + delay_us - deadline_off, delay_us)).to<seconds_t>().as<uint32_t>();
+
+    return !deadline_elapsed(deadline_off);
 }

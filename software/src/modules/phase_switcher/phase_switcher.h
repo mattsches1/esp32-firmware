@@ -17,6 +17,9 @@
 
 #pragma once
 
+#include <mutex>
+#include <stdint.h>
+
 #include "bindings/bricklet_industrial_quad_relay_v2.h"
 #include "bindings/bricklet_industrial_digital_in_4_v2.h"
 
@@ -51,6 +54,8 @@ class PhaseSwitcher final : public IModule
 {
 public:
     PhaseSwitcher(){}
+
+    static constexpr size_t HISTORY_SAMPLE_COUNT = 24 * 60 / HISTORY_MINUTE_INTERVAL;
 
     void pre_setup() override;
     void setup() override;
@@ -176,5 +181,11 @@ private:
     micros_t last_live_update = 0_us;
     micros_t last_history_update = 0_us;
     uint32_t last_history_slot = 0;
+
+    int32_t phase_switcher_history[3][HISTORY_SAMPLE_COUNT];
+    size_t phase_switcher_history_index = 0;
+
+    char *history_response_buffer = nullptr;
+    std::mutex history_response_mutex;
 };
                                     

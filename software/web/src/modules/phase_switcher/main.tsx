@@ -44,7 +44,10 @@ interface PhaseSwitcherPageState {
     phase_switcher_state: PhaseSwitcherState;
     low_level_state: PhaseSwitcherLowLevelState;
     meter_power: number;
+    chart_selected: PhaseSwitcherChartSelection;
 }
+
+type PhaseSwitcherChartSelection = "history_24"|"history_12"|"history_6"|"history_3"|"live";
 
 export function PhaseSwitcherNavbar() {
     return <NavbarItem name="phase_switcher" module="phase_switcher" title={__("phase_switcher.navbar.phase_switcher")} symbol={<Activity />} />;
@@ -113,7 +116,11 @@ export class PhaseSwitcherStatus extends Component<{}, PhaseSwitcherStatusState>
     }
 }
 
-class PhaseSwitcherChart extends Component {
+interface PhaseSwitcherChartProps {
+    selected: PhaseSwitcherChartSelection;
+}
+
+class PhaseSwitcherChart extends Component<PhaseSwitcherChartProps> {
     uplot_loader_ref = createRef();
     uplot_wrapper_ref = createRef();
     mounted = false;
@@ -133,29 +140,21 @@ class PhaseSwitcherChart extends Component {
         }
     }
 
-    async update_uplot() {
-        if (!this.mounted || this.uplot_wrapper_ref.current == null) {
-            return;
+    override componentDidUpdate(previous_props: PhaseSwitcherChartProps) {
+        if (previous_props.selected != this.props.selected) {
+            this.update_uplot();
         }
+    }
 
-        const response = await fetch("/phase_switcher/history");
-
-        if (!this.mounted || !response.ok) {
-            return;
-        }
-
-        const history = await response.json() as {offset?: number; samples?: (number | null)[][]};
-        const values = history.samples ?? [];
+    set_data(values: (number | null)[][], last_date: number, sample_interval: number, sample_count: number) {
         const value_count = values[0]?.length ?? 0;
 
-        if (values.length < 3 || value_count == 0 || values.some((series) => series.length != value_count)) {
+        if (values.length < 3 || value_count == 0 || values.some((series) => !series || series.length != value_count)) {
             this.uplot_loader_ref.current.set_data(false);
             return;
         }
 
-        const history_interval = 4 * 60;
-        const last_date = Math.floor(Date.now() / 1000) - Math.floor((history.offset ?? 0) / 1000);
-        const first_date = last_date - (value_count - 1) * history_interval;
+        const first_date = last_date - (sample_count - 1) * sample_interval;
         const data: UplotData = {
             keys: [null, "requested_power", "charging_power", "requested_phases"],
             names: [null, __("phase_switcher.content.charging_power.title"), __("phase_switcher.content.actual_charging_power"), __("phase_switcher.content.requested_phases")],
@@ -166,15 +165,54 @@ class PhaseSwitcherChart extends Component {
             y_axes: [null, "y", "y", "y2"],
         };
 
-        for (let i = 0; i < value_count; ++i) {
-            data.values[0].push(first_date + i * history_interval);
-            data.values[1].push(values[0][i]);
-            data.values[2].push(values[1][i]);
-            data.values[3].push(values[2][i]);
+        for (let i = 0; i < sample_count; ++i) {
+            data.values[0].push(first_date + i * sample_interval);
+            data.values[1].push(values[0][values[0].length - sample_count + i]);
+            data.values[2].push(values[1][values[1].length - sample_count + i]);
+            data.values[3].push(values[2][values[2].length - sample_count + i]);
         }
 
         this.uplot_loader_ref.current.set_data(true);
         this.uplot_wrapper_ref.current.set_data(data);
+    }
+
+    async update_uplot() {
+        if (!this.mounted || this.uplot_wrapper_ref.current == null) {
+            return;
+        }
+
+        const selected = this.props.selected;
+        const live = selected == "live";
+        const response = await fetch(live ? "/phase_switcher/live" : "/phase_switcher/history");
+
+        if (!this.mounted || this.props.selected != selected || !response.ok) {
+            return;
+        }
+
+        const payload = await response.json() as {offset?: number; samples_per_second?: number; samples?: (number | null)[][]};
+        const values = payload.samples ?? [];
+        const value_count = values[0]?.length ?? 0;
+        const now = Date.now() / 1000;
+
+        if (live) {
+            const samples_per_second = payload.samples_per_second ?? 0;
+            const sample_count = samples_per_second > 0 ? Math.min(value_count, Math.floor(samples_per_second * 6 * 60) + 1) : Math.min(value_count, 1);
+            const sample_interval = samples_per_second > 0 ? 1 / samples_per_second : 0;
+            const last_date = now - (payload.offset ?? 0) / 1000;
+
+            this.set_data(values, last_date, sample_interval, sample_count);
+            return;
+        }
+
+        const history_tail = selected == "history_24" ? 360
+            : selected == "history_12" ? 180
+            : selected == "history_6" ? 90
+            : 45;
+        const sample_count = Math.min(value_count, history_tail);
+        const sample_interval = 4 * 60;
+        const last_date = now - (payload.offset ?? 0) / 1000;
+
+        this.set_data(values, last_date, sample_interval, sample_count);
     }
 
     render() {
@@ -226,6 +264,7 @@ export class PhaseSwitcher extends ConfigComponent<"phase_switcher/config", {sta
             phase_switcher_state: API.get("phase_switcher/state"),
             low_level_state: API.get("phase_switcher/low_level_state"),
             meter_power: get_meter_power(),
+            chart_selected: "live",
             internal_isDirty: false,
         } as any;
 
@@ -272,17 +311,29 @@ export class PhaseSwitcher extends ConfigComponent<"phase_switcher/config", {sta
                         ]}
                     />
                 </FormRow>
-                <FormRow label={__("phase_switcher.content.delay_time.title")} label_muted={__("phase_switcher.content.delay_time.description")}>
-                    <InputText value={format_seconds(phase_state.delay_time)} />
-                </FormRow>
-                <FormRow label={__("phase_switcher.content.minimum_duration.title")} label_muted={__("phase_switcher.content.minimum_duration.description")}>
-                    <InputText value={format_seconds(minimum_duration)} />
-                </FormRow>
-                <FormRow label={__("phase_switcher.content.pause_time.title")} label_muted={__("phase_switcher.content.pause_time.description")}>
-                    <InputText value={format_seconds(pause_time)} />
-                </FormRow>
-                <FormRow label={__("phase_switcher.content.meter")}>
-                    <PhaseSwitcherChart />
+                <FormRow
+                    label={__("phase_switcher.content.meter")}
+                    label_suffix={<span class="d-inline-flex float-end align-items-center">
+                        <InputSelect
+                            value={state.chart_selected}
+                            className="w-xs-only-100"
+                            style="width: 10rem"
+                            onValue={(value) => {
+                                this.setState({chart_selected: value as PhaseSwitcherChartSelection});
+                            }}
+                            items={[
+                                ["history_24", translate_unchecked("phase_switcher.content.history_24")],
+                                ["history_12", translate_unchecked("phase_switcher.content.history_12")],
+                                ["history_6", translate_unchecked("phase_switcher.content.history_6")],
+                                ["history_3", translate_unchecked("phase_switcher.content.history_3")],
+                                ["live", translate_unchecked("phase_switcher.content.live")],
+                            ]}
+                        />
+                    </span>}
+                >
+                    <PhaseSwitcherChart
+                        selected={state.chart_selected}
+                    />
                 </FormRow>
             </SubPage.Status>
 
@@ -312,10 +363,16 @@ export class PhaseSwitcher extends ConfigComponent<"phase_switcher/config", {sta
                     </div>
                 </FormRow>
                 <FormRow label={__("phase_switcher.content.minimum_duration.title")} label_muted={__("phase_switcher.content.minimum_duration.description")}>
-                    <InputNumber min={10} max={3600} value={state.minimum_duration} unit="s" onValue={this.set("minimum_duration")} />
+                    <div class="row gx-2 gy-1">
+                        <div class="col-md-6"><InputNumber min={10} max={3600} value={state.minimum_duration} unit="s" onValue={this.set("minimum_duration")} /></div>
+                        <div class="col-md-6"><InputText value={format_seconds(minimum_duration)} /></div>
+                    </div>
                 </FormRow>
                 <FormRow label={__("phase_switcher.content.pause_time.title")} label_muted={__("phase_switcher.content.pause_time.description")}>
-                    <InputNumber min={10} max={3600} value={state.pause_time} unit="s" onValue={this.set("pause_time")} />
+                    <div class="row gx-2 gy-1">
+                        <div class="col-md-6"><InputNumber min={10} max={3600} value={state.pause_time} unit="s" onValue={this.set("pause_time")} /></div>
+                        <div class="col-md-6"><InputText value={format_seconds(pause_time)} /></div>
+                    </div>
                 </FormRow>
                 <CollapsedSection heading={__("phase_switcher.content.details")}>
                     <FormRow label={__("phase_switcher.content.channel_states.title")} label_muted={__("phase_switcher.content.channel_states.description")}>
