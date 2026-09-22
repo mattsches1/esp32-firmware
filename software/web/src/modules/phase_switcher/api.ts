@@ -10,7 +10,6 @@ export interface state {
 }
 
 export interface config {
-    enabled: boolean,
     operating_mode: number,
     delay_time_more_phases: number,
     delay_time_less_phases: number,

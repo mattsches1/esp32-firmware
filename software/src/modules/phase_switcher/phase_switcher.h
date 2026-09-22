@@ -91,12 +91,14 @@ private:
     } IEC61851State;
 
     typedef enum {
+        deactivated = 0,
         one_phase_static = 1,
         two_phases_static = 2,
         three_phases_static = 3,
         one_two_phases_dynamic = 12,
         one_three_phases_dynamic = 13,
-        one_two_three_phases_dynamic = 123
+        one_two_three_phases_dynamic = 123,
+        one_three_phases_passive_mode = 30
     } PhaseSwitcherMode;
 
     bool setup_bricklets();

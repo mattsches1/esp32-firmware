@@ -283,7 +283,7 @@ export class PhaseSwitcher extends ConfigComponent<"phase_switcher/config", {sta
         const pause_time = phase_state.sequencer_state == 40 ? phase_state.time_since_state_change : 0;
 
         return <SubPage name="phase_switcher" title={__("phase_switcher.content.phase_switcher")} colClasses="col-xl-10">
-            <SubPage.Status collapsed={!state.enabled}>
+            <SubPage.Status>
                 <FormRow label={__("phase_switcher.content.state")}>
                     <InputText value={sequencer_state_name(phase_state.sequencer_state)} />
                 </FormRow>
@@ -336,20 +336,19 @@ export class PhaseSwitcher extends ConfigComponent<"phase_switcher/config", {sta
             </SubPage.Status>
 
             <SubPage.Config id="phase_switcher_config_form" isDirty={this.isDirty()} onSave={this.save} onDirtyChange={this.setDirty}>
-                <FormRow label={__("phase_switcher.content.phase_switcher_enabled")}>
-                    <Switch desc={__("phase_switcher.content.phase_switcher_enabled_desc")} checked={state.enabled} onClick={this.toggle("enabled")} />
-                </FormRow>
-                <FormRow label={__("phase_switcher.content.operating_mode")}>
+                <FormRow label={__("phase_switcher.content.operating_mode.title")}>
                     <InputSelect
                         value={state.operating_mode.toString()}
                         onValue={(value) => this.set("operating_mode")(parseInt(value))}
                         items={[
-                            ["1", __("phase_switcher.content.one_phase_static")],
-                            ["2", __("phase_switcher.content.two_phases_static")],
-                            ["3", __("phase_switcher.content.three_phases_static")],
-                            ["12", __("phase_switcher.content.one_two_phases_dynamic")],
-                            ["13", __("phase_switcher.content.one_three_phases_dynamic")],
-                            ["123", __("phase_switcher.content.one_two_three_phases_dynamic")],
+                            ["0", __("phase_switcher.content.operating_mode.deactivated")],
+                            ["1", __("phase_switcher.content.operating_mode.one_phase_static")],
+                            ["2", __("phase_switcher.content.operating_mode.two_phases_static")],
+                            ["3", __("phase_switcher.content.operating_mode.three_phases_static")],
+                            ["12", __("phase_switcher.content.operating_mode.one_two_phases_dynamic")],
+                            ["13", __("phase_switcher.content.operating_mode.one_three_phases_dynamic")],
+                            ["123", __("phase_switcher.content.operating_mode.one_two_three_phases_dynamic")],
+                            ["30", __("phase_switcher.content.operating_mode.one_three_phases_passive_mode")],
                         ]}
                     />
                 </FormRow>
