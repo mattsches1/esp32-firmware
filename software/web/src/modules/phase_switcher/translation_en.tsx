@@ -15,9 +15,6 @@ let x = {
         },
         "content": {
             "phase_switcher": "Phase Switcher",
-            "history_6": "History (6 h)",
-            "history_3": "History (3 h)",
-            "live": "Live (6 min)",
             "state": "State",
             "sequencer_state" :"State",
             "charging_power" : {
@@ -74,10 +71,7 @@ let x = {
             "off_delay_values":  {
                 "title": "Off delay",
                 "description": "For charging with one/two/three phases"
-            },
-
-            "meter": "Energy Meter",
-            "actual_charging_power": "Actual charging power"
+            }
         },
         "script": {
             "save_failed": "Failed to save the phase switcher configuration",
@@ -93,9 +87,7 @@ let x = {
                 "30" : "Waiting for EVSE stop",
                 "40" : "Pausing before switching phases",
                 "50" : "Charging stopped by EVSE"
-            },
-            "time": "Time of day",
-            "power": "Power (Watt)"
+            }
         }
     }
 }

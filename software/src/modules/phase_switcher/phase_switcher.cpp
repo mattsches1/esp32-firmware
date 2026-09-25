@@ -22,14 +22,11 @@
 #include "generated/module_dependencies.h"
 #include "tools.h"
 #include "modules/web_server/web_server.h"
-#include "tools/string_builder.h"
 #include "modules.h"
 #include "delay_timer.h"
 
 extern TF_HAL hal;
 extern WebServer server;
-
-static constexpr size_t PHASE_SWITCHER_HISTORY_JSON_SIZE = HISTORY_RING_BUF_SIZE * 3 * 12 + 100;
 
 void PhaseSwitcher::pre_setup()
 {
@@ -131,26 +128,6 @@ void PhaseSwitcher::setup()
         update_all_data();
     }, 150_ms, 500_ms);
 
-    requested_power_history.setup();
-    charging_power_history.setup();
-    requested_phases_history.setup();
-    task_scheduler.scheduleUncancelable([this](){
-        micros_t now = now_us();
-        const uint32_t current_history_slot = (now / minutes_t{HISTORY_MINUTE_INTERVAL}).as<uint32_t>();
-        const bool update_history = current_history_slot != last_history_slot;
-        int32_t live_sample;
-        int32_t history_sample;
-        requested_power_history.tick(now, update_history, &live_sample, &history_sample);
-        charging_power_history.tick(now, update_history, &live_sample, &history_sample);
-        requested_phases_history.tick(now, update_history, &live_sample, &history_sample);
-        last_live_update = now;
-        if (update_history) {
-            last_history_update = now;
-        }
-        last_history_slot = current_history_slot;
-    }, 0_ms, 500_ms);
-
-
     initialized = true;
 }
 
@@ -217,29 +194,6 @@ void PhaseSwitcher::register_urls()
         start_quick_charging();
     }, true);
 
-    server.on("/phase_switcher/history", HTTP_GET, [this](WebServerRequest request) {
-        StringBuilder sw;
-        if (!sw.setCapacity(PHASE_SWITCHER_HISTORY_JSON_SIZE)) {
-            return request.send_plain(500, "Failed to allocate buffer");
-        }
-        request.beginChunkedResponse_json(200);
-        auto result = send_history(request, sw);
-        if (result.error != ESP_OK)
-            return result;
-        return request.endChunkedResponse();
-    });
-    server.on("/phase_switcher/live", HTTP_GET, [this](WebServerRequest request) {
-        StringBuilder sw;
-        if (!sw.setCapacity(PHASE_SWITCHER_HISTORY_JSON_SIZE)) {
-            return request.send_plain(500, "Failed to allocate buffer");
-        }
-        request.beginChunkedResponse_json(200);
-        auto result = send_live(request, sw);
-        if (result.error != ESP_OK)
-            return result;
-        return request.endChunkedResponse();
-    });
-
     server.on("/phase_switcher/start_debug", HTTP_GET, [this](WebServerRequest request) {
         task_scheduler.scheduleOnce([this](){
             logger.printfln("Enabling debug mode");
@@ -255,40 +209,6 @@ void PhaseSwitcher::register_urls()
         }, 0_ms);
         return request.send_plain(200);
     });
-}
-
-WebServerRequestReturnProtect PhaseSwitcher::send_live(WebServerRequest request, StringWriter &sw)
-{
-    sw.printf("{\"offset\":%lu,\"samples_per_second\":%f,\"samples\":[", (now_us() - last_live_update).to<millis_t>().as<uint32_t>(), static_cast<double>(requested_power_history.samples_per_second()));
-
-    ValueHistory *histories[] = {&requested_power_history, &charging_power_history, &requested_phases_history};
-    for (size_t i = 0; i < 3; ++i) {
-        sw.puts(i == 0 ? "[" : ",[" );
-        histories[i]->format_live_samples(&sw);
-        sw.puts("]");
-        SEND_CHUNK_OR_FAIL(request, sw);
-        sw.clear();
-    }
-
-    SEND_CHUNK_OR_FAIL_LEN(request, "]}", 2);
-    return request.unsafe_ResponseAlreadySent();
-}
-
-WebServerRequestReturnProtect PhaseSwitcher::send_history(WebServerRequest request, StringWriter &sw)
-{
-    sw.printf("{\"offset\":%lu,\"samples\":[", (now_us() - last_history_update).to<millis_t>().as<uint32_t>());
-
-    ValueHistory *histories[] = {&requested_power_history, &charging_power_history, &requested_phases_history};
-    for (size_t i = 0; i < 3; ++i) {
-        sw.puts(i == 0 ? "[" : ",[" );
-        histories[i]->format_history_samples(&sw);
-        sw.puts("]");
-        SEND_CHUNK_OR_FAIL(request, sw);
-        sw.clear();
-    }
-
-    SEND_CHUNK_OR_FAIL_LEN(request, "]}", 2);
-    return request.unsafe_ResponseAlreadySent();
 }
 
 uint8_t PhaseSwitcher::get_active_phases()
@@ -908,15 +828,5 @@ void PhaseSwitcher::update_all_data()
         api_low_level_state.get("current_on_delay_time")->get(i)->updateUint(delay_timer[i].current_value_on_delay);
         api_low_level_state.get("current_off_delay_time")->get(i)->updateUint(delay_timer[i].current_value_off_delay);
     }
-
-    // chart
-    int16_t actual_charging_power = 0;
-    if (api.hasFeature("meters")){
-        actual_charging_power = api.getState("meters/0/values", false)->get(0)->asFloat();
-    }
-    requested_power_history.add_sample(static_cast<float>(available_charging_power));
-    charging_power_history.add_sample(static_cast<float>(actual_charging_power));
-    requested_phases_history.add_sample(static_cast<float>(requested_phases_pending));
-
 }
 

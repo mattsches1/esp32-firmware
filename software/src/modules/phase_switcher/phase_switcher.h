@@ -17,7 +17,6 @@
 
 #pragma once
 
-#include <mutex>
 #include <stdint.h>
 
 #include "bindings/bricklet_industrial_quad_relay_v2.h"
@@ -25,13 +24,11 @@
 
 #include "config.h"
 #include "modules/event_log/event_log.h"
-#include "modules/web_server/web_server.h"
 
 #include "bricklet.h"
 #include "device_module.h"
 
 #include "delay_timer.h"
-#include "modules/meters/value_history.h"
 
 static constexpr millis_t EVSE_START_TIMEOUT = 30_s;
 #define EVSE_START_RETRIES 3
@@ -54,8 +51,6 @@ class PhaseSwitcher final : public IModule
 {
 public:
     PhaseSwitcher(){}
-
-    static constexpr size_t HISTORY_SAMPLE_COUNT = 6 * 60 / HISTORY_MINUTE_INTERVAL;
 
     void pre_setup() override;
     void setup() override;
@@ -131,8 +126,6 @@ private:
     void write_outputs();
     void contactor_check();
     void update_all_data();
-    WebServerRequestReturnProtect send_history(WebServerRequest request, StringWriter &sw);
-    WebServerRequestReturnProtect send_live(WebServerRequest request, StringWriter &sw);
     
     QuadRelayBricklet quad_relay_bricklet = QuadRelayBricklet(
             TF_INDUSTRIAL_QUAD_RELAY_V2_DEVICE_IDENTIFIER,
@@ -176,18 +169,5 @@ private:
     IEC61851State iec61851_state;
     uint8_t auto_start_charging;
     bool contactor_error;
-
-    ValueHistory requested_power_history;
-    ValueHistory charging_power_history;
-    ValueHistory requested_phases_history;
-    micros_t last_live_update = 0_us;
-    micros_t last_history_update = 0_us;
-    uint32_t last_history_slot = 0;
-
-    int32_t phase_switcher_history[3][HISTORY_SAMPLE_COUNT];
-    size_t phase_switcher_history_index = 0;
-
-    char *history_response_buffer = nullptr;
-    std::mutex history_response_mutex;
 };
                                     

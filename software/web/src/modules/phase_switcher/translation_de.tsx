@@ -15,9 +15,6 @@ let x = {
         },
         "content": {
             "phase_switcher": "Phasenumschaltung",
-            "history_6": "Verlauf (6 h)",
-            "history_3": "Verlauf (3 h)",
-            "live": "Live (6 min)",
             "state": "Status",
             "sequencer_state": "Status",
             "charging_power" : {
@@ -74,11 +71,7 @@ let x = {
             "off_delay_values":  {
                 "title": "Ausschaltverzögerung",
                 "description": "Für ein-/zwei-/dreiphasiges Laden"
-            },
-
-            "meter": "Stromzähler",
-            "actual_charging_power": "Aktuelle Ladeleistung"
-
+            }
         },
         "script": {
             "save_failed": "Speichern der Konfiguration für die automatische Phasenumschaltung fehlgeschlagen.",
@@ -94,9 +87,7 @@ let x = {
                 "30" : "Warte auf EVSE Stopp",
                 "40" : "Pausiere vor Phasenumschaltung",
                 "50" : "Ladevorgang durch EVSE gestoppt"
-            },
-            "time": "Uhrzeit",
-            "power": "Leistung (Watt)"
+            }
         }
     }
 }
