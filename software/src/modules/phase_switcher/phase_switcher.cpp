@@ -116,17 +116,18 @@ void PhaseSwitcher::setup()
     api.addFeature("phase_switcher");
 
     task_scheduler.scheduleUncancelable([this](){
+        this->read_inputs();
+        this->contactor_check();
         this->handle_button();
         this->handle_evse();
         this->monitor_requested_phases();
         this->sequencer();
         this->write_outputs();
-        this->contactor_check();
     }, 0_ms, 250_ms);
 
     task_scheduler.scheduleUncancelable([this](){
         update_all_data();
-    }, 150_ms, 500_ms);
+    }, 150_ms, 1_s);
 
     initialized = true;
 }
@@ -213,27 +214,11 @@ void PhaseSwitcher::register_urls()
 
 uint8_t PhaseSwitcher::get_active_phases()
 {
-    if (!api.hasFeature("evse")) {
-        return 0;
-    }
-
-    // phase 1 is monitored via the EVSE bricklet, not via digital in bricklet
-    bool channel_state_1 = (api.getState("evse/state", false)->get("contactor_state")->asUint() == 3);
-    bool channel_state[4];
-
-    int retval = io_scheduler.hal_call([&]() {
-        return tf_industrial_digital_in_4_v2_get_value(&digital_in_bricklet.device, channel_state);
-    });
-    if (retval != TF_E_OK) {
-        logger.printfln("Industrial digital in relay get value failed (rc %d).", retval);
-        return 0;
-    }
-
-    if (channel_state_1 && channel_state[2] && channel_state[3]){
+    if (input_channels[1] && input_channels[2] && input_channels[3]){
         return 3;
-    } else if (channel_state_1 && channel_state[2]){
+    } else if (input_channels[1] && input_channels[2]){
         return 2;
-    } else if (channel_state_1){
+    } else if (input_channels[1]){
         return 1;
     } else {
         return 0;
@@ -652,6 +637,27 @@ void PhaseSwitcher::sequencer_state_stopped_by_evse()
     }
 }
 
+void PhaseSwitcher::read_inputs()
+{
+    if (!api.hasFeature("evse")) {
+        return;
+    }
+
+    int retval;
+    retval = io_scheduler.hal_call([&]() {
+        return tf_industrial_digital_in_4_v2_get_value(&digital_in_bricklet.device, input_channels);
+    });
+    if (retval != TF_E_OK) {
+        logger.printfln("Industrial digital in relay get value failed (rc %d).", retval);
+        input_channels[0] = input_channels[1] = input_channels[2] = input_channels[3] = false;
+    } else {
+        input_channels[0] = input_channels[0];
+        input_channels[1] = (api.getState("evse/state", false)->get("contactor_state")->asUint() == 3);     // Phase 1 feedback is read by EVSE bricklet
+        input_channels[2] = input_channels[2];
+        input_channels[3] = input_channels[3];
+    }
+}
+
 void PhaseSwitcher::write_outputs()
 {
     if (!api.hasFeature("evse")) {
@@ -659,7 +665,6 @@ void PhaseSwitcher::write_outputs()
     }
 
     bool evse_relay_output = api.getState("evse/low_level_state", false)->get("gpio")->get(3)->asBool();
-    bool channel_request[4] = {false, false, false, false};
 
     if (debug) {
         static bool last_evse_relay_output = false;
@@ -669,9 +674,11 @@ void PhaseSwitcher::write_outputs()
         }
     }
 
-    if (evse_relay_output && !contactor_error){
+    output_channels[0] = output_channels[1] = output_channels[2] = output_channels[3] = false;
+
+    if (evse_relay_output){
         if (enabled){
-            channel_request[1] = true;
+            output_channels[1] = true;
             switch (requested_phases)
             {
             case 0:
@@ -679,23 +686,23 @@ void PhaseSwitcher::write_outputs()
             case 1:
                 break;            
             case 2:
-                channel_request[2] = true;
+                output_channels[2] = true;
                 break;
             default:
-                channel_request[2] = true;
-                channel_request[3] = true;
+                output_channels[2] = true;
+                output_channels[3] = true;
                 break;
             }
         } else {
-            channel_request[1] = true;
-            channel_request[2] = true;
-            channel_request[3] = true;
+            output_channels[1] = true;
+            output_channels[2] = true;
+            output_channels[3] = true;
         } 
     }
 
     int retval;
     for (int channel = 0; channel <= 3; channel++) {
-        if (channel_request[channel])
+        if (output_channels[channel])
             retval = io_scheduler.hal_call([&]() {
                 return tf_industrial_quad_relay_v2_set_monoflop(&quad_relay_bricklet.device, channel, true, 10000);
             });
@@ -719,33 +726,9 @@ void PhaseSwitcher::contactor_check()
 
     static bool contactor_error[4];
     static uint32_t watchdog_start[4];
-    bool input_phase[4], output_phase[4], value[4];
-    int retval;
 
-    retval = io_scheduler.hal_call([&]() {
-        return tf_industrial_digital_in_4_v2_get_value(&digital_in_bricklet.device, value);
-    });
-    if (retval != TF_E_OK) {
-        logger.printfln("Industrial digital in relay get value failed (rc %d).", retval);
-        return;
-    }
-    input_phase[1] = (api.getState("evse/state", false)->get("contactor_state")->asUint() == 3);
-    input_phase[2] = value[2];
-    input_phase[3] = value[3];
-
-    retval = io_scheduler.hal_call([&]() {
-        return tf_industrial_quad_relay_v2_get_value(&quad_relay_bricklet.device, value);
-    });
-    if (retval != TF_E_OK) {
-        logger.printfln("Industrial quad relay get value failed (rc %d).", retval);
-        return;
-    }
-    output_phase[1] = value[1];
-    output_phase[2] = value[2];
-    output_phase[3] = value[3];
-
-    for (int i = 1; i <= 3; i++){
-        if (input_phase[i] == output_phase[i]) watchdog_start[i] = millis();
+    for (int i = 0; i <= 3; i++){
+        if (input_channels[i] == output_channels[i]) watchdog_start[i] = millis();
         if (millis() - watchdog_start[i] >= 2000){
             if (!contactor_error[i]){
                 logger.printfln("Contactor error phase %d set", i);
@@ -758,8 +741,8 @@ void PhaseSwitcher::contactor_check()
             }
         }
     }
-
-    this->contactor_error = (contactor_error[1] || contactor_error[2] || contactor_error[3]);
+    
+    this->contactor_error = (contactor_error[0] || contactor_error[1] || contactor_error[2] || contactor_error[3]);
 
     if (this->contactor_error){
         switch(sequencer_state){
@@ -801,28 +784,11 @@ void PhaseSwitcher::update_all_data()
 
 
     // low level state
-    bool channel_state[4];
-    int retval;
-
-    retval = io_scheduler.hal_call([&]() {
-        return tf_industrial_quad_relay_v2_get_value(&quad_relay_bricklet.device, channel_state);
-    });
-    if (retval != TF_E_OK) {
-        logger.printfln("Industrial quad relay get value failed (rc %d).", retval);
-        return;
-    }
     for (int i = 0; i <= 3; ++i)
-        api_low_level_state.get("output_channels")->get(i)->updateBool(channel_state[i]);
+        api_low_level_state.get("output_channels")->get(i)->updateBool(output_channels[i]);
 
-    retval = io_scheduler.hal_call([&]() {
-        return tf_industrial_digital_in_4_v2_get_value(&digital_in_bricklet.device, channel_state);
-    });
-    if (retval != TF_E_OK) {
-        logger.printfln("Industrial digital in relay get value failed (rc %d).", retval);
-        return;
-    }
     for (int i = 0; i <= 3; ++i)
-        api_low_level_state.get("input_channels")->get(i)->updateBool(channel_state[i]);
+        api_low_level_state.get("input_channels")->get(i)->updateBool(input_channels[i]);
 
     for (int i = 0; i <= 2; ++i) {
         api_low_level_state.get("current_on_delay_time")->get(i)->updateUint(delay_timer[i].current_value_on_delay);

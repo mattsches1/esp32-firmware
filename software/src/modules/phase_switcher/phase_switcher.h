@@ -123,6 +123,7 @@ private:
     void sequencer_state_pausing_while_switching();
     void sequencer_state_stopped_by_evse();
 
+    void read_inputs();
     void write_outputs();
     void contactor_check();
     void update_all_data();
@@ -168,6 +169,9 @@ private:
     ChargerState charger_state;
     IEC61851State iec61851_state;
     uint8_t auto_start_charging;
+
+    bool input_channels[4] = {false, false, false, false};
+    bool output_channels[4] = {false, false, false, false};
     bool contactor_error;
 };
                                     
