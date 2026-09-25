@@ -30,13 +30,16 @@ let x = {
             "phase_switcher_enabled": "Enable phase switcher",
             "phase_switcher_enabled_desc": "Automatically switch phases depending on the available power",
 
-            "operating_mode" : "Operating mode",
-            "one_phase_static" : "single phase only",
-            "two_phases_static" : "two-phase only",
-            "three_phases_static" : "three-phase only",
-            "one_two_phases_dynamic" : "automatic switching one/two phases",
-            "one_three_phases_dynamic" : "automatic switching one/three phases",
-            "one_two_three_phases_dynamic" : "automatic switching one/two/three phases",
+            "operating_mode" : {
+                "title": "Operating mode",
+                "disabled" : "Disabled",
+                "one_phase_static" : "single phase only",
+                "two_phases_static" : "two-phase only",
+                "three_phases_static" : "three-phase only",
+                "one_two_phases_dynamic" : "automatic switching one/two phases",
+                "one_three_phases_dynamic" : "automatic switching one/three phases",
+                "one_two_three_phases_dynamic" : "automatic switching one/two/three phases"
+            },
 
             "delay_time" : {
                 "title": "Delay time",

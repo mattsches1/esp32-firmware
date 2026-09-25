@@ -31,7 +31,6 @@ extern WebServer server;
 void PhaseSwitcher::pre_setup()
 {
     api_config = Config::Object({
-        {"enabled", Config::Bool(false)},
         {"operating_mode", Config::Uint8(3)},
         {"delay_time_more_phases", Config::Uint(5 * 60, 10, 60 * 60)},
         {"delay_time_less_phases", Config::Uint(60, 10, 60 * 60)},
@@ -100,14 +99,8 @@ void PhaseSwitcher::setup()
     api.restorePersistentConfig("phase_switcher/config", &api_config);
     api_config_in_use = api_config;
 
-    enabled = api_config.get("enabled")->asBool();
-    if (!enabled){
-        api.callCommand("evse/external_current_update", Config::ConfUpdateObject{{
-            {"current", 32000}
-        }});
-    }
-
     operating_mode = PhaseSwitcherMode(api_config_in_use.get("operating_mode")->asUint());
+    enabled = operating_mode != PhaseSwitcherMode::disabled;
 
     if (debug){
         logger.printfln("Phase Switcher Configuration: \n  Enabled: %d\n  Operating mode: %d", enabled, operating_mode);
