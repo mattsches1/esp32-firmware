@@ -207,31 +207,35 @@ export class PhaseSwitcher extends ConfigComponent<"phase_switcher/config", {sta
                 </FormRow>
                 <CollapsedSection heading={__("phase_switcher.content.details")}>
                     <FormRow label={__("phase_switcher.content.channel_states.title")} label_muted={__("phase_switcher.content.channel_states.description")}>
-                        <div class="row g-2">
-                            {low_level_state.output_channels.map((value, index) => (
-                                <IndicatorGroup
-                                    vertical
-                                    key={"output" + index}
-                                    class="col"
-                                    value={value ? 0 : 1}
-                                    items={[
-                                        ["primary", __("phase_switcher.content.channel_high")],
-                                        ["secondary", __("phase_switcher.content.channel_low")]
-                                    ]}
-                                />
-                            ))}
-                            {low_level_state.input_channels.map((value, index) => (
-                                <IndicatorGroup
-                                    vertical
-                                    key={"input" + index}
-                                    class="col"
-                                    value={value ? 0 : 1}
-                                    items={[
-                                        ["primary", __("phase_switcher.content.channel_high")],
-                                        ["secondary", __("phase_switcher.content.channel_low")]
-                                    ]}
-                                />
-                            ))}
+                        <div class="row mx-n1">
+                            <div class="mb-1 col-6 px-1">
+                                {low_level_state.output_channels.map((value, index) => (
+                                    <IndicatorGroup
+                                        vertical
+                                        key={"output" + index}
+                                        class="col"
+                                            value={value ? 0 : 1} //intentionally inverted: the high button is the first
+                                        items={[
+                                            ["primary", __("phase_switcher.content.channel_high")],
+                                            ["secondary", __("phase_switcher.content.channel_low")]
+                                        ]}
+                                    />
+                                ))}
+                            </div>
+                            <div class="mb-1 col-6 px-1">
+                                {low_level_state.input_channels.map((value, index) => (
+                                    <IndicatorGroup
+                                        vertical
+                                        key={"input" + index}
+                                        class="col"
+                                        value={value ? 0 : 1} //intentionally inverted: the high button is the first
+                                        items={[
+                                            ["primary", __("phase_switcher.content.channel_high")],
+                                            ["secondary", __("phase_switcher.content.channel_low")]
+                                        ]}
+                                    />
+                                ))}
+                            </div>
                         </div>
                     </FormRow>
                     <FormRow label={__("phase_switcher.content.on_delay_values.title")} label_muted={__("phase_switcher.content.on_delay_values.description")}>
