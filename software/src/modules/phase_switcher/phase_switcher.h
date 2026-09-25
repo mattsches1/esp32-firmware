@@ -66,6 +66,7 @@ private:
         inactive = 0,
         standby = 1,
         cancelling_evse_start = 5,
+        sending_start_command_to_evse = 7,
         waiting_for_evse_start = 10,
         active = 20,
         quick_charging = 25,
@@ -119,6 +120,7 @@ private:
     void sequencer_state_inactive();
     void sequencer_state_standby();
     void sequencer_state_cancelling_evse_start();
+    void sequencer_state_sending_start_command_to_evse();
     void sequencer_state_waiting_for_evse_start();
     void sequencer_state_active();
     void sequencer_state_quick_charging();

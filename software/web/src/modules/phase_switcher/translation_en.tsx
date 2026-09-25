@@ -86,6 +86,7 @@ let x = {
                 "0" : "Inactive",
                 "1" : "Standby",
                 "5" : "Cancelling EVSE start",
+                "7" : "Sending start command to EVSE",
                 "10" : "Waiting for EVSE start",
                 "20" : "Charging active",
                 "25" : "Quick charging active",

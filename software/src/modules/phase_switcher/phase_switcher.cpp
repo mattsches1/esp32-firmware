@@ -96,7 +96,7 @@ void PhaseSwitcher::setup()
     }
 
     if (!meters.initialized){
-        logger.printfln("Phase Switcher: Energy meter not available. Disabling phase switcher module.");
+        logger.printfln("Energy meter not available. Disabling phase switcher module.");
         return;
     }
 
@@ -191,7 +191,7 @@ uint16_t PhaseSwitcher::evse_get_max_current()
 
         return(min(min(max_current_supply_cable, max_current_charging_cable), max_current_configuration));
     } else {
-        logger.printfln("Phase switcher: Failed to retrieve max. current from EVSE bricklet. Using 6 A.");
+        logger.printfln("Failed to retrieve max. current from EVSE bricklet. Using 6 A.");
         return(6000);
     }
 }
@@ -242,7 +242,7 @@ void PhaseSwitcher::register_urls()
 
     server.on("/phase_switcher/start_debug", HTTP_GET, [this](WebServerRequest request) {
         task_scheduler.scheduleOnce([this](){
-            logger.printfln("Phase switcher: Enabling debug mode");
+            logger.printfln("Enabling debug mode");
             debug = true;
         }, 0_ms);
         return request.send_plain(200);
@@ -250,7 +250,7 @@ void PhaseSwitcher::register_urls()
 
     server.on("/phase_switcher/stop_debug", HTTP_GET, [this](WebServerRequest request){
         task_scheduler.scheduleOnce([this](){
-            logger.printfln("Phase switcher: Disabling debug mode");
+            logger.printfln("Disabling debug mode");
             debug = false;
         }, 0_ms);
         return request.send_plain(200);
@@ -328,15 +328,14 @@ uint8_t PhaseSwitcher::get_phases_for_power(uint16_t available_charging_power)
     uint16_t max_power_two_phases = (max_current * 230 * 2 / 1000);
 
     // if (debug){
-    //     logger.printfln("  Phase switcher: get_phases_for_power w/ available_charging_power %d", available_charging_power);
-    //     logger.printfln("  Phase switcher: get_phases_for_power w/ MIN_POWER_ONE_PHASE %d, MIN_POWER_TWO_PHASES %d, MIN_POWER_THREE_PHASES %d", MIN_POWER_ONE_PHASE, MIN_POWER_TWO_PHASES, MIN_POWER_THREE_PHASES);
-    //     logger.printfln("  Phase switcher: get_phases_for_power w/ operating_mode %d", operating_mode);
-    //     logger.printfln("  Phase switcher: max. allowed current %d", max_current);
+    //     logger.printfln("  get_phases_for_power w/ available_charging_power %d", available_charging_power);
+    //     logger.printfln("  get_phases_for_power w/ MIN_POWER_ONE_PHASE %d, MIN_POWER_TWO_PHASES %d, MIN_POWER_THREE_PHASES %d", MIN_POWER_ONE_PHASE, MIN_POWER_TWO_PHASES, MIN_POWER_THREE_PHASES);
+    //     logger.printfln("  get_phases_for_power w/ operating_mode %d", operating_mode);
+    //     logger.printfln("  max. allowed current %d", max_current);
     // }    
 
     switch(operating_mode){
         case one_phase_static:
-            if (debug) logger.printfln("    Phase switcher: get_phases_for_power one phase static");
             if (available_charging_power >= MIN_POWER_ONE_PHASE){
                 return 1;
             } else {
@@ -344,7 +343,6 @@ uint8_t PhaseSwitcher::get_phases_for_power(uint16_t available_charging_power)
             }
 
         case two_phases_static:
-            if (debug) logger.printfln("    Phase switcher: get_phases_for_power two phases static");
             if (available_charging_power >= MIN_POWER_TWO_PHASES){
                 return 2;
             } else {
@@ -352,7 +350,6 @@ uint8_t PhaseSwitcher::get_phases_for_power(uint16_t available_charging_power)
             }
 
         case three_phases_static:
-            if (debug) logger.printfln("    Phase switcher: get_phases_for_power three phases static");
             if (available_charging_power >= MIN_POWER_THREE_PHASES){
                 return 3;
             } else {
@@ -360,7 +357,6 @@ uint8_t PhaseSwitcher::get_phases_for_power(uint16_t available_charging_power)
             }
 
         case one_two_phases_dynamic:
-            if (debug) logger.printfln("    Phase switcher: get_phases_for_power one/two phases dynamic");
             if (available_charging_power >= MIN_POWER_TWO_PHASES && available_charging_power > max_power_one_phase){
                 return 2;
             } else if (available_charging_power >= MIN_POWER_ONE_PHASE){
@@ -370,7 +366,6 @@ uint8_t PhaseSwitcher::get_phases_for_power(uint16_t available_charging_power)
             }
 
         case one_three_phases_dynamic:
-            if (debug) logger.printfln("    Phase switcher: get_phases_for_power one/three phases dynamic");
             if (available_charging_power >= MIN_POWER_THREE_PHASES && available_charging_power > max_power_one_phase){
                 return 3;
             } else if (available_charging_power >= MIN_POWER_ONE_PHASE){
@@ -380,7 +375,6 @@ uint8_t PhaseSwitcher::get_phases_for_power(uint16_t available_charging_power)
             }
 
         case one_two_three_phases_dynamic:
-            if (debug) logger.printfln("    Phase switcher: get_phases_for_power one/two/three phases dynamic");
             if (available_charging_power >= MIN_POWER_THREE_PHASES && available_charging_power > max_power_two_phases){
                 return 3;
             } else if (available_charging_power >= MIN_POWER_TWO_PHASES && available_charging_power > max_power_one_phase){
@@ -401,7 +395,7 @@ void PhaseSwitcher::set_available_charging_power(uint16_t available_charging_pow
 {
     PhaseSwitcher::available_charging_power = available_charging_power;
     requested_phases_pending = get_phases_for_power(available_charging_power);
-    if (debug) logger.printfln("  Phase switcher: set_available_charging_power w/ requested_phases_pending %d, requested_phases %d", requested_phases_pending, requested_phases);
+    // if (debug) logger.printfln("  set_available_charging_power w/ requested_phases_pending %d, requested_phases %d", requested_phases_pending, requested_phases);
     set_current(available_charging_power, requested_phases);
 }
 
@@ -418,7 +412,7 @@ void PhaseSwitcher::set_current(uint16_t available_charging_power, uint8_t phase
     api.callCommand("evse/external_current_update", Config::ConfUpdateObject{{
         {"current", requested_current}
     }});
-    // if (debug) logger.printfln("Phase switcher: Setting current for %d W charging power at %d phases to %.2f A", available_charging_power, phases, ((float)requested_current)/1000);
+    // if (debug) logger.printfln("Setting current for %d W charging power at %d phases to %.2f A", available_charging_power, phases, ((float)requested_current)/1000);
 }
 
 void PhaseSwitcher::handle_button()
@@ -456,7 +450,7 @@ void PhaseSwitcher::start_quick_charging()
         return;
 
     if (sequencer_state == standby || sequencer_state == stopped_by_evse){
-        logger.printfln("Phase switcher: Quick charging requested");
+        logger.printfln("Quick charging requested");
         quick_charging_active = true;
         requested_phases_pending_delayed = 3;
         requested_phases = 3;
@@ -464,7 +458,7 @@ void PhaseSwitcher::start_quick_charging()
             {"current", 32000}
         }});
     } else {
-        logger.printfln("Phase switcher: Quick charging request ignored because sequencer is not in standby state");
+        logger.printfln("Quick charging request ignored because sequencer is not in standby state");
     }
 
 }
@@ -477,6 +471,12 @@ void PhaseSwitcher::handle_evse()
     }
 
     charger_state = ChargerState(api.getState("evse/state", false)->get("charger_state")->asUint());
+    static ChargerState last_charger_state = charger_state;
+    if (debug && charger_state != last_charger_state){
+        logger.printfln("  Phase switcher handle_evse: charger_state changed from %d to %d", last_charger_state, charger_state);
+        last_charger_state = charger_state;
+    }
+
     iec61851_state = IEC61851State(api.getState("evse/state", false)->get("iec61851_state")->asUint());
     auto_start_charging = api.getState("evse/auto_start_charging", false)->get("auto_start_charging")->asBool();
 }
@@ -505,7 +505,7 @@ void PhaseSwitcher::monitor_requested_phases()
     if (debug){
         static uint8_t sequencer_last_requested_phases_pending_delayed = requested_phases_pending_delayed;
         if (requested_phases_pending_delayed != sequencer_last_requested_phases_pending_delayed){
-            logger.printfln("  Phase switcher: requested_phases_pending_delayed changed from %d to %d; requested_phases_pending: %d; requested_phases: %d", sequencer_last_requested_phases_pending_delayed, requested_phases_pending_delayed, requested_phases_pending, requested_phases);
+            logger.printfln("  requested_phases_pending_delayed changed from %d to %d; requested_phases_pending: %d; requested_phases: %d", sequencer_last_requested_phases_pending_delayed, requested_phases_pending_delayed, requested_phases_pending, requested_phases);
             sequencer_last_requested_phases_pending_delayed = requested_phases_pending_delayed;
         }
     }    
@@ -521,20 +521,21 @@ void PhaseSwitcher::sequencer()
     }
 
     switch(sequencer_state){
-        case inactive:                  sequencer_state_inactive(); break;
-        case standby:                   sequencer_state_standby(); break;
-        case cancelling_evse_start:     sequencer_state_cancelling_evse_start(); break;
-        case waiting_for_evse_start:    sequencer_state_waiting_for_evse_start(); break;
-        case active:                    sequencer_state_active(); break;
-        case quick_charging:            sequencer_state_quick_charging(); break;
-        case waiting_for_evse_stop:     sequencer_state_waiting_for_evse_stop(); break;
-        case pausing_while_switching:   sequencer_state_pausing_while_switching(); break;
-        case stopped_by_evse:           sequencer_state_stopped_by_evse(); break;
+        case inactive:                      sequencer_state_inactive(); break;
+        case standby:                       sequencer_state_standby(); break;
+        case cancelling_evse_start:         sequencer_state_cancelling_evse_start(); break;
+        case sending_start_command_to_evse: sequencer_state_sending_start_command_to_evse(); break;
+        case waiting_for_evse_start:        sequencer_state_waiting_for_evse_start(); break;
+        case active:                        sequencer_state_active(); break;
+        case quick_charging:                sequencer_state_quick_charging(); break;
+        case waiting_for_evse_stop:         sequencer_state_waiting_for_evse_stop(); break;
+        case pausing_while_switching:       sequencer_state_pausing_while_switching(); break;
+        case stopped_by_evse:               sequencer_state_stopped_by_evse(); break;
     }
 
     static PhaseSwitcherState last_sequencer_state = inactive;
     if (last_sequencer_state != sequencer_state){
-        if (debug) logger.printfln("  Phase switcher sequencer state changed to: %d", sequencer_state);
+        if (debug) logger.printfln("  Sequencer state changed to: %d", sequencer_state);
         last_state_change = now_us();
         last_sequencer_state = sequencer_state;
     } 
@@ -543,18 +544,18 @@ void PhaseSwitcher::sequencer()
 void PhaseSwitcher::sequencer_state_inactive()
 {
     if (charger_state == waiting_for_charge_release && (auto_start_charging || iec61851_state == b_connected)){
-        logger.printfln("Phase switcher: Vehicle connected, changing to standby state.");
+        logger.printfln("Vehicle connected, changing to standby state.");
         sequencer_state = standby;
     } else if (charger_state == ready_for_charging || charger_state == charging){
         if (delayed_phase_request[0]){
-            logger.printfln("Phase switcher: Charging initiated by EVSE while power is sufficient, waiting for EVSE to start charging.");
+            logger.printfln("Charging initiated by EVSE while power is sufficient, waiting for EVSE to start charging.");
             if (!quick_charging_active){
                 requested_phases = requested_phases_pending_delayed;
                 set_current(api_available_charging_power.get("power")->asUint(), requested_phases);
             }
             sequencer_state = waiting_for_evse_start;
         } else {
-            logger.printfln("Phase switcher: Charging initiated by EVSE but requested power is not sufficient. Requesting EVSE to stop charging.");
+            logger.printfln("Charging initiated by EVSE but requested power is not sufficient. Requesting EVSE to stop charging.");
             sequencer_state = cancelling_evse_start;
         }
     } 
@@ -563,15 +564,15 @@ void PhaseSwitcher::sequencer_state_inactive()
 void PhaseSwitcher::sequencer_state_standby()
 {
     if (delayed_phase_request[0] || quick_charging_active){
-        logger.printfln("Phase switcher: Requesting EVSE to start charging.");
+        logger.printfln("Requesting EVSE to start charging.");
         if (!quick_charging_active){
             requested_phases = requested_phases_pending_delayed;
             set_current(api_available_charging_power.get("power")->asUint(), requested_phases);
-            if (debug) logger.printfln("  Phase switcher: Sequencer state standby; delayed_phase_request[0]: %d; requested_phases: %d", delayed_phase_request[0], requested_phases);
+            if (debug) logger.printfln("  Sequencer state standby; delayed_phase_request[0]: %d; requested_phases: %d", delayed_phase_request[0], requested_phases);
         }
-        sequencer_state = waiting_for_evse_start;
+        sequencer_state = sending_start_command_to_evse;
     } else if (charger_state == ready_for_charging || charger_state == charging){
-        logger.printfln("Phase switcher: Charging initiated by EVSE but requested power is not sufficient. Requesting EVSE to stop charging.");
+        logger.printfln("Charging initiated by EVSE but requested power is not sufficient. Requesting EVSE to stop charging.");
         sequencer_state = cancelling_evse_start;
     }
 }
@@ -581,17 +582,24 @@ void PhaseSwitcher::sequencer_state_cancelling_evse_start()
     static uint32_t watchdog_start = 0;
 
     if (millis_t{millis() - watchdog_start} >= EVSE_STOP_TIMEOUT){
-        logger.printfln("Phase switcher: Sending stop API request to EVSE.");
+        logger.printfln("Sending stop API request to EVSE.");
         api.callCommand("evse/stop_charging", nullptr);
         watchdog_start = millis();
     }
 
     if (charger_state != ready_for_charging && charger_state != charging){
-        logger.printfln("Phase switcher: Charging stopped by EVSE, changing to standby state.");
+        logger.printfln("Charging stopped by EVSE, changing to standby state.");
         watchdog_start = 0;
         sequencer_state = standby;
     }
 
+}
+
+void PhaseSwitcher::sequencer_state_sending_start_command_to_evse()
+{
+    logger.printfln("Sending start command to EVSE.");
+    api.callCommand("evse/start_charging", nullptr);
+    sequencer_state = waiting_for_evse_start;
 }
 
 void PhaseSwitcher::sequencer_state_waiting_for_evse_start()
@@ -599,14 +607,18 @@ void PhaseSwitcher::sequencer_state_waiting_for_evse_start()
     static uint32_t watchdog_start = 0;
     static uint8_t start_retries = 0;
 
+    if (watchdog_start == 0){
+        watchdog_start = millis();
+    }
+
     if (millis_t{millis() - watchdog_start} >= EVSE_START_TIMEOUT){
         if (start_retries < EVSE_START_RETRIES){
-            logger.printfln("Phase switcher: Sending start API request to EVSE.");
-            api.callCommand("evse/start_charging", nullptr);
+            logger.printfln("Waiting for EVSE timed out, retrying attempt %d.", start_retries + 1);
+            sequencer_state = sending_start_command_to_evse;
             watchdog_start = millis();
             start_retries++;
         } else {
-            logger.printfln("Phase switcher: Tried to start EVSE for %d times. Aborting.", EVSE_START_RETRIES);
+            logger.printfln("Waited for EVSE to start charging for %d times. Aborting.", EVSE_START_RETRIES);
             start_retries = 0;
             watchdog_start = 0;
             sequencer_state = stopped_by_evse;
@@ -615,16 +627,15 @@ void PhaseSwitcher::sequencer_state_waiting_for_evse_start()
 
     if (charger_state == charging){
         if (quick_charging_active){
-            logger.printfln("Phase switcher: Charging started by EVSE, changing to quick charging active state.");
+            logger.printfln("Charging started by EVSE, changing to quick charging active state.");
             sequencer_state = quick_charging;
         } else {
-            logger.printfln("Phase switcher: Charging started by EVSE, changing to active state.");
+            logger.printfln("Charging started by EVSE, changing to active state.");
             sequencer_state = active;
         }
         watchdog_start = 0;
         start_retries = 0;
     }
-
 }
 
 void PhaseSwitcher::sequencer_state_active()
@@ -640,13 +651,13 @@ void PhaseSwitcher::sequencer_state_active()
     const bool minimum_duration_elapsed = now_us() - last_state_change >= seconds_t{api_config_in_use.get("minimum_duration")->asUint()};
 
     if (requested_phases_pending_delayed != last_requested_phases_pending_delayed && minimum_duration_elapsed){
-        logger.printfln("Phase switcher: Change to %d phase charging requested while charging with %d phases. Requesting EVSE to stop charging.", requested_phases_pending_delayed, last_requested_phases_pending_delayed);
+        logger.printfln("Change to %d phase charging requested while charging with %d phases. Requesting EVSE to stop charging.", requested_phases_pending_delayed, last_requested_phases_pending_delayed);
         init = false;
         sequencer_state = waiting_for_evse_stop;
     }
 
     if (charger_state != charging){
-        logger.printfln("Phase switcher: Charging stopped by EVSE. Waiting either for disconnect or quick charge request.");
+        logger.printfln("Charging stopped by EVSE. Waiting either for disconnect or quick charge request.");
         init = false;
         quick_charging_active = false;
         requested_phases = 0;
@@ -657,7 +668,7 @@ void PhaseSwitcher::sequencer_state_active()
 void PhaseSwitcher::sequencer_state_quick_charging()
 {
     if (charger_state != charging){
-        logger.printfln("Phase switcher: Charging stopped by EVSE. Waiting for either disconnect or quick charge request.");
+        logger.printfln("Charging stopped by EVSE. Waiting for either disconnect or quick charge request.");
         set_available_charging_power(api_available_charging_power.get("power")->asUint());
         sequencer_state = stopped_by_evse;
         quick_charging_active = false;
@@ -669,18 +680,18 @@ void PhaseSwitcher::sequencer_state_waiting_for_evse_stop()
     static uint32_t watchdog_start = 0;
 
     if (millis_t{millis() - watchdog_start} >= EVSE_STOP_TIMEOUT){
-        logger.printfln("Phase switcher: Sending stop API request to EVSE.");
+        logger.printfln("Sending stop API request to EVSE.");
         api.callCommand("evse/stop_charging", nullptr);
         watchdog_start = millis();
     }
 
     if (charger_state != charging){
         if (requested_phases_pending_delayed >= 1 && !contactor_error){
-            logger.printfln("Phase switcher: EVSE stopped charging, waiting for pause time to elapse.");
+            logger.printfln("EVSE stopped charging, waiting for pause time to elapse.");
             requested_phases = requested_phases_pending_delayed;
             sequencer_state = pausing_while_switching;
         } else {
-            logger.printfln("Phase switcher: EVSE stopped charging, waiting for car to be disconnected.");
+            logger.printfln("EVSE stopped charging, waiting for car to be disconnected.");
             requested_phases = 0;
             sequencer_state = standby;
         }
@@ -690,8 +701,8 @@ void PhaseSwitcher::sequencer_state_waiting_for_evse_stop()
 void PhaseSwitcher::sequencer_state_pausing_while_switching()
 {
     if (now_us() - last_state_change >= seconds_t{api_config_in_use.get("pause_time")->asUint()}){
-        logger.printfln("Phase switcher: Pause time elapsed, restarting charging with %d phases.", requested_phases);
-        logger.printfln("Phase switcher: Waiting for EVSE to start charging.");
+        logger.printfln("Pause time elapsed, restarting charging with %d phases.", requested_phases);
+        logger.printfln("Waiting for EVSE to start charging.");
         set_current(api_available_charging_power.get("power")->asUint(), requested_phases);
         sequencer_state = waiting_for_evse_start;
     }
@@ -700,15 +711,22 @@ void PhaseSwitcher::sequencer_state_pausing_while_switching()
 void PhaseSwitcher::sequencer_state_stopped_by_evse()
 {
     if (quick_charging_active){
-        logger.printfln("Phase switcher: Requesting EVSE to start charging.");
-        sequencer_state = waiting_for_evse_start;
+        logger.printfln("Requesting EVSE to start charging.");
+        sequencer_state = sending_start_command_to_evse;
     } else if (charger_state == ready_for_charging || charger_state == charging){
         if (delayed_phase_request[0]){
-            if (debug) logger.printfln("  Phase switcher: charging started, requested_phases_pending_delayed %d", requested_phases_pending_delayed);
             requested_phases = requested_phases_pending_delayed;
             set_current(api_available_charging_power.get("power")->asUint(), requested_phases);
+            sequencer_state = waiting_for_evse_start;
+            if (debug){
+                static bool last_phase_requesed = false;
+                if (delayed_phase_request[0] != last_phase_requesed){
+                    logger.printfln("  Charger state changed to %d, requested_phases %d", charger_state, requested_phases);
+                    last_phase_requesed = delayed_phase_request[0];
+                }
+            }    
         } else {
-            logger.printfln("Phase switcher: Charging initiated by EVSE but requested power is not sufficient. Requesting EVSE to stop charging.");
+            logger.printfln("Charging initiated by EVSE but requested power is not sufficient. Requesting EVSE to stop charging.");
             sequencer_state = cancelling_evse_start;
         }
     }
@@ -726,7 +744,7 @@ void PhaseSwitcher::write_outputs()
     if (debug) {
         static bool last_evse_relay_output = false;
         if (last_evse_relay_output != evse_relay_output){
-            logger.printfln("Phase switcher: EVSE relay output changed to %d; contactor_error %d; requested_phases: %d ", evse_relay_output, contactor_error, requested_phases);
+            logger.printfln("  EVSE relay output changed to %d; contactor_error %d; requested_phases: %d ", evse_relay_output, contactor_error, requested_phases);
             last_evse_relay_output = evse_relay_output;
         }
     }
@@ -810,12 +828,12 @@ void PhaseSwitcher::contactor_check()
         if (input_phase[i] == output_phase[i]) watchdog_start[i] = millis();
         if (millis() - watchdog_start[i] >= 2000){
             if (!contactor_error[i]){
-                logger.printfln("Phase switcher: Contactor error phase %d set", i);
+                logger.printfln("Contactor error phase %d set", i);
                 contactor_error[i] = true;
             }
         } else {
             if (contactor_error[i]){
-                logger.printfln("Phase switcher: Contactor error phase %d cleared", i);
+                logger.printfln("Contactor error phase %d cleared", i);
                 contactor_error[i] = false;
             }
         }
@@ -828,7 +846,7 @@ void PhaseSwitcher::contactor_check()
             case waiting_for_evse_start:
             case active:                    
             case quick_charging:
-                logger.printfln("Phase switcher: Requesting EVSE to stop charging.");
+                logger.printfln("Requesting EVSE to stop charging.");
                 sequencer_state = waiting_for_evse_stop;
                 break;
             case waiting_for_evse_stop:
