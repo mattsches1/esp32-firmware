@@ -60,26 +60,26 @@ void PhaseSwitcher::pre_setup()
             Config::Bool(false),
             Config::Bool(false),
             Config::Bool(false),
-            }, new Config{Config::Bool(false)}, 4, 4, Config::type_id<Config::ConfBool>())
+            }, Config::get_prototype_bool_false(), 4, 4, Config::type_id<Config::ConfBool>())
         },
         {"output_channels", Config::Array({
             Config::Bool(false),
             Config::Bool(false),
             Config::Bool(false),
             Config::Bool(false),
-            }, new Config{Config::Bool(false)}, 4, 4, Config::type_id<Config::ConfBool>())
+            }, Config::get_prototype_bool_false(), 4, 4, Config::type_id<Config::ConfBool>())
         },
         {"current_on_delay_time", Config::Array({
                 Config::Uint32(0),
                 Config::Uint32(0),
                 Config::Uint32(0),
-            }, new Config{Config::Uint32(0)}, 3, 3, Config::type_id<Config::ConfUint>())
+            }, Config::get_prototype_uint32_0(), 3, 3, Config::type_id<Config::ConfUint>())
         },
         {"current_off_delay_time", Config::Array({
                 Config::Uint32(0),
                 Config::Uint32(0),
                 Config::Uint32(0),
-            }, new Config{Config::Uint32(0)}, 3, 3, Config::type_id<Config::ConfUint>())
+            }, Config::get_prototype_uint32_0(), 3, 3, Config::type_id<Config::ConfUint>())
         }
     });
 
