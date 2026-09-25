@@ -15,7 +15,6 @@ let x = {
         },
         "content": {
             "phase_switcher": "Phasenumschaltung",
-            "history_12": "Verlauf (12 h)",
             "history_6": "Verlauf (6 h)",
             "history_3": "Verlauf (3 h)",
             "live": "Live (6 min)",

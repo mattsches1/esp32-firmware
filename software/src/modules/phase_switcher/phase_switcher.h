@@ -55,7 +55,7 @@ class PhaseSwitcher final : public IModule
 public:
     PhaseSwitcher(){}
 
-    static constexpr size_t HISTORY_SAMPLE_COUNT = 12 * 60 / HISTORY_MINUTE_INTERVAL;
+    static constexpr size_t HISTORY_SAMPLE_COUNT = 6 * 60 / HISTORY_MINUTE_INTERVAL;
 
     void pre_setup() override;
     void setup() override;
