@@ -28,6 +28,8 @@
 extern TF_HAL hal;
 extern WebServer server;
 
+static constexpr millis_t RELAY_MONOFLOP_REFRESH_INTERVAL = 1_s;
+
 void PhaseSwitcher::pre_setup()
 {
     api_config = Config::Object({
@@ -108,15 +110,14 @@ void PhaseSwitcher::setup()
 
     api.addFeature("phase_switcher");
 
-    task_scheduler.scheduleUncancelable([this](){
-        this->read_inputs();
-        this->contactor_check();
-        this->handle_button();
-        this->handle_evse();
-        this->monitor_requested_phases();
-        this->sequencer();
-        this->write_outputs();
-    }, 0_ms, 250_ms);
+    io_scheduler.driveUncancelable(
+        [this]() { return this->prepare_io(); },
+        [this]() {
+            this->fetch_all_data();
+            this->write_outputs();
+        },
+        [this]() { this->publish_all_data(); },
+        0_ms, 250_ms);
 
     task_scheduler.scheduleUncancelable([this](){
         update_all_data();
@@ -284,7 +285,6 @@ uint8_t PhaseSwitcher::get_phases_for_power(uint16_t available_charging_power)
             }
         
         default:
-            if (debug) logger.printfln("    Phase switcher: get_phases_for_power default");
             return 0;
     }
 }
@@ -307,9 +307,14 @@ void PhaseSwitcher::set_current(uint16_t available_charging_power, uint8_t phase
         requested_current = 32000;    
     }
 
-    api.callCommand("evse/external_current_update", Config::ConfUpdateObject{{
+    String error = api.callCommand("evse/external_current_update", Config::ConfUpdateObject{{
         {"current", requested_current}
     }});
+    if (!error.isEmpty()) {
+        logger.printfln("External_current_update failed; current=%lu; error=%s",
+                        static_cast<unsigned long>(requested_current),
+                        error.c_str());
+    }
     // if (debug) logger.printfln("Setting current for %d W charging power at %d phases to %.2f A", available_charging_power, phases, ((float)requested_current)/1000);
 }
 
@@ -331,13 +336,13 @@ void PhaseSwitcher::handle_button()
         button_released_time = millis();
 
     if (millis_t{millis() - button_released_time} >= QUICK_CHARGE_DELAY_TIME && quick_charging_requested){
-        if (debug) logger.printfln("    Phase switcher: Button released, initiating quick charging");
+        if (debug) logger.printfln("    Button released, initiating quick charging");
         start_quick_charging();
         quick_charging_requested = false;
     }
 
     if (millis_t{millis() - button_pressed_time} >= QUICK_CHARGE_BUTTON_PRESSED_TIME){
-        if (debug) logger.printfln("    Phase switcher: Quick charging command received and stored");
+        if (debug) logger.printfln("    Quick charging command received and stored");
         quick_charging_requested = true;
     }
 }
@@ -352,9 +357,12 @@ void PhaseSwitcher::start_quick_charging()
         quick_charging_active = true;
         requested_phases_pending_delayed = 3;
         requested_phases = 3;
-        api.callCommand("evse/external_current_update", Config::ConfUpdateObject{{
+        String error = api.callCommand("evse/external_current_update", Config::ConfUpdateObject{{
             {"current", 32000}
         }});
+        if (!error.isEmpty()) {
+            logger.printfln("Quick-charge current update failed; error=%s", error.c_str());
+        }
     } else {
         logger.printfln("Quick charging request ignored because sequencer is not in standby state");
     }
@@ -481,7 +489,10 @@ void PhaseSwitcher::sequencer_state_cancelling_evse_start()
 
     if (millis_t{millis() - watchdog_start} >= EVSE_STOP_TIMEOUT){
         logger.printfln("Sending stop API request to EVSE.");
-        api.callCommand("evse/stop_charging", nullptr);
+        String error = api.callCommand("evse/stop_charging", nullptr);
+        if (!error.isEmpty()) {
+            logger.printfln("Stop_charging failed; error=%s", error.c_str());
+        }
         watchdog_start = millis();
     }
 
@@ -496,7 +507,10 @@ void PhaseSwitcher::sequencer_state_cancelling_evse_start()
 void PhaseSwitcher::sequencer_state_sending_start_command_to_evse()
 {
     logger.printfln("Sending start command to EVSE.");
-    api.callCommand("evse/start_charging", nullptr);
+    String error = api.callCommand("evse/start_charging", nullptr);
+    if (!error.isEmpty()) {
+        logger.printfln("Start_charging failed; error=%s", error.c_str());
+    }
     sequencer_state = waiting_for_evse_start;
 }
 
@@ -579,7 +593,10 @@ void PhaseSwitcher::sequencer_state_waiting_for_evse_stop()
 
     if (millis_t{millis() - watchdog_start} >= EVSE_STOP_TIMEOUT){
         logger.printfln("Sending stop API request to EVSE.");
-        api.callCommand("evse/stop_charging", nullptr);
+        String error = api.callCommand("evse/stop_charging", nullptr);
+        if (!error.isEmpty()) {
+            logger.printfln("Stop_charging failed; error=%s", error.c_str());
+        }
         watchdog_start = millis();
     }
 
@@ -630,33 +647,88 @@ void PhaseSwitcher::sequencer_state_stopped_by_evse()
     }
 }
 
-void PhaseSwitcher::read_inputs()
+bool PhaseSwitcher::prepare_io()
 {
+    contactor_check();
+    handle_button();
+    handle_evse();
+    monitor_requested_phases();
+    sequencer();
+
     if (!api.hasFeature("evse")) {
-        return;
+        return false;
     }
 
-    int retval;
-    retval = io_scheduler.hal_call([&]() {
-        return tf_industrial_digital_in_4_v2_get_value(&digital_in_bricklet.device, input_channels);
-    });
-    if (retval != TF_E_OK) {
-        logger.printfln("Industrial digital in relay get value failed (rc %d).", retval);
-        input_channels[0] = input_channels[1] = input_channels[2] = input_channels[3] = false;
-    } else {
-        input_channels[0] = input_channels[0];
-        input_channels[1] = (api.getState("evse/state", false)->get("contactor_state")->asUint() == 3);     // Phase 1 feedback is read by EVSE bricklet
-        input_channels[2] = input_channels[2];
-        input_channels[3] = input_channels[3];
+    update_outputs();
+
+    const uint32_t now_ms = millis();
+    for (size_t channel = 0; channel < ARRAY_SIZE(output_channels); ++channel) {
+        io_output_targets[channel] = output_channels[channel];
+        io_output_update_needed[channel] = !relay_state_known[channel]
+                                        || relay_commanded_state[channel] != io_output_targets[channel]
+                                        || (io_output_targets[channel]
+                                         && millis_t{now_ms - relay_last_refresh_ms[channel]} >= RELAY_MONOFLOP_REFRESH_INTERVAL);
+        io_output_attempted[channel] = false;
     }
+
+    return true;
+}
+
+void PhaseSwitcher::fetch_all_data()
+{
+    io_input_rc = tf_industrial_digital_in_4_v2_get_value(&digital_in_bricklet.device, io_input_values);
 }
 
 void PhaseSwitcher::write_outputs()
 {
-    if (!api.hasFeature("evse")) {
-        return;
+    for (size_t channel = 0; channel < ARRAY_SIZE(io_output_targets); ++channel) {
+        if (!io_output_update_needed[channel]) {
+            continue;
+        }
+
+        io_output_attempted[channel] = true;
+        if (io_output_targets[channel])
+            io_output_rc[channel] = tf_industrial_quad_relay_v2_set_monoflop(&quad_relay_bricklet.device, channel, true, 10000);
+        else
+            io_output_rc[channel] = tf_industrial_quad_relay_v2_set_selected_value(&quad_relay_bricklet.device, channel, false);
+
+        if (io_output_rc[channel] != TF_E_OK) {
+            break;
+        }
+    }
+}
+
+void PhaseSwitcher::publish_all_data()
+{
+    if (io_input_rc != TF_E_OK) {
+        logger.printfln("Industrial digital in relay get value failed (rc %d).", io_input_rc);
+        input_channels[0] = input_channels[1] = input_channels[2] = input_channels[3] = false;
+    } else {
+        for (size_t channel = 0; channel < ARRAY_SIZE(input_channels); ++channel) {
+            input_channels[channel] = io_input_values[channel];
+        }
+        input_channels[1] = (api.getState("evse/state", false)->get("contactor_state")->asUint() == 3); // Phase 1 feedback is read by EVSE bricklet
     }
 
+    for (size_t channel = 0; channel < ARRAY_SIZE(io_output_attempted); ++channel) {
+        if (!io_output_attempted[channel]) {
+            continue;
+        }
+
+        if (io_output_rc[channel] != TF_E_OK) {
+            logger.printfln("Industrial quad relay set monoflop or value failed for channel %u (rc %d).",
+                            static_cast<unsigned>(channel), io_output_rc[channel]);
+            continue;
+        }
+
+        relay_state_known[channel] = true;
+        relay_commanded_state[channel] = io_output_targets[channel];
+        relay_last_refresh_ms[channel] = io_output_targets[channel] ? millis() : 0;
+    }
+}
+
+void PhaseSwitcher::update_outputs()
+{
     bool evse_relay_output = api.getState("evse/low_level_state", false)->get("gpio")->get(3)->asBool();
 
     if (debug) {
@@ -677,7 +749,7 @@ void PhaseSwitcher::write_outputs()
             case 0:
                 break;
             case 1:
-                break;            
+                break;
             case 2:
                 output_channels[2] = true;
                 break;
@@ -690,23 +762,6 @@ void PhaseSwitcher::write_outputs()
             output_channels[1] = true;
             output_channels[2] = true;
             output_channels[3] = true;
-        } 
-    }
-
-    int retval;
-    for (int channel = 0; channel <= 3; channel++) {
-        if (output_channels[channel])
-            retval = io_scheduler.hal_call([&]() {
-                return tf_industrial_quad_relay_v2_set_monoflop(&quad_relay_bricklet.device, channel, true, 10000);
-            });
-        else
-            retval = io_scheduler.hal_call([&]() {
-                return tf_industrial_quad_relay_v2_set_selected_value(&quad_relay_bricklet.device, channel, false);
-            });
-
-        if (retval != TF_E_OK) {
-            logger.printfln("Industrial quad relay set monoflop or value failed for channel %d (rc %d).", channel, retval);
-            return;
         }
     }
 }
@@ -757,7 +812,6 @@ void PhaseSwitcher::contactor_check()
 void PhaseSwitcher::update_all_data()
 {
     // state
-    // api_state.get("available_charging_power")->updateUint(api_available_charging_power.get("power")->asUint());
     api_state.get("available_charging_power")->updateUint(available_charging_power);
     api_state.get("requested_phases")->updateUint(requested_phases);
     api_state.get("requested_phases_pending")->updateUint(requested_phases_pending);

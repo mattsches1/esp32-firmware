@@ -124,8 +124,11 @@ private:
     void sequencer_state_pausing_while_switching();
     void sequencer_state_stopped_by_evse();
 
-    void read_inputs();
+    bool prepare_io();
+    void fetch_all_data();
     void write_outputs();
+    void publish_all_data();
+    void update_outputs();
     void contactor_check();
     void update_all_data();
     
@@ -174,5 +177,16 @@ private:
     bool input_channels[4] = {false, false, false, false};
     bool output_channels[4] = {false, false, false, false};
     bool contactor_error;
+
+    bool io_input_values[4] = {};
+    bool io_output_targets[4] = {};
+    bool io_output_update_needed[4] = {};
+    bool io_output_attempted[4] = {};
+    int io_input_rc = 0;
+    int io_output_rc[4] = {};
+
+    bool relay_state_known[4] = {};
+    bool relay_commanded_state[4] = {};
+    uint32_t relay_last_refresh_ms[4] = {};
 };
                                     
