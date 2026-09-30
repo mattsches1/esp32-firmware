@@ -30,13 +30,16 @@ let x = {
             "phase_switcher_enabled": "Phasenumschaltung aktivieren",
             "phase_switcher_enabled_desc": "Aktiviert die automatische Phasenumschaltung und die Ladestromregelung über die zur Verfügung stehende Leistung.",
 
-            "operating_mode" : "Betriebsart",
-            "one_phase_static" : "Nur einphasig",
-            "two_phases_static" : "Nur zweiphasig",
-            "three_phases_static" : "Nur dreiphasig",
-            "one_two_phases_dynamic" : "Automatische Umschaltung ein-/zweiphasig",
-            "one_three_phases_dynamic" : "Automatische Umschaltung ein-/dreiphasig",
-            "one_two_three_phases_dynamic" : "Automatische Umschaltung ein-/zwei-/dreiphasig",
+            "operating_mode" : {
+                "title": "Betriebsart",
+                "disabled" : "Deaktiviert",
+                "one_phase_static" : "Nur einphasig",
+                "two_phases_static" : "Nur zweiphasig",
+                "three_phases_static" : "Nur dreiphasig",
+                "one_two_phases_dynamic" : "Automatische Umschaltung ein-/zweiphasig",
+                "one_three_phases_dynamic" : "Automatische Umschaltung ein-/dreiphasig",
+                "one_two_three_phases_dynamic" : "Automatische Umschaltung ein-/zwei-/dreiphasig"
+            },
 
             "delay_time" : {
                 "title": "Verzögerungszeit",
