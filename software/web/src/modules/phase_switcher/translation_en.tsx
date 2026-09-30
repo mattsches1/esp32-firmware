@@ -33,12 +33,12 @@ let x = {
             "operating_mode" : {
                 "title": "Operating mode",
                 "disabled" : "Disabled",
-                "one_phase_static" : "single phase only",
-                "two_phases_static" : "two-phase only",
-                "three_phases_static" : "three-phase only",
-                "one_two_phases_dynamic" : "automatic switching one/two phases",
-                "one_three_phases_dynamic" : "automatic switching one/three phases",
-                "one_two_three_phases_dynamic" : "automatic switching one/two/three phases"
+                "one_phase_static" : "Single phase only",
+                "two_phases_static" : "Two-phase only",
+                "three_phases_static" : "Three-phase only",
+                "one_two_phases_dynamic" : "Automatic switching one/two phases",
+                "one_three_phases_dynamic" : "Automatic switching one/three phases",
+                "one_two_three_phases_dynamic" : "Automatic switching one/two/three phases"
             },
 
             "delay_time" : {
