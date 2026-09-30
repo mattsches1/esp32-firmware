@@ -38,7 +38,8 @@ let x = {
                 "three_phases_static" : "Nur dreiphasig",
                 "one_two_phases_dynamic" : "Automatische Umschaltung ein-/zweiphasig",
                 "one_three_phases_dynamic" : "Automatische Umschaltung ein-/dreiphasig",
-                "one_two_three_phases_dynamic" : "Automatische Umschaltung ein-/zwei-/dreiphasig"
+                "one_two_three_phases_dynamic" : "Automatische Umschaltung ein-/zwei-/dreiphasig",
+                "emulate_energy_manager" : "Energy Manager emulieren"
             },
 
             "delay_time" : {

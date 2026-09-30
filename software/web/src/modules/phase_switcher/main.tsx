@@ -181,6 +181,7 @@ export class PhaseSwitcher extends ConfigComponent<"phase_switcher/config", {sta
                             ["4", __("phase_switcher.content.operating_mode.one_two_phases_dynamic")],
                             ["5", __("phase_switcher.content.operating_mode.one_three_phases_dynamic")],
                             ["6", __("phase_switcher.content.operating_mode.one_two_three_phases_dynamic")],
+                            ["7", __("phase_switcher.content.operating_mode.emulate_energy_manager")],
                         ]}
                     />
                 </FormRow>

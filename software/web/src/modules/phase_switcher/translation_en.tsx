@@ -38,7 +38,8 @@ let x = {
                 "three_phases_static" : "Three-phase only",
                 "one_two_phases_dynamic" : "Automatic switching one/two phases",
                 "one_three_phases_dynamic" : "Automatic switching one/three phases",
-                "one_two_three_phases_dynamic" : "Automatic switching one/two/three phases"
+                "one_two_three_phases_dynamic" : "Automatic switching one/two/three phases",
+                "emulate_energy_manager" : "Emulate energy manager"
             },
 
             "delay_time" : {
