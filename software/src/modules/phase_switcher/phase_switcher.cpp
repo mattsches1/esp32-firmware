@@ -110,6 +110,12 @@ void PhaseSwitcher::setup()
 
     api.addFeature("phase_switcher");
 
+#if MODULE_POWER_MANAGER_AVAILABLE()
+    if (operating_mode == one_three_phases_emulate_energy_manager) {
+        power_manager.register_phase_switcher_backend(this);
+    }
+#endif
+
     io_scheduler.driveUncancelable(
         [this]() { return this->prepare_io(); },
         [this]() {
@@ -180,7 +186,7 @@ void PhaseSwitcher::register_urls()
     api.addState("phase_switcher/low_level_state", &api_low_level_state);
 
     api.addCommand("phase_switcher/available_charging_power", &api_available_charging_power, {}, [this](Language /*language*/, String &/*errmsg*/){
-        if (enabled && !quick_charging_active){
+        if (enabled && operating_mode != one_three_phases_emulate_energy_manager && !quick_charging_active){
             set_available_charging_power(api_available_charging_power.get("power")->asUint());
         }
     }, false);
@@ -204,6 +210,131 @@ void PhaseSwitcher::register_urls()
         }, 0_ms);
         return request.send_plain(200);
     });
+}
+
+bool PhaseSwitcher::phase_switching_capable()
+{
+    return operating_mode == one_three_phases_emulate_energy_manager;
+}
+
+bool PhaseSwitcher::can_switch_phases_now(uint32_t phases_wanted)
+{
+    if (!initialized || !phase_switching_capable() ||
+        (phases_wanted != 1 && phases_wanted != 3) ||
+        phases_wanted == get_emulate_energy_manager_phases()) {
+        return false;
+    }
+
+    return get_phase_switching_state() == PhaseSwitcherBackend::SwitchingState::Ready;
+}
+
+uint32_t PhaseSwitcher::get_phases()
+{
+    return get_emulate_energy_manager_phases();
+}
+
+PhaseSwitcherBackend::SwitchingState PhaseSwitcher::get_phase_switching_state()
+{
+    if (contactor_error || get_emulate_energy_manager_phases() == 0) {
+        return PhaseSwitcherBackend::SwitchingState::Error;
+    }
+
+    if (emulate_energy_manager_state != EmulateEnergyManagerState::Idle) {
+        return PhaseSwitcherBackend::SwitchingState::Busy;
+    }
+
+    return PhaseSwitcherBackend::SwitchingState::Ready;
+}
+
+bool PhaseSwitcher::switch_phases(uint32_t /*phases_wanted*/)
+{
+    return false;
+}
+
+bool PhaseSwitcher::is_external_control_allowed()
+{
+    return false;
+}
+
+uint8_t PhaseSwitcher::get_emulate_energy_manager_phases()
+{
+    if (input_channels[2] != input_channels[3]) {
+        return 0;
+    }
+
+    return input_channels[2] ? 3 : 1;
+}
+
+void PhaseSwitcher::filter_emulate_energy_manager_command_packet(cm_command_packet *command_packet)
+{
+    if (!initialized || operating_mode != one_three_phases_emulate_energy_manager ||
+        CM_COMMAND_FLAGS_IGNORE_ALLOCATION_IS_SET(command_packet->v1.command_flags)) {
+        return;
+    }
+
+    uint32_t allocated_phases = command_packet->header.version >= 2
+                              ? static_cast<uint32_t>(command_packet->v2.allocated_phases)
+                              : 1;
+
+    if (allocated_phases == 0) {
+        allocated_phases = 1;
+    } else if (allocated_phases == 2) {
+        allocated_phases = 3;
+    } else if (allocated_phases > 3) {
+        logger.printfln("Emulate Energy Manager received unsupported allocated phases: %i", command_packet->v2.allocated_phases);
+        allocated_phases = 1;
+    }
+
+    if (contactor_error) {
+        command_packet->v1.allocated_current = 0;
+        command_packet->v2.allocated_phases = 0;
+        return;
+    }
+
+    emulate_energy_manager_target_phases = static_cast<uint8_t>(allocated_phases);
+    this->requested_phases_pending = static_cast<uint8_t>(allocated_phases);
+    this->requested_phases = static_cast<uint8_t>(allocated_phases);
+
+    if (get_emulate_energy_manager_phases() == emulate_energy_manager_target_phases) {
+        emulate_energy_manager_state = EmulateEnergyManagerState::Idle;
+        emulate_energy_manager_zero_current_confirmed = false;
+    } else if (emulate_energy_manager_state == EmulateEnergyManagerState::Idle) {
+        emulate_energy_manager_state = EmulateEnergyManagerState::WaitingForZeroCurrent;
+        emulate_energy_manager_zero_current_confirmed = false;
+    }
+
+    command_packet->v2.allocated_phases = 0;
+    if (emulate_energy_manager_state != EmulateEnergyManagerState::Idle) {
+        command_packet->v1.allocated_current = 0;
+    }
+}
+
+void PhaseSwitcher::filter_emulate_energy_manager_state_packet(cm_state_packet *state_packet)
+{
+    if (!initialized || operating_mode != one_three_phases_emulate_energy_manager) {
+        return;
+    }
+
+    emulate_energy_manager_allowed_current = state_packet->v1.allowed_charging_current;
+    if (emulate_energy_manager_state == EmulateEnergyManagerState::WaitingForZeroCurrent) {
+        emulate_energy_manager_zero_current_confirmed = emulate_energy_manager_allowed_current == 0;
+    }
+
+    const uint8_t active_phases = get_emulate_energy_manager_phases();
+    uint8_t phase_flags = active_phases & CM_STATE_V3_PHASES_CONNECTED_MASK;
+    if (emulate_energy_manager_state == EmulateEnergyManagerState::Idle && !contactor_error && active_phases != 0) {
+        phase_flags |= CM_STATE_V3_CAN_PHASE_SWITCH_MASK;
+    }
+    if (emulate_energy_manager_state != EmulateEnergyManagerState::Idle) {
+        phase_flags |= CM_STATE_V3_CURRENTLY_SWITCHING_MASK;
+    }
+
+    state_packet->v1.feature_flags |= CM_FEATURE_FLAGS_PHASE_SWITCH_MASK;
+    state_packet->v3.phases = static_cast<uint8_t>(
+        (state_packet->v3.phases & ~(CM_STATE_V3_PHASES_CONNECTED_MASK |
+                                     CM_STATE_V3_CAN_PHASE_SWITCH_MASK |
+                                     CM_STATE_V3_CURRENTLY_SWITCHING_MASK)) |
+        phase_flags);
 }
 
 uint8_t PhaseSwitcher::get_active_phases()
@@ -349,7 +480,7 @@ void PhaseSwitcher::handle_button()
 
 void PhaseSwitcher::start_quick_charging()
 {
-    if (!enabled)
+    if (!enabled || operating_mode == one_three_phases_emulate_energy_manager)
         return;
 
     if (sequencer_state == standby || sequencer_state == stopped_by_evse){
@@ -419,6 +550,11 @@ void PhaseSwitcher::monitor_requested_phases()
 
 void PhaseSwitcher::sequencer()
 {
+    if (operating_mode == one_three_phases_emulate_energy_manager) {
+        sequencer_emulate_energy_manager();
+        return;
+    }
+
     if (!enabled || charger_state == not_connected || charger_state == error){
         sequencer_state = inactive;
         quick_charging_active = false;
@@ -445,6 +581,44 @@ void PhaseSwitcher::sequencer()
         last_state_change = now_us();
         last_sequencer_state = sequencer_state;
     } 
+}
+
+void PhaseSwitcher::sequencer_emulate_energy_manager()
+{
+    const PhaseSwitcherState previous_state = sequencer_state;
+
+    switch (emulate_energy_manager_state) {
+        case EmulateEnergyManagerState::Idle:
+            break;
+        case EmulateEnergyManagerState::WaitingForZeroCurrent:
+            if (emulate_energy_manager_zero_current_confirmed && emulate_energy_manager_allowed_current == 0) {
+                emulate_energy_manager_state = EmulateEnergyManagerState::SwitchingContactors;
+            }
+            break;
+        case EmulateEnergyManagerState::SwitchingContactors:
+            if (!contactor_error &&
+                get_emulate_energy_manager_phases() == emulate_energy_manager_target_phases) {
+                emulate_energy_manager_state = EmulateEnergyManagerState::Idle;
+                emulate_energy_manager_zero_current_confirmed = false;
+            }
+            break;
+    }
+
+    switch (emulate_energy_manager_state) {
+        case EmulateEnergyManagerState::Idle:
+            sequencer_state = charger_state == charging ? active : standby;
+            break;
+        case EmulateEnergyManagerState::WaitingForZeroCurrent:
+            sequencer_state = waiting_for_evse_stop;
+            break;
+        case EmulateEnergyManagerState::SwitchingContactors:
+            sequencer_state = pausing_while_switching;
+            break;
+    }
+
+    if (previous_state != sequencer_state) {
+        last_state_change = now_us();
+    }
 }
 
 void PhaseSwitcher::sequencer_state_inactive()
@@ -650,9 +824,13 @@ void PhaseSwitcher::sequencer_state_stopped_by_evse()
 bool PhaseSwitcher::prepare_io()
 {
     contactor_check();
-    handle_button();
+    if (operating_mode != one_three_phases_emulate_energy_manager) {
+        handle_button();
+    }
     handle_evse();
-    monitor_requested_phases();
+    if (operating_mode != one_three_phases_emulate_energy_manager) {
+        monitor_requested_phases();
+    }
     sequencer();
 
     if (!api.hasFeature("evse")) {
@@ -731,6 +909,18 @@ void PhaseSwitcher::update_outputs()
 {
     bool evse_relay_output = api.getState("evse/low_level_state", false)->get("gpio")->get(3)->asBool();
 
+    if (operating_mode == one_three_phases_emulate_energy_manager) {
+        output_channels[0] = false;
+        output_channels[1] = evse_relay_output;
+        if (emulate_energy_manager_state == EmulateEnergyManagerState::SwitchingContactors) {
+            output_channels[2] = output_channels[3] = emulate_energy_manager_target_phases == 3;
+        } else {
+            output_channels[2] = input_channels[2];
+            output_channels[3] = input_channels[3];
+        }
+        return;
+    }
+
     if (debug) {
         static bool last_evse_relay_output = false;
         if (last_evse_relay_output != evse_relay_output){
@@ -792,7 +982,7 @@ void PhaseSwitcher::contactor_check()
     
     this->contactor_error = (contactor_error[0] || contactor_error[1] || contactor_error[2] || contactor_error[3]);
 
-    if (this->contactor_error){
+    if (this->contactor_error && operating_mode != one_three_phases_emulate_energy_manager){
         switch(sequencer_state){
             case waiting_for_evse_start:
             case active:                    

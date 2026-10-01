@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Emulate Energy Manager patch <emulate-energy-manager@localhost>
+Date: Thu, 1 Oct 2026 12:00:00 +0000
+Subject: [PATCH] CM Networking: add Emulate Energy Manager hooks
+
+---
+ cm_protocol.cpp | 8 ++++++++
+ module.ini      | 1 +
+ 2 files changed, 9 insertions(+)
+
+diff --git a/cm_protocol.cpp b/cm_protocol.cpp
+--- a/cm_protocol.cpp
++++ b/cm_protocol.cpp
+@@ -579,6 +579,10 @@ void CMNetworking::register_client(ClientManagerUpdateReceivedCallback &&manager_update_received_cb)
+ 
+         const CMAuthFeedback auth_feedback = command_pkt.header.version >= 4 ? command_pkt.v4.auth_feedback : CMAuthFeedback::None;
+ 
++#if MODULE_PHASE_SWITCHER_AVAILABLE()
++        phase_switcher.filter_emulate_energy_manager_command_packet(&command_pkt);
++#endif
++
+         if (manager_update_received_cb) {
+             ConfigChargeMode supported_charge_modes[ARRAY_SIZE(command_pkt.v3.supported_charge_modes) * 8];
+             size_t supported_charge_mode_length = 0;
+@@ -777,4 +781,8 @@ bool CMNetworking::send_client_update(uint32_t esp32_uid,
+ 
+     state_pkt.v4.requested_charge_mode = to_underlying(requested_charge_mode);
+ 
++#if MODULE_PHASE_SWITCHER_AVAILABLE()
++    phase_switcher.filter_emulate_energy_manager_state_packet(&state_pkt);
++#endif
++
+     return send_state_packet(&state_pkt);
+ }
+diff --git a/module.ini b/module.ini
+--- a/module.ini
++++ b/module.ini
+@@ -15,4 +15,5 @@ Optional = Device Name
+            Charge Manager
+            EM Phase Switcher
+            NFC
++           Phase Switcher
+            Charge Authorization
+-- 
+2.39.5

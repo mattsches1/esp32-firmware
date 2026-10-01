@@ -24,6 +24,8 @@
 
 #include "config.h"
 #include "modules/event_log/event_log.h"
+#include "modules/cm_networking/cm_networking_defs.h"
+#include "modules/power_manager/phase_switcher_back-end.h"
 
 #include "bricklet.h"
 #include "device_module.h"
@@ -47,7 +49,7 @@ typedef Bricklet<TF_IndustrialQuadRelayV2,
 typedef Bricklet<TF_IndustrialDigitalIn4V2, 
                 tf_industrial_digital_in_4_v2_create> DigitalInBricklet;
 
-class PhaseSwitcher final : public IModule
+class PhaseSwitcher final : public IModule, public PhaseSwitcherBackend
 {
 public:
     PhaseSwitcher(){}
@@ -55,6 +57,17 @@ public:
     void pre_setup() override;
     void setup() override;
     void register_urls() override;
+
+    uint32_t get_phase_switcher_priority() override { return 8; }
+    bool phase_switching_capable() override;
+    bool can_switch_phases_now(uint32_t phases_wanted) override;
+    uint32_t get_phases() override;
+    PhaseSwitcherBackend::SwitchingState get_phase_switching_state() override;
+    bool switch_phases(uint32_t phases_wanted) override;
+    bool is_external_control_allowed() override;
+
+    void filter_emulate_energy_manager_command_packet(cm_command_packet *command_packet);
+    void filter_emulate_energy_manager_state_packet(cm_state_packet *state_packet);
 
 private:
     typedef enum {
@@ -93,8 +106,15 @@ private:
         three_phases_static = 3,
         one_two_phases_dynamic = 4,
         one_three_phases_dynamic = 5,
-        one_two_three_phases_dynamic = 6
+        one_two_three_phases_dynamic = 6,
+        one_three_phases_emulate_energy_manager = 7
     } PhaseSwitcherMode;
+
+    enum class EmulateEnergyManagerState : uint8_t {
+        Idle,
+        WaitingForZeroCurrent,
+        SwitchingContactors
+    };
 
     bool setup_bricklets();
     uint16_t evse_get_max_current();
@@ -104,6 +124,7 @@ private:
     void set_current(uint16_t available_charging_power, uint8_t phases);
     uint8_t get_phases_for_power(uint16_t available_charging_power);
     uint8_t get_phases_from_delayed_phase_requests(bool delayed_phase_request[3]);
+    uint8_t get_emulate_energy_manager_phases();
     void start_quick_charging();
 
     void handle_button();
@@ -112,6 +133,7 @@ private:
     void monitor_requested_phases();
 
     void sequencer();
+    void sequencer_emulate_energy_manager();
 
     void sequencer_state_inactive();
     void sequencer_state_standby();
@@ -164,6 +186,10 @@ private:
     bool enabled, quick_charging_active;
     PhaseSwitcherMode operating_mode;
     uint8_t requested_phases_pending, requested_phases_pending_delayed, requested_phases; 
+    uint8_t emulate_energy_manager_target_phases = 0;
+    uint16_t emulate_energy_manager_allowed_current = 0;
+    EmulateEnergyManagerState emulate_energy_manager_state = EmulateEnergyManagerState::Idle;
+    bool emulate_energy_manager_zero_current_confirmed = false;
     uint16_t available_charging_power;
     PhaseSwitcherState sequencer_state;
     micros_t last_state_change = 0_us;
