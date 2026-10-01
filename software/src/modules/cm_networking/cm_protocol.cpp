@@ -564,6 +564,10 @@ void CMNetworking::register_client(ClientManagerUpdateReceivedCallback &&manager
 
         const CMAuthFeedback auth_feedback = command_pkt.header.version >= 4 ? command_pkt.v4.auth_feedback : CMAuthFeedback::None;
 
+#if MODULE_PHASE_SWITCHER_AVAILABLE()
+        phase_switcher.filter_emulate_energy_manager_command_packet(&command_pkt);
+#endif
+
         if (manager_update_received_cb) {
             ConfigChargeMode supported_charge_modes[ARRAY_SIZE(command_pkt.v3.supported_charge_modes) * 8];
             size_t supported_charge_mode_length = 0;
@@ -777,6 +781,10 @@ bool CMNetworking::send_client_update(uint32_t esp32_uid,
 #endif
 
     state_pkt.v4.requested_charge_mode = to_underlying(requested_charge_mode);
+
+#if MODULE_PHASE_SWITCHER_AVAILABLE()
+    phase_switcher.filter_emulate_energy_manager_state_packet(&state_pkt);
+#endif
 
     return send_state_packet(&state_pkt);
 }
