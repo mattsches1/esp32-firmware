@@ -65,6 +65,10 @@ function sequencer_state_name(state: number) {
     return translate_unchecked("phase_switcher.script.sequencer_states." + String(state));
 }
 
+function emulate_energy_manager_state_name(state: number) {
+    return translate_unchecked("phase_switcher.script.emulate_energy_manager_states." + String(state));
+}
+
 function get_meter_power(): number | null {
     return API.get_unchecked("meters/0/values")?.[0] ?? null;
 }
@@ -135,13 +139,15 @@ export class PhaseSwitcher extends ConfigComponent<"phase_switcher/config", {sta
 
         const phase_state = state.phase_switcher_state;
         const low_level_state = state.low_level_state;
-        const minimum_duration = phase_state.sequencer_state == 20 ? phase_state.time_since_state_change : 0;
-        const pause_time = phase_state.sequencer_state == 40 ? phase_state.time_since_state_change : 0;
+        const minimum_duration = phase_state.standalone_sequencer_state == 20 ? phase_state.time_since_state_change : 0;
+        const pause_time = phase_state.standalone_sequencer_state == 40 ? phase_state.time_since_state_change : 0;
 
         return <SubPage name="phase_switcher" title={__("phase_switcher.content.phase_switcher")} colClasses="col-xl-10">
             <SubPage.Status>
                 <FormRow label={__("phase_switcher.content.state")}>
-                    <InputText value={sequencer_state_name(phase_state.sequencer_state)} />
+                    <InputText value={state.operating_mode == 7
+                        ? emulate_energy_manager_state_name(phase_state.emulate_energy_manager_state)
+                        : sequencer_state_name(phase_state.standalone_sequencer_state)} />
                 </FormRow>
                 <FormRow label={__("phase_switcher.content.charging_power.title")} label_muted={__("phase_switcher.content.charging_power.description")}>
                     <div class="row gx-2 gy-1">

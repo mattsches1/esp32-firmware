@@ -91,6 +91,11 @@ let x = {
                 "30" : "Warte auf EVSE Stopp",
                 "40" : "Pausiere vor Phasenumschaltung",
                 "50" : "Ladevorgang durch EVSE gestoppt"
+            },
+            "emulate_energy_manager_states" : {
+                "0" : "Bereit",
+                "1" : "Warte auf null Ladestrom",
+                "2" : "Schalte Schütze"
             }
         }
     }

@@ -91,6 +91,11 @@ let x = {
                 "30" : "Waiting for EVSE stop",
                 "40" : "Pausing before switching phases",
                 "50" : "Charging stopped by EVSE"
+            },
+            "emulate_energy_manager_states" : {
+                "0" : "Idle",
+                "1" : "Waiting for zero current",
+                "2" : "Switching contactors"
             }
         }
     }

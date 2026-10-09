@@ -45,7 +45,8 @@ void PhaseSwitcher::pre_setup()
         {"requested_phases", Config::Uint8(0)},
         {"requested_phases_pending", Config::Uint8(0)},
         {"active_phases", Config::Uint8(1)}, // 0 - no phase active, 1 - one phase active, 2 - two phases active, 3 = three phases active
-        {"sequencer_state", Config::Uint8(0)},
+        {"standalone_sequencer_state", Config::Uint8(0)},
+        {"emulate_energy_manager_state", Config::Uint8(0)},
         {"time_since_state_change", Config::Uint32(0)},
         {"delay_time", Config::Uint32(0)},
         {"contactor_state", Config::Bool(false)}
@@ -104,6 +105,13 @@ void PhaseSwitcher::setup()
     operating_mode = PhaseSwitcherMode(api_config_in_use.get("operating_mode")->asUint());
     enabled = operating_mode != PhaseSwitcherMode::disabled;
 
+    if (operating_mode == emulate_energy_manager && get_evse_relay_output()) {
+        const uint8_t feedback_phases = get_emulate_energy_manager_phases();
+        if (feedback_phases == 1 || feedback_phases == 3) {
+            requested_phases = feedback_phases;
+        }
+    }
+
     if (debug){
         logger.printfln("Phase Switcher Configuration: \n  Enabled: %d\n  Operating mode: %d", enabled, operating_mode);
     }
@@ -111,7 +119,7 @@ void PhaseSwitcher::setup()
     api.addFeature("phase_switcher");
 
 #if MODULE_POWER_MANAGER_AVAILABLE()
-    if (operating_mode == one_three_phases_emulate_energy_manager) {
+    if (operating_mode == emulate_energy_manager) {
         power_manager.register_phase_switcher_backend(this);
     }
 #endif
@@ -157,6 +165,13 @@ bool PhaseSwitcher::setup_bricklets()
         return false;
     }
 
+    for (size_t channel = 0; channel < ARRAY_SIZE(io_input_values); ++channel) {
+        io_input_values[channel] = ret_value[channel];
+    }
+    input_channels[0] = ret_value[0];
+    input_channels[2] = ret_value[2];
+    input_channels[3] = ret_value[3];
+
     return true;
 }
 
@@ -186,7 +201,7 @@ void PhaseSwitcher::register_urls()
     api.addState("phase_switcher/low_level_state", &api_low_level_state);
 
     api.addCommand("phase_switcher/available_charging_power", &api_available_charging_power, {}, [this](Language /*language*/, String &/*errmsg*/){
-        if (enabled && operating_mode != one_three_phases_emulate_energy_manager && !quick_charging_active){
+        if (enabled && operating_mode != emulate_energy_manager && !quick_charging_active){
             set_available_charging_power(api_available_charging_power.get("power")->asUint());
         }
     }, false);
@@ -214,14 +229,14 @@ void PhaseSwitcher::register_urls()
 
 bool PhaseSwitcher::phase_switching_capable()
 {
-    return operating_mode == one_three_phases_emulate_energy_manager;
+    return operating_mode == emulate_energy_manager;
 }
 
 bool PhaseSwitcher::can_switch_phases_now(uint32_t phases_wanted)
 {
     if (!initialized || !phase_switching_capable() ||
         (phases_wanted != 1 && phases_wanted != 3) ||
-        phases_wanted == get_emulate_energy_manager_phases()) {
+        phases_wanted == requested_phases) {
         return false;
     }
 
@@ -230,7 +245,7 @@ bool PhaseSwitcher::can_switch_phases_now(uint32_t phases_wanted)
 
 uint32_t PhaseSwitcher::get_phases()
 {
-    return get_emulate_energy_manager_phases();
+    return requested_phases;
 }
 
 PhaseSwitcherBackend::SwitchingState PhaseSwitcher::get_phase_switching_state()
@@ -239,7 +254,7 @@ PhaseSwitcherBackend::SwitchingState PhaseSwitcher::get_phase_switching_state()
         return PhaseSwitcherBackend::SwitchingState::Error;
     }
 
-    if (emulate_energy_manager_state != EmulateEnergyManagerState::Idle) {
+    if (emulate_energy_manager_state != idle) {
         return PhaseSwitcherBackend::SwitchingState::Busy;
     }
 
@@ -258,6 +273,7 @@ bool PhaseSwitcher::is_external_control_allowed()
 
 uint8_t PhaseSwitcher::get_emulate_energy_manager_phases()
 {
+    // FIXME : Use active_charges var
     if (input_channels[2] != input_channels[3]) {
         return 0;
     }
@@ -265,9 +281,39 @@ uint8_t PhaseSwitcher::get_emulate_energy_manager_phases()
     return input_channels[2] ? 3 : 1;
 }
 
+bool PhaseSwitcher::get_evse_relay_output()
+{
+    if (!api.hasFeature("evse")) {
+        return false;
+    }
+
+    return api.getState("evse/low_level_state", false)->get("gpio")->get(3)->asBool();
+}
+
+void PhaseSwitcher::set_emulate_energy_manager_state(EmulateEnergyManagerState state, const char *reason)
+{
+    if (emulate_energy_manager_state == state) {
+        return;
+    }
+
+    static const char *const state_names[] = {
+        "idle",
+        "waiting_for_zero_current",
+        "switching_contactors"
+    };
+    const unsigned old_index = static_cast<unsigned>(emulate_energy_manager_state);
+    const unsigned new_index = static_cast<unsigned>(state);
+    const char *const old_name = old_index < ARRAY_SIZE(state_names) ? state_names[old_index] : "unknown";
+    const char *const new_name = new_index < ARRAY_SIZE(state_names) ? state_names[new_index] : "unknown";
+
+    logger.printfln("Emulate Energy Manager state %s -> %s: %s", old_name, new_name, reason);
+    emulate_energy_manager_state = state;
+    last_state_change = now_us();
+}
+
 void PhaseSwitcher::filter_emulate_energy_manager_command_packet(cm_command_packet *command_packet)
 {
-    if (!initialized || operating_mode != one_three_phases_emulate_energy_manager ||
+    if (!initialized || operating_mode != emulate_energy_manager ||
         CM_COMMAND_FLAGS_IGNORE_ALLOCATION_IS_SET(command_packet->v1.command_flags)) {
         return;
     }
@@ -291,41 +337,63 @@ void PhaseSwitcher::filter_emulate_energy_manager_command_packet(cm_command_pack
         return;
     }
 
-    emulate_energy_manager_target_phases = static_cast<uint8_t>(allocated_phases);
-    this->requested_phases_pending = static_cast<uint8_t>(allocated_phases);
-    this->requested_phases = static_cast<uint8_t>(allocated_phases);
+    const uint8_t previous_pending_phases = requested_phases_pending;
+    requested_phases_pending = static_cast<uint8_t>(allocated_phases);
+    if (debug && previous_pending_phases != requested_phases_pending) {
+        logger.printfln("  Emulate Energy Manager request changed: pending %u -> %u; applied %u",
+                        previous_pending_phases, requested_phases_pending, requested_phases);
+    }
 
-    if (get_emulate_energy_manager_phases() == emulate_energy_manager_target_phases) {
-        emulate_energy_manager_state = EmulateEnergyManagerState::Idle;
+    const bool evse_relay_output = get_evse_relay_output();
+    if (emulate_energy_manager_state == waiting_for_zero_current &&
+        requested_phases_pending == requested_phases) {
+        set_emulate_energy_manager_state(idle, "pending CM request returned to the applied selection");
         emulate_energy_manager_zero_current_confirmed = false;
-    } else if (emulate_energy_manager_state == EmulateEnergyManagerState::Idle) {
-        emulate_energy_manager_state = EmulateEnergyManagerState::WaitingForZeroCurrent;
+    } else if (emulate_energy_manager_state == idle && requested_phases_pending != requested_phases) {
+        set_emulate_energy_manager_state(waiting_for_zero_current,
+                                         "CM phase request differs from the applied selection");
         emulate_energy_manager_zero_current_confirmed = false;
+    } else if (emulate_energy_manager_state == idle &&
+               command_packet->v1.allocated_current > 0 && !evse_relay_output) {
+        requested_phases = requested_phases_pending;
+        if (debug) {
+            logger.printfln("  Emulate Energy Manager latched startup phase selection %u while GPIO 3 is low",
+                            requested_phases);
+        }
     }
 
     command_packet->v2.allocated_phases = 0;
-    if (emulate_energy_manager_state != EmulateEnergyManagerState::Idle) {
+    if (emulate_energy_manager_state != idle) {
         command_packet->v1.allocated_current = 0;
     }
 }
 
 void PhaseSwitcher::filter_emulate_energy_manager_state_packet(cm_state_packet *state_packet)
 {
-    if (!initialized || operating_mode != one_three_phases_emulate_energy_manager) {
+    if (!initialized || operating_mode != emulate_energy_manager) {
         return;
     }
 
+    const uint16_t previous_allowed_current = emulate_energy_manager_allowed_current;
+    const bool previous_zero_current_confirmed = emulate_energy_manager_zero_current_confirmed;
     emulate_energy_manager_allowed_current = state_packet->v1.allowed_charging_current;
-    if (emulate_energy_manager_state == EmulateEnergyManagerState::WaitingForZeroCurrent) {
+    if (emulate_energy_manager_state == waiting_for_zero_current) {
         emulate_energy_manager_zero_current_confirmed = emulate_energy_manager_allowed_current == 0;
     }
+    if (debug && emulate_energy_manager_state == waiting_for_zero_current &&
+        (previous_allowed_current != emulate_energy_manager_allowed_current ||
+         previous_zero_current_confirmed != emulate_energy_manager_zero_current_confirmed)) {
+        logger.printfln("  Emulate Energy Manager current status: allowed %u, zero confirmed %d; GPIO 3 %d; pending %u, applied %u",
+                        emulate_energy_manager_allowed_current, emulate_energy_manager_zero_current_confirmed,
+                        get_evse_relay_output(), requested_phases_pending, requested_phases);
+    }
 
-    const uint8_t active_phases = get_emulate_energy_manager_phases();
+    const uint8_t active_phases = requested_phases;
     uint8_t phase_flags = active_phases & CM_STATE_V3_PHASES_CONNECTED_MASK;
-    if (emulate_energy_manager_state == EmulateEnergyManagerState::Idle && !contactor_error && active_phases != 0) {
+    if (emulate_energy_manager_state == idle && !contactor_error && active_phases != 0) {
         phase_flags |= CM_STATE_V3_CAN_PHASE_SWITCH_MASK;
     }
-    if (emulate_energy_manager_state != EmulateEnergyManagerState::Idle) {
+    if (emulate_energy_manager_state != idle) {
         phase_flags |= CM_STATE_V3_CURRENTLY_SWITCHING_MASK;
     }
 
@@ -480,10 +548,10 @@ void PhaseSwitcher::handle_button()
 
 void PhaseSwitcher::start_quick_charging()
 {
-    if (!enabled || operating_mode == one_three_phases_emulate_energy_manager)
+    if (!enabled || operating_mode == emulate_energy_manager)
         return;
 
-    if (sequencer_state == standby || sequencer_state == stopped_by_evse){
+    if (standalone_sequencer_state == standby || standalone_sequencer_state == stopped_by_evse){
         logger.printfln("Quick charging requested");
         quick_charging_active = true;
         requested_phases_pending_delayed = 3;
@@ -548,21 +616,20 @@ void PhaseSwitcher::monitor_requested_phases()
     }    
 }
 
-void PhaseSwitcher::sequencer()
+void PhaseSwitcher::sequencer_standalone()
 {
-    if (operating_mode == one_three_phases_emulate_energy_manager) {
-        sequencer_emulate_energy_manager();
+    if (operating_mode == emulate_energy_manager) {
         return;
     }
 
     if (!enabled || charger_state == not_connected || charger_state == error){
-        sequencer_state = inactive;
+        standalone_sequencer_state = inactive;
         quick_charging_active = false;
         requested_phases = 0;
         return;
     }
 
-    switch(sequencer_state){
+    switch(standalone_sequencer_state){
         case inactive:                      sequencer_state_inactive(); break;
         case standby:                       sequencer_state_standby(); break;
         case cancelling_evse_start:         sequencer_state_cancelling_evse_start(); break;
@@ -576,48 +643,96 @@ void PhaseSwitcher::sequencer()
     }
 
     static PhaseSwitcherState last_sequencer_state = inactive;
-    if (last_sequencer_state != sequencer_state){
-        if (debug) logger.printfln("  Sequencer state changed to: %d", sequencer_state);
+    if (last_sequencer_state != standalone_sequencer_state){
+        if (debug) logger.printfln("  Sequencer state changed to: %d", standalone_sequencer_state);
         last_state_change = now_us();
-        last_sequencer_state = sequencer_state;
+        last_sequencer_state = standalone_sequencer_state;
     } 
 }
 
 void PhaseSwitcher::sequencer_emulate_energy_manager()
 {
-    const PhaseSwitcherState previous_state = sequencer_state;
+    if (operating_mode != emulate_energy_manager) {
+        return;
+    }
+
+    const bool evse_relay_output = get_evse_relay_output();
+    const uint8_t feedback_phases = get_emulate_energy_manager_phases();
+    static bool have_debug_snapshot = false;
+    static EmulateEnergyManagerState last_debug_state = idle;
+    static bool last_debug_gpio3 = false;
+    static uint16_t last_debug_allowed_current = 0;
+    static bool last_debug_zero_confirmed = false;
+    static uint8_t last_debug_pending_phases = 0;
+    static uint8_t last_debug_applied_phases = 0;
+    static uint8_t last_debug_feedback_phases = 0;
+    static bool last_debug_contactor_error = false;
+
+    if (debug) {
+        if (!have_debug_snapshot || last_debug_state != emulate_energy_manager_state ||
+            last_debug_gpio3 != evse_relay_output ||
+            last_debug_allowed_current != emulate_energy_manager_allowed_current ||
+            last_debug_zero_confirmed != emulate_energy_manager_zero_current_confirmed ||
+            last_debug_pending_phases != requested_phases_pending ||
+            last_debug_applied_phases != requested_phases ||
+            last_debug_feedback_phases != feedback_phases ||
+            last_debug_contactor_error != contactor_error) {
+            logger.printfln("  Emulate Energy Manager detail: state %u, GPIO 3 %d, allowed current %u, zero confirmed %d, pending %u, applied %u, feedback %u, contactor error %d",
+                            static_cast<unsigned>(emulate_energy_manager_state), evse_relay_output,
+                            emulate_energy_manager_allowed_current, emulate_energy_manager_zero_current_confirmed,
+                            requested_phases_pending, requested_phases, feedback_phases, contactor_error);
+            last_debug_state = emulate_energy_manager_state;
+            last_debug_gpio3 = evse_relay_output;
+            last_debug_allowed_current = emulate_energy_manager_allowed_current;
+            last_debug_zero_confirmed = emulate_energy_manager_zero_current_confirmed;
+            last_debug_pending_phases = requested_phases_pending;
+            last_debug_applied_phases = requested_phases;
+            last_debug_feedback_phases = feedback_phases;
+            last_debug_contactor_error = contactor_error;
+            have_debug_snapshot = true;
+        }
+    } else {
+        have_debug_snapshot = false;
+    }
 
     switch (emulate_energy_manager_state) {
-        case EmulateEnergyManagerState::Idle:
+        case idle:
             break;
-        case EmulateEnergyManagerState::WaitingForZeroCurrent:
-            if (emulate_energy_manager_zero_current_confirmed && emulate_energy_manager_allowed_current == 0) {
-                emulate_energy_manager_state = EmulateEnergyManagerState::SwitchingContactors;
-            }
-            break;
-        case EmulateEnergyManagerState::SwitchingContactors:
-            if (!contactor_error &&
-                get_emulate_energy_manager_phases() == emulate_energy_manager_target_phases) {
-                emulate_energy_manager_state = EmulateEnergyManagerState::Idle;
+        case waiting_for_zero_current:
+            if (requested_phases_pending == requested_phases) {
+                set_emulate_energy_manager_state(idle,
+                                                 "pending CM request returned to the applied selection");
+                emulate_energy_manager_zero_current_confirmed = false;
+            } else if (!contactor_error && emulate_energy_manager_zero_current_confirmed &&
+                       emulate_energy_manager_allowed_current == 0 && !evse_relay_output) {
+                requested_phases = requested_phases_pending;
+                if (debug) {
+                    logger.printfln("  Emulate Energy Manager applying phase selection %u with GPIO 3 low",
+                                    requested_phases);
+                }
+                set_emulate_energy_manager_state(switching_contactors,
+                                                 "zero allowed current confirmed and EVSE GPIO 3 is low");
                 emulate_energy_manager_zero_current_confirmed = false;
             }
             break;
-    }
-
-    switch (emulate_energy_manager_state) {
-        case EmulateEnergyManagerState::Idle:
-            sequencer_state = charger_state == charging ? active : standby;
+        case switching_contactors:
+        {
+            const bool phase_feed_target = evse_relay_output && requested_phases == 3;
+            if (!contactor_error && relay_state_known[2] && relay_state_known[3] &&
+                relay_commanded_state[2] == phase_feed_target &&
+                relay_commanded_state[3] == phase_feed_target) {
+                set_emulate_energy_manager_state(
+                    idle,
+                    "selected phase output command applied; phase-contact feedback may remain open while GPIO 3 is low");
+                if (requested_phases_pending != requested_phases) {
+                    set_emulate_energy_manager_state(
+                        waiting_for_zero_current,
+                        "queued CM phase request differs from the completed selection");
+                    emulate_energy_manager_zero_current_confirmed = false;
+                }
+            }
             break;
-        case EmulateEnergyManagerState::WaitingForZeroCurrent:
-            sequencer_state = waiting_for_evse_stop;
-            break;
-        case EmulateEnergyManagerState::SwitchingContactors:
-            sequencer_state = pausing_while_switching;
-            break;
-    }
-
-    if (previous_state != sequencer_state) {
-        last_state_change = now_us();
+        }
     }
 }
 
@@ -625,7 +740,7 @@ void PhaseSwitcher::sequencer_state_inactive()
 {
     if (charger_state == waiting_for_charge_release && (auto_start_charging || iec61851_state == b_connected)){
         logger.printfln("Vehicle connected, changing to standby state.");
-        sequencer_state = standby;
+        standalone_sequencer_state = standby;
     } else if (charger_state == ready_for_charging || charger_state == charging){
         if (delayed_phase_request[0]){
             logger.printfln("Charging initiated by EVSE while power is sufficient, waiting for EVSE to start charging.");
@@ -633,10 +748,10 @@ void PhaseSwitcher::sequencer_state_inactive()
                 requested_phases = requested_phases_pending_delayed;
                 set_current(api_available_charging_power.get("power")->asUint(), requested_phases);
             }
-            sequencer_state = waiting_for_evse_start;
+            standalone_sequencer_state = waiting_for_evse_start;
         } else {
             logger.printfln("Charging initiated by EVSE but requested power is not sufficient. Requesting EVSE to stop charging.");
-            sequencer_state = cancelling_evse_start;
+            standalone_sequencer_state = cancelling_evse_start;
         }
     } 
 }
@@ -650,10 +765,10 @@ void PhaseSwitcher::sequencer_state_standby()
             set_current(api_available_charging_power.get("power")->asUint(), requested_phases);
             if (debug) logger.printfln("  Sequencer state standby; delayed_phase_request[0]: %d; requested_phases: %d", delayed_phase_request[0], requested_phases);
         }
-        sequencer_state = sending_start_command_to_evse;
+        standalone_sequencer_state = sending_start_command_to_evse;
     } else if (charger_state == ready_for_charging || charger_state == charging){
         logger.printfln("Charging initiated by EVSE but requested power is not sufficient. Requesting EVSE to stop charging.");
-        sequencer_state = cancelling_evse_start;
+        standalone_sequencer_state = cancelling_evse_start;
     }
 }
 
@@ -673,7 +788,7 @@ void PhaseSwitcher::sequencer_state_cancelling_evse_start()
     if (charger_state != ready_for_charging && charger_state != charging){
         logger.printfln("Charging stopped by EVSE, changing to standby state.");
         watchdog_start = 0;
-        sequencer_state = standby;
+        standalone_sequencer_state = standby;
     }
 
 }
@@ -685,7 +800,7 @@ void PhaseSwitcher::sequencer_state_sending_start_command_to_evse()
     if (!error.isEmpty()) {
         logger.printfln("Start_charging failed; error=%s", error.c_str());
     }
-    sequencer_state = waiting_for_evse_start;
+    standalone_sequencer_state = waiting_for_evse_start;
 }
 
 void PhaseSwitcher::sequencer_state_waiting_for_evse_start()
@@ -700,24 +815,24 @@ void PhaseSwitcher::sequencer_state_waiting_for_evse_start()
     if (millis_t{millis() - watchdog_start} >= EVSE_START_TIMEOUT){
         if (start_retries < EVSE_START_RETRIES){
             logger.printfln("Waiting for EVSE timed out, retrying attempt %d.", start_retries + 1);
-            sequencer_state = sending_start_command_to_evse;
+            standalone_sequencer_state = sending_start_command_to_evse;
             watchdog_start = millis();
             start_retries++;
         } else {
             logger.printfln("Waited for EVSE to start charging for %d times. Aborting.", EVSE_START_RETRIES);
             start_retries = 0;
             watchdog_start = 0;
-            sequencer_state = stopped_by_evse;
+            standalone_sequencer_state = stopped_by_evse;
         }
     }
 
     if (charger_state == charging){
         if (quick_charging_active){
             logger.printfln("Charging started by EVSE, changing to quick charging active state.");
-            sequencer_state = quick_charging;
+            standalone_sequencer_state = quick_charging;
         } else {
             logger.printfln("Charging started by EVSE, changing to active state.");
-            sequencer_state = active;
+            standalone_sequencer_state = active;
         }
         watchdog_start = 0;
         start_retries = 0;
@@ -739,7 +854,7 @@ void PhaseSwitcher::sequencer_state_active()
     if (requested_phases_pending_delayed != last_requested_phases_pending_delayed && minimum_duration_elapsed){
         logger.printfln("Change to %d phase charging requested while charging with %d phases. Requesting EVSE to stop charging.", requested_phases_pending_delayed, last_requested_phases_pending_delayed);
         init = false;
-        sequencer_state = waiting_for_evse_stop;
+        standalone_sequencer_state = waiting_for_evse_stop;
     }
 
     if (charger_state != charging){
@@ -747,7 +862,7 @@ void PhaseSwitcher::sequencer_state_active()
         init = false;
         quick_charging_active = false;
         requested_phases = 0;
-        sequencer_state = stopped_by_evse;
+        standalone_sequencer_state = stopped_by_evse;
     }
 }
 
@@ -756,7 +871,7 @@ void PhaseSwitcher::sequencer_state_quick_charging()
     if (charger_state != charging){
         logger.printfln("Charging stopped by EVSE. Waiting for either disconnect or quick charge request.");
         set_available_charging_power(api_available_charging_power.get("power")->asUint());
-        sequencer_state = stopped_by_evse;
+        standalone_sequencer_state = stopped_by_evse;
         quick_charging_active = false;
     }
 }
@@ -778,11 +893,11 @@ void PhaseSwitcher::sequencer_state_waiting_for_evse_stop()
         if (requested_phases_pending_delayed >= 1 && !contactor_error){
             logger.printfln("EVSE stopped charging, waiting for pause time to elapse.");
             requested_phases = requested_phases_pending_delayed;
-            sequencer_state = pausing_while_switching;
+            standalone_sequencer_state = pausing_while_switching;
         } else {
             logger.printfln("EVSE stopped charging, waiting for car to be disconnected.");
             requested_phases = 0;
-            sequencer_state = standby;
+            standalone_sequencer_state = standby;
         }
     } 
 }
@@ -793,7 +908,7 @@ void PhaseSwitcher::sequencer_state_pausing_while_switching()
         logger.printfln("Pause time elapsed, restarting charging with %d phases.", requested_phases);
         logger.printfln("Waiting for EVSE to start charging.");
         set_current(api_available_charging_power.get("power")->asUint(), requested_phases);
-        sequencer_state = waiting_for_evse_start;
+        standalone_sequencer_state = waiting_for_evse_start;
     }
 }
 
@@ -801,12 +916,12 @@ void PhaseSwitcher::sequencer_state_stopped_by_evse()
 {
     if (quick_charging_active){
         logger.printfln("Requesting EVSE to start charging.");
-        sequencer_state = sending_start_command_to_evse;
+        standalone_sequencer_state = sending_start_command_to_evse;
     } else if (charger_state == ready_for_charging || charger_state == charging){
         if (delayed_phase_request[0]){
             requested_phases = requested_phases_pending_delayed;
             set_current(api_available_charging_power.get("power")->asUint(), requested_phases);
-            sequencer_state = waiting_for_evse_start;
+            standalone_sequencer_state = waiting_for_evse_start;
             if (debug){
                 static bool last_phase_requesed = false;
                 if (delayed_phase_request[0] != last_phase_requesed){
@@ -816,7 +931,7 @@ void PhaseSwitcher::sequencer_state_stopped_by_evse()
             }    
         } else {
             logger.printfln("Charging initiated by EVSE but requested power is not sufficient. Requesting EVSE to stop charging.");
-            sequencer_state = cancelling_evse_start;
+            standalone_sequencer_state = cancelling_evse_start;
         }
     }
 }
@@ -824,14 +939,15 @@ void PhaseSwitcher::sequencer_state_stopped_by_evse()
 bool PhaseSwitcher::prepare_io()
 {
     contactor_check();
-    if (operating_mode != one_three_phases_emulate_energy_manager) {
+    if (operating_mode != emulate_energy_manager) {
         handle_button();
     }
     handle_evse();
-    if (operating_mode != one_three_phases_emulate_energy_manager) {
+    if (operating_mode != emulate_energy_manager) {
         monitor_requested_phases();
     }
-    sequencer();
+    sequencer_standalone();
+    sequencer_emulate_energy_manager();
 
     if (!api.hasFeature("evse")) {
         return false;
@@ -907,19 +1023,7 @@ void PhaseSwitcher::publish_all_data()
 
 void PhaseSwitcher::update_outputs()
 {
-    bool evse_relay_output = api.getState("evse/low_level_state", false)->get("gpio")->get(3)->asBool();
-
-    if (operating_mode == one_three_phases_emulate_energy_manager) {
-        output_channels[0] = false;
-        output_channels[1] = evse_relay_output;
-        if (emulate_energy_manager_state == EmulateEnergyManagerState::SwitchingContactors) {
-            output_channels[2] = output_channels[3] = emulate_energy_manager_target_phases == 3;
-        } else {
-            output_channels[2] = input_channels[2];
-            output_channels[3] = input_channels[3];
-        }
-        return;
-    }
+    const bool evse_relay_output = get_evse_relay_output();
 
     if (debug) {
         static bool last_evse_relay_output = false;
@@ -929,30 +1033,46 @@ void PhaseSwitcher::update_outputs()
         }
     }
 
-    output_channels[0] = output_channels[1] = output_channels[2] = output_channels[3] = false;
+    output_channels[0] = false;
+    output_channels[1] = evse_relay_output;
+    output_channels[2] = false;
+    output_channels[3] = false;
 
-    if (evse_relay_output){
-        if (enabled){
-            output_channels[1] = true;
-            switch (requested_phases)
-            {
+    if (evse_relay_output) {
+        if (operating_mode == emulate_energy_manager) {
+            output_channels[2] = output_channels[3] = requested_phases == 3;
+        } else if (!enabled) {
+            output_channels[2] = output_channels[3] = true;
+        } else {
+            switch (requested_phases) {
             case 0:
-                break;
             case 1:
                 break;
             case 2:
                 output_channels[2] = true;
                 break;
             default:
-                output_channels[2] = true;
-                output_channels[3] = true;
+                output_channels[2] = output_channels[3] = true;
                 break;
             }
-        } else {
-            output_channels[1] = true;
-            output_channels[2] = true;
-            output_channels[3] = true;
         }
+    }
+
+    if (debug && operating_mode == emulate_energy_manager) {
+        static bool have_last_values = false;
+        static bool last_targets[4] = {};
+        static bool last_feedback[4] = {};
+        for (size_t channel = 1; channel < ARRAY_SIZE(output_channels); ++channel) {
+            if (!have_last_values || last_targets[channel] != output_channels[channel] ||
+                last_feedback[channel] != input_channels[channel]) {
+                logger.printfln("  Emulate Energy Manager relay %u: target %d, feedback %d, GPIO 3 %d, selected phases %u",
+                                static_cast<unsigned>(channel), output_channels[channel],
+                                input_channels[channel], evse_relay_output, requested_phases);
+                last_targets[channel] = output_channels[channel];
+                last_feedback[channel] = input_channels[channel];
+            }
+        }
+        have_last_values = true;
     }
 }
 
@@ -982,18 +1102,18 @@ void PhaseSwitcher::contactor_check()
     
     this->contactor_error = (contactor_error[0] || contactor_error[1] || contactor_error[2] || contactor_error[3]);
 
-    if (this->contactor_error && operating_mode != one_three_phases_emulate_energy_manager){
-        switch(sequencer_state){
+    if (this->contactor_error && operating_mode != emulate_energy_manager){
+        switch(standalone_sequencer_state){
             case waiting_for_evse_start:
             case active:                    
             case quick_charging:
                 logger.printfln("Requesting EVSE to stop charging.");
-                sequencer_state = waiting_for_evse_stop;
+                standalone_sequencer_state = waiting_for_evse_stop;
                 break;
             case waiting_for_evse_stop:
                 break;
             default:
-                sequencer_state = inactive; 
+                standalone_sequencer_state = inactive; 
                 break;
         }
     }
@@ -1006,7 +1126,8 @@ void PhaseSwitcher::update_all_data()
     api_state.get("requested_phases")->updateUint(requested_phases);
     api_state.get("requested_phases_pending")->updateUint(requested_phases_pending);
     api_state.get("active_phases")->updateUint(get_active_phases());
-    api_state.get("sequencer_state")->updateUint(uint8_t(sequencer_state));
+    api_state.get("standalone_sequencer_state")->updateUint(uint8_t(standalone_sequencer_state));
+    api_state.get("emulate_energy_manager_state")->updateUint(uint8_t(emulate_energy_manager_state));
     api_state.get("time_since_state_change")->updateUint((now_us() - last_state_change).to<seconds_t>().as<uint32_t>());
 
     if (requested_phases_pending > requested_phases){

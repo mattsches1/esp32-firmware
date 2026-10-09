@@ -3,7 +3,8 @@ export interface state {
     requested_phases: number,
     requested_phases_pending: number,
     active_phases: number,
-    sequencer_state: number,
+    standalone_sequencer_state: number,
+    emulate_energy_manager_state: number,
     time_since_state_change: number,
     delay_time: number,
     contactor_state: boolean

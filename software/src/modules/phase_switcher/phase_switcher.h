@@ -107,14 +107,14 @@ private:
         one_two_phases_dynamic = 4,
         one_three_phases_dynamic = 5,
         one_two_three_phases_dynamic = 6,
-        one_three_phases_emulate_energy_manager = 7
+        emulate_energy_manager = 7
     } PhaseSwitcherMode;
 
-    enum class EmulateEnergyManagerState : uint8_t {
-        Idle,
-        WaitingForZeroCurrent,
-        SwitchingContactors
-    };
+    typedef enum {
+        idle,
+        waiting_for_zero_current,
+        switching_contactors
+    } EmulateEnergyManagerState;
 
     bool setup_bricklets();
     uint16_t evse_get_max_current();
@@ -125,6 +125,8 @@ private:
     uint8_t get_phases_for_power(uint16_t available_charging_power);
     uint8_t get_phases_from_delayed_phase_requests(bool delayed_phase_request[3]);
     uint8_t get_emulate_energy_manager_phases();
+    bool get_evse_relay_output();
+    void set_emulate_energy_manager_state(EmulateEnergyManagerState state, const char *reason);
     void start_quick_charging();
 
     void handle_button();
@@ -132,7 +134,7 @@ private:
 
     void monitor_requested_phases();
 
-    void sequencer();
+    void sequencer_standalone();
     void sequencer_emulate_energy_manager();
 
     void sequencer_state_inactive();
@@ -185,13 +187,12 @@ private:
 
     bool enabled, quick_charging_active;
     PhaseSwitcherMode operating_mode;
-    uint8_t requested_phases_pending, requested_phases_pending_delayed, requested_phases; 
-    uint8_t emulate_energy_manager_target_phases = 0;
+    uint8_t requested_phases_pending, requested_phases_pending_delayed, requested_phases = 1;
     uint16_t emulate_energy_manager_allowed_current = 0;
-    EmulateEnergyManagerState emulate_energy_manager_state = EmulateEnergyManagerState::Idle;
+    EmulateEnergyManagerState emulate_energy_manager_state = idle;
     bool emulate_energy_manager_zero_current_confirmed = false;
     uint16_t available_charging_power;
-    PhaseSwitcherState sequencer_state;
+    PhaseSwitcherState standalone_sequencer_state;
     micros_t last_state_change = 0_us;
     bool delayed_phase_request[3] = {false, false, false};
     DelayTimer delay_timer[3];
