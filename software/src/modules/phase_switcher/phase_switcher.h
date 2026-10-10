@@ -126,7 +126,6 @@ private:
     uint8_t get_phases_from_delayed_phase_requests(bool delayed_phase_request[3]);
     uint8_t get_emulate_energy_manager_phases();
     bool get_evse_relay_output();
-    void set_emulate_energy_manager_state(EmulateEnergyManagerState state, const char *reason);
     void start_quick_charging();
 
     void handle_button();
@@ -134,8 +133,8 @@ private:
 
     void monitor_requested_phases();
 
-    void sequencer_standalone();
-    void sequencer_emulate_energy_manager();
+    void standalone_sequencer();
+    void emulate_energy_manager_sequencer();
 
     void sequencer_state_inactive();
     void sequencer_state_standby();
