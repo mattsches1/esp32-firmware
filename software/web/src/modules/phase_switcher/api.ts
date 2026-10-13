@@ -1,4 +1,5 @@
 export interface state {
+    operating_mode: number,
     available_charging_power: number,
     requested_phases: number,
     requested_phases_pending: number,

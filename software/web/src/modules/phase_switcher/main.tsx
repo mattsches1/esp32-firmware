@@ -19,7 +19,7 @@
 
 import * as util from "../../ts/util";
 import * as API from "../../ts/api";
-import { h, Component, RefObject } from "preact";
+import { h, Component, RefObject, Fragment } from "preact";
 import { __, translate_unchecked } from "../../ts/translation";
 import { ConfigComponent } from "../../ts/components/config_component";
 import { FormRow } from "../../ts/components/form_row";
@@ -28,7 +28,7 @@ import { InputSelect } from "../../ts/components/input_select";
 import { InputText } from "../../ts/components/input_text";
 import { IndicatorGroup } from "../../ts/components/indicator_group";
 import { CollapsedSection } from "../../ts/components/collapsed_section";
-import { Switch } from "../../ts/components/switch";
+import { Collapse } from "react-bootstrap";
 import { SubPage } from "../../ts/components/sub_page";
 import { NavbarItem } from "../../ts/components/navbar_item";
 import { StatusSection } from "../../ts/components/status_section";
@@ -105,9 +105,13 @@ export class PhaseSwitcherStatus extends Component<{}, PhaseSwitcherStatusState>
         }
 
         return <StatusSection name="phase_switcher">
-            <FormRow label={__("phase_switcher.status.available_charging_power")}>
-                <InputText value={state.state.available_charging_power + " W"} />
-            </FormRow>
+            <Collapse in={state.state.operating_mode != 0 && state.state.operating_mode != 7}>        
+                <div>
+                    <FormRow label={__("phase_switcher.status.available_charging_power")}>
+                        <InputText value={state.state.available_charging_power + " W"} />
+                    </FormRow>
+                </div>
+            </Collapse>
             <FormRow label={__("phase_switcher.status.active_phases")}>
                 {phase_indicator(state.state.active_phases)}
             </FormRow>
@@ -149,12 +153,16 @@ export class PhaseSwitcher extends ConfigComponent<"phase_switcher/config", {sta
                         ? emulate_energy_manager_state_name(phase_state.emulate_energy_manager_state)
                         : sequencer_state_name(phase_state.standalone_sequencer_state)} />
                 </FormRow>
-                <FormRow label={__("phase_switcher.content.charging_power.title")} label_muted={__("phase_switcher.content.charging_power.description")}>
-                    <div class="row gx-2 gy-1">
-                        <div class="col-md-6"><InputText value={phase_state.available_charging_power + " W"} /></div>
-                        <div class="col-md-6"><InputText value={util.toLocaleFixed(state.meter_power, 0) + " W"} /></div>
+                <Collapse in={state.operating_mode != 0 && state.operating_mode != 7}>
+                    <div>
+                        <FormRow label={__("phase_switcher.content.charging_power.title")} label_muted={__("phase_switcher.content.charging_power.description")}>
+                            <div class="row gx-2 gy-1">
+                                <div class="col-md-6"><InputText value={phase_state.available_charging_power + " W"} /></div>
+                                <div class="col-md-6"><InputText value={util.toLocaleFixed(state.meter_power, 0) + " W"} /></div>
+                            </div>
+                        </FormRow>
                     </div>
-                </FormRow>
+                </Collapse>
                 <FormRow label={__("phase_switcher.content.requested_phases")}>
                     {phase_indicator(phase_state.requested_phases_pending)}
                 </FormRow>
@@ -191,25 +199,29 @@ export class PhaseSwitcher extends ConfigComponent<"phase_switcher/config", {sta
                         ]}
                     />
                 </FormRow>
-                <FormRow label={__("phase_switcher.content.delay_time.title")} label_muted={__("phase_switcher.content.delay_time.description")}>
-                    <div class="row gx-2 gy-1">
-                        <div class="col-md-4"><InputNumber min={10} max={3600} value={state.delay_time_more_phases} unit="s" onValue={this.set("delay_time_more_phases")} /></div>
-                        <div class="col-md-4"><InputNumber min={10} max={3600} value={state.delay_time_less_phases} unit="s" onValue={this.set("delay_time_less_phases")} /></div>
-                        <div class="col-md-4"><InputText value={format_seconds(phase_state.delay_time)} /></div>
+                <Collapse in={(state.operating_mode != 0 && state.operating_mode != 7)}>
+                    <div>
+                        <FormRow label={__("phase_switcher.content.delay_time.title")} label_muted={__("phase_switcher.content.delay_time.description")}>
+                            <div class="row gx-2 gy-1">
+                                <div class="col-md-4"><InputNumber min={10} max={3600} value={state.delay_time_more_phases} unit="s" onValue={this.set("delay_time_more_phases")} /></div>
+                                <div class="col-md-4"><InputNumber min={10} max={3600} value={state.delay_time_less_phases} unit="s" onValue={this.set("delay_time_less_phases")} /></div>
+                                <div class="col-md-4"><InputText value={format_seconds(phase_state.delay_time)} /></div>
+                            </div>
+                        </FormRow>
+                        <FormRow label={__("phase_switcher.content.minimum_duration.title")} label_muted={__("phase_switcher.content.minimum_duration.description")}>
+                            <div class="row gx-2 gy-1">
+                                <div class="col-md-6"><InputNumber min={10} max={3600} value={state.minimum_duration} unit="s" onValue={this.set("minimum_duration")} /></div>
+                                <div class="col-md-6"><InputText value={format_seconds(minimum_duration)} /></div>
+                            </div>
+                        </FormRow>
+                        <FormRow label={__("phase_switcher.content.pause_time.title")} label_muted={__("phase_switcher.content.pause_time.description")}>
+                            <div class="row gx-2 gy-1">
+                                <div class="col-md-6"><InputNumber min={10} max={3600} value={state.pause_time} unit="s" onValue={this.set("pause_time")} /></div>
+                                <div class="col-md-6"><InputText value={format_seconds(pause_time)} /></div>
+                            </div>
+                        </FormRow>
                     </div>
-                </FormRow>
-                <FormRow label={__("phase_switcher.content.minimum_duration.title")} label_muted={__("phase_switcher.content.minimum_duration.description")}>
-                    <div class="row gx-2 gy-1">
-                        <div class="col-md-6"><InputNumber min={10} max={3600} value={state.minimum_duration} unit="s" onValue={this.set("minimum_duration")} /></div>
-                        <div class="col-md-6"><InputText value={format_seconds(minimum_duration)} /></div>
-                    </div>
-                </FormRow>
-                <FormRow label={__("phase_switcher.content.pause_time.title")} label_muted={__("phase_switcher.content.pause_time.description")}>
-                    <div class="row gx-2 gy-1">
-                        <div class="col-md-6"><InputNumber min={10} max={3600} value={state.pause_time} unit="s" onValue={this.set("pause_time")} /></div>
-                        <div class="col-md-6"><InputText value={format_seconds(pause_time)} /></div>
-                    </div>
-                </FormRow>
+                </Collapse>
                 <CollapsedSection heading={__("phase_switcher.content.details")}>
                     <FormRow label={__("phase_switcher.content.channel_states.title")} label_muted={__("phase_switcher.content.channel_states.description")}>
                         <div class="row gx-3">
@@ -247,24 +259,28 @@ export class PhaseSwitcher extends ConfigComponent<"phase_switcher/config", {sta
                             </div>
                         </div>
                     </FormRow>
-                    <FormRow label={__("phase_switcher.content.on_delay_values.title")} label_muted={__("phase_switcher.content.on_delay_values.description")}>
-                        <div class="row gx-2 gy-1">
-                            {[0, 1, 2].map((index) => (
-                                <div class="col-md-4" key={"on_delay_" + index}>
-                                    <InputText value={(low_level_state.current_on_delay_time[index] ?? 0) + " s"} />
+                    <Collapse in={(state.operating_mode != 0 && state.operating_mode != 7)}>
+                        <div>
+                            <FormRow label={__("phase_switcher.content.on_delay_values.title")} label_muted={__("phase_switcher.content.on_delay_values.description")}>
+                                <div class="row gx-2 gy-1">
+                                    {[0, 1, 2].map((index) => (
+                                        <div class="col-md-4" key={"on_delay_" + index}>
+                                            <InputText value={(low_level_state.current_on_delay_time[index] ?? 0) + " s"} />
+                                        </div>
+                                    ))}
                                 </div>
-                            ))}
-                        </div>
-                    </FormRow>
-                    <FormRow label={__("phase_switcher.content.off_delay_values.title")} label_muted={__("phase_switcher.content.off_delay_values.description")}>
-                        <div class="row gx-2 gy-1">
-                            {[0, 1, 2].map((index) => (
-                                <div class="col-md-4" key={"off_delay_" + index}>
-                                    <InputText value={(low_level_state.current_off_delay_time[index] ?? 0) + " s"} />
+                            </FormRow>
+                            <FormRow label={__("phase_switcher.content.off_delay_values.title")} label_muted={__("phase_switcher.content.off_delay_values.description")}>
+                                <div class="row gx-2 gy-1">
+                                    {[0, 1, 2].map((index) => (
+                                        <div class="col-md-4" key={"off_delay_" + index}>
+                                            <InputText value={(low_level_state.current_off_delay_time[index] ?? 0) + " s"} />
+                                        </div>
+                                    ))}
                                 </div>
-                            ))}
+                            </FormRow>
                         </div>
-                    </FormRow>
+                    </Collapse>
                 </CollapsedSection>
             </SubPage.Config>
         </SubPage>;
