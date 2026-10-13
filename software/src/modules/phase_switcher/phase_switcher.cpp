@@ -106,13 +106,6 @@ void PhaseSwitcher::setup()
     operating_mode = PhaseSwitcherMode(api_config_in_use.get("operating_mode")->asUint());
     enabled = operating_mode != PhaseSwitcherMode::disabled;
 
-    if (operating_mode == emulate_energy_manager && get_evse_relay_output()) {
-        const uint8_t feedback_phases = get_emulate_energy_manager_phases();
-        if (feedback_phases == 1 || feedback_phases == 3) {
-            requested_phases = feedback_phases;
-        }
-    }
-
     if (debug){
         logger.printfln("Phase Switcher Configuration: \n  Enabled: %d\n  Operating mode: %d", enabled, operating_mode);
     }
@@ -283,13 +276,29 @@ uint8_t PhaseSwitcher::get_emulate_energy_manager_phases()
     return input_channels[2] ? 3 : 1;
 }
 
-bool PhaseSwitcher::get_evse_relay_output()
+bool PhaseSwitcher::get_evse_relay_output(bool &relay_output)
 {
     if (!api.hasFeature("evse")) {
         return false;
     }
 
-    return api.getState("evse/low_level_state", false)->get("gpio")->get(3)->asBool();
+    const Config *low_level_state = api.getState("evse/low_level_state", false);
+    if (!low_level_state) {
+        return false;
+    }
+
+    const auto gpio = low_level_state->get("gpio");
+    if (!static_cast<const Config *>(gpio)) {
+        return false;
+    }
+
+    const auto gpio3 = gpio->get(3);
+    if (!static_cast<const Config *>(gpio3)) {
+        return false;
+    }
+
+    relay_output = gpio3->asBool();
+    return true;
 }
 
 void PhaseSwitcher::filter_emulate_energy_manager_command_packet(cm_command_packet *command_packet)
@@ -325,7 +334,8 @@ void PhaseSwitcher::filter_emulate_energy_manager_command_packet(cm_command_pack
                         previous_pending_phases, requested_phases_pending, requested_phases);
     }
 
-    const bool evse_relay_output = get_evse_relay_output();
+    bool evse_relay_output = false;
+    const bool evse_relay_output_available = get_evse_relay_output(evse_relay_output);
     if (emulate_energy_manager_state == waiting_for_zero_current &&
         requested_phases_pending == requested_phases) {
         emulate_energy_manager_state = idle;
@@ -334,7 +344,8 @@ void PhaseSwitcher::filter_emulate_energy_manager_command_packet(cm_command_pack
         emulate_energy_manager_state = waiting_for_zero_current;
         emulate_energy_manager_zero_current_confirmed = false;
     } else if (emulate_energy_manager_state == idle &&
-               command_packet->v1.allocated_current > 0 && !evse_relay_output) {
+               command_packet->v1.allocated_current > 0 &&
+               evse_relay_output_available && !evse_relay_output) {
         requested_phases = requested_phases_pending;
         if (debug) {
             logger.printfln("  Emulate Energy Manager latched startup phase selection %u while GPIO 3 is low",
@@ -363,9 +374,12 @@ void PhaseSwitcher::filter_emulate_energy_manager_state_packet(cm_state_packet *
     if (debug && emulate_energy_manager_state == waiting_for_zero_current &&
         (previous_allowed_current != emulate_energy_manager_allowed_current ||
          previous_zero_current_confirmed != emulate_energy_manager_zero_current_confirmed)) {
+        bool evse_relay_output = false;
+        const bool evse_relay_output_available = get_evse_relay_output(evse_relay_output);
         logger.printfln("  Emulate Energy Manager current status: allowed %u, zero confirmed %d; GPIO 3 %d; pending %u, applied %u",
                         emulate_energy_manager_allowed_current, emulate_energy_manager_zero_current_confirmed,
-                        get_evse_relay_output(), requested_phases_pending, requested_phases);
+                evse_relay_output_available ? static_cast<int>(evse_relay_output) : -1,
+                requested_phases_pending, requested_phases);
     }
 
     const uint8_t active_phases = requested_phases;
@@ -630,13 +644,12 @@ void PhaseSwitcher::standalone_sequencer()
     } 
 }
 
-void PhaseSwitcher::emulate_energy_manager_sequencer()
+void PhaseSwitcher::emulate_energy_manager_sequencer(bool evse_relay_output)
 {
     if (operating_mode != emulate_energy_manager) {
         return;
     }
 
-    const bool evse_relay_output = get_evse_relay_output();
     const uint8_t feedback_phases = get_emulate_energy_manager_phases();
     static bool have_debug_snapshot = false;
     static EmulateEnergyManagerState last_debug_state = idle;
@@ -912,6 +925,25 @@ void PhaseSwitcher::sequencer_state_stopped_by_evse()
 
 bool PhaseSwitcher::prepare_io()
 {
+    bool evse_relay_output = false;
+    if (!api.hasFeature("evse") ||
+        !get_evse_relay_output(evse_relay_output) ||
+        !api.getState("evse/state", false) ||
+        !api.getState("evse/auto_start_charging", false)) {
+        return false;
+    }
+
+    if (operating_mode == emulate_energy_manager && !emulate_energy_manager_phase_initialized) {
+        if (evse_relay_output) {
+            const uint8_t feedback_phases = get_emulate_energy_manager_phases();
+            if (feedback_phases != 1 && feedback_phases != 3) {
+                return false;
+            }
+            requested_phases = feedback_phases;
+        }
+        emulate_energy_manager_phase_initialized = true;
+    }
+
     contactor_check();
     if (operating_mode != emulate_energy_manager) {
         handle_button();
@@ -921,13 +953,9 @@ bool PhaseSwitcher::prepare_io()
         monitor_requested_phases();
     }
     standalone_sequencer();
-    emulate_energy_manager_sequencer();
+    emulate_energy_manager_sequencer(evse_relay_output);
 
-    if (!api.hasFeature("evse")) {
-        return false;
-    }
-
-    update_outputs();
+    update_outputs(evse_relay_output);
 
     const uint32_t now_ms = millis();
     for (size_t channel = 0; channel < ARRAY_SIZE(output_channels); ++channel) {
@@ -995,10 +1023,8 @@ void PhaseSwitcher::publish_all_data()
     }
 }
 
-void PhaseSwitcher::update_outputs()
+void PhaseSwitcher::update_outputs(bool evse_relay_output)
 {
-    const bool evse_relay_output = get_evse_relay_output();
-
     if (debug) {
         static bool last_evse_relay_output = false;
         if (last_evse_relay_output != evse_relay_output){

@@ -125,7 +125,7 @@ private:
     uint8_t get_phases_for_power(uint16_t available_charging_power);
     uint8_t get_phases_from_delayed_phase_requests(bool delayed_phase_request[3]);
     uint8_t get_emulate_energy_manager_phases();
-    bool get_evse_relay_output();
+    bool get_evse_relay_output(bool &relay_output);
     void start_quick_charging();
 
     void handle_button();
@@ -134,7 +134,7 @@ private:
     void monitor_requested_phases();
 
     void standalone_sequencer();
-    void emulate_energy_manager_sequencer();
+    void emulate_energy_manager_sequencer(bool evse_relay_output);
 
     void sequencer_state_inactive();
     void sequencer_state_standby();
@@ -151,7 +151,7 @@ private:
     void fetch_all_data();
     void write_outputs();
     void publish_all_data();
-    void update_outputs();
+    void update_outputs(bool evse_relay_output);
     void contactor_check();
     void update_all_data();
     
@@ -190,6 +190,7 @@ private:
     uint16_t emulate_energy_manager_allowed_current = 0;
     EmulateEnergyManagerState emulate_energy_manager_state = idle;
     bool emulate_energy_manager_zero_current_confirmed = false;
+    bool emulate_energy_manager_phase_initialized = false;
     uint16_t available_charging_power;
     PhaseSwitcherState standalone_sequencer_state;
     micros_t last_state_change = 0_us;
