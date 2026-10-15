@@ -215,13 +215,13 @@ export class PhaseSwitcher extends ConfigComponent<"phase_switcher/config", {sta
                             </div>
                         </FormRow>
                     </div>
-                    <FormRow label={__("phase_switcher.content.pause_time.title")} label_muted={__("phase_switcher.content.pause_time.description")}>
-                        <div class="row gx-2 gy-1">
-                            <div class="col-md-6"><InputNumber min={10} max={3600} value={state.pause_time} unit="s" onValue={this.set("pause_time")} /></div>
-                            <div class="col-md-6"><InputText value={format_seconds(pause_time)} /></div>
-                        </div>
-                    </FormRow>
                 </Collapse>
+                <FormRow label={__("phase_switcher.content.pause_time.title")} label_muted={__("phase_switcher.content.pause_time.description")}>
+                    <div class="row gx-2 gy-1">
+                        <div class="col-md-6"><InputNumber min={10} max={3600} value={state.pause_time} unit="s" onValue={this.set("pause_time")} /></div>
+                        <div class="col-md-6"><InputText value={format_seconds(pause_time)} /></div>
+                    </div>
+                </FormRow>
                 <CollapsedSection heading={__("phase_switcher.content.details")}>
                     <FormRow label={__("phase_switcher.content.channel_states.title")} label_muted={__("phase_switcher.content.channel_states.description")}>
                         <div class="row gx-3">

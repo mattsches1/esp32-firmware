@@ -1055,7 +1055,7 @@ void PhaseSwitcher::update_outputs(bool evse_relay_output)
         }
     }
 
-    output_channels[0] = !emulate_energy_manager_state == switching_contactors && !standalone_sequencer_state == pausing_while_switching;
+    output_channels[0] = !(emulate_energy_manager_state == switching_contactors) && !(standalone_sequencer_state == pausing_while_switching);
     output_channels[1] = output_channels[2] = output_channels[3] = false;
 
     if (evse_relay_output){
