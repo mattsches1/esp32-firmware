@@ -111,6 +111,9 @@ void PhaseSwitcher::setup()
     }
 
     api.addFeature("phase_switcher");
+    if (operating_mode == emulate_energy_manager) {
+        api.addFeature("cp_disconnect");
+    }
 
 #if MODULE_POWER_MANAGER_AVAILABLE()
     if (operating_mode == emulate_energy_manager) {
@@ -268,7 +271,6 @@ bool PhaseSwitcher::is_external_control_allowed()
 
 uint8_t PhaseSwitcher::get_emulate_energy_manager_phases()
 {
-    // FIXME : Use active_charges var
     if (input_channels[2] != input_channels[3]) {
         return 0;
     }
@@ -307,6 +309,14 @@ void PhaseSwitcher::filter_emulate_energy_manager_command_packet(cm_command_pack
         CM_COMMAND_FLAGS_IGNORE_ALLOCATION_IS_SET(command_packet->v1.command_flags)) {
         return;
     }
+
+    const bool cp_disconnect_requested =
+        CM_COMMAND_FLAGS_CPDISC_IS_SET(command_packet->v1.command_flags);
+    if (debug && cp_disconnect_requested != emulate_energy_manager_cp_disconnect_requested) {
+        logger.printfln("  Emulate Energy Manager CP disconnect request changed to %d",
+                        cp_disconnect_requested);
+    }
+    emulate_energy_manager_cp_disconnect_requested = cp_disconnect_requested;
 
     uint32_t allocated_phases = command_packet->header.version >= 2
                               ? static_cast<uint32_t>(command_packet->v2.allocated_phases)
@@ -392,6 +402,11 @@ void PhaseSwitcher::filter_emulate_energy_manager_state_packet(cm_state_packet *
     }
 
     state_packet->v1.feature_flags |= CM_FEATURE_FLAGS_PHASE_SWITCH_MASK;
+    if (emulate_energy_manager_cp_disconnected) {
+        state_packet->v1.state_flags |= CM_STATE_FLAGS_CP_DISCONNECTED_MASK;
+    } else {
+        state_packet->v1.state_flags &= ~CM_STATE_FLAGS_CP_DISCONNECTED_MASK;
+    }
     state_packet->v3.phases = static_cast<uint8_t>(
         (state_packet->v3.phases & ~(CM_STATE_V3_PHASES_CONNECTED_MASK |
                                      CM_STATE_V3_CAN_PHASE_SWITCH_MASK |
@@ -513,9 +528,11 @@ void PhaseSwitcher::set_current(uint16_t available_charging_power, uint8_t phase
 
 void PhaseSwitcher::handle_button()
 {
-    if (!api.hasFeature("evse")) {
+    if (!api.hasFeature("evse"))
         return;
-    }
+
+    if (!enabled || operating_mode == emulate_energy_manager)
+        return;
 
     static uint32_t button_pressed_time, button_released_time;
     static bool quick_charging_requested = false;
@@ -613,6 +630,7 @@ void PhaseSwitcher::monitor_requested_phases()
 void PhaseSwitcher::standalone_sequencer()
 {
     if (operating_mode == emulate_energy_manager) {
+        standalone_sequencer_state = inactive;
         return;
     }
 
@@ -647,6 +665,7 @@ void PhaseSwitcher::standalone_sequencer()
 void PhaseSwitcher::emulate_energy_manager_sequencer(bool evse_relay_output)
 {
     if (operating_mode != emulate_energy_manager) {
+        emulate_energy_manager_state = idle;
         return;
     }
 
@@ -706,8 +725,11 @@ void PhaseSwitcher::emulate_energy_manager_sequencer(bool evse_relay_output)
             break;
         case switching_contactors:
         {
-            requested_phases = requested_phases_pending;
-            emulate_energy_manager_state = idle;
+            if (now_us() - last_state_change >= seconds_t{api_config_in_use.get("pause_time")->asUint()}){
+                requested_phases = requested_phases_pending;
+                logger.printfln("Pause time elapsed, switching to %d phases.", requested_phases);
+                emulate_energy_manager_state = idle;
+            }
             break;
         }
     }
@@ -1033,7 +1055,8 @@ void PhaseSwitcher::update_outputs(bool evse_relay_output)
         }
     }
 
-    output_channels[0] = output_channels[1] = output_channels[2] = output_channels[3] = false;
+    output_channels[0] = !emulate_energy_manager_state == switching_contactors && !standalone_sequencer_state == pausing_while_switching;
+    output_channels[1] = output_channels[2] = output_channels[3] = false;
 
     if (evse_relay_output){
         if (enabled){
@@ -1083,7 +1106,7 @@ void PhaseSwitcher::contactor_check()
     static bool contactor_error[4];
     static uint32_t watchdog_start[4];
 
-    for (int i = 0; i <= 3; i++){
+    for (int i = 1; i <= 3; i++){
         if (input_channels[i] == output_channels[i]) watchdog_start[i] = millis();
         if (millis() - watchdog_start[i] >= 2000){
             if (!contactor_error[i]){

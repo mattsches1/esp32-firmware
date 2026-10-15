@@ -191,6 +191,8 @@ private:
     EmulateEnergyManagerState emulate_energy_manager_state = idle;
     bool emulate_energy_manager_zero_current_confirmed = false;
     bool emulate_energy_manager_phase_initialized = false;
+    bool emulate_energy_manager_cp_disconnect_requested = false;
+    bool emulate_energy_manager_cp_disconnected = false;
     uint16_t available_charging_power;
     PhaseSwitcherState standalone_sequencer_state;
     micros_t last_state_change = 0_us;
