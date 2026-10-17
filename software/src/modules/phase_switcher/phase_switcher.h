@@ -26,6 +26,7 @@
 #include "modules/event_log/event_log.h"
 #include "modules/cm_networking/cm_networking_defs.h"
 #include "modules/power_manager/phase_switcher_back-end.h"
+#include "modules/evse_common/evse_common.h"
 
 #include "bricklet.h"
 #include "device_module.h"
@@ -66,8 +67,8 @@ public:
     bool switch_phases(uint32_t phases_wanted) override;
     bool is_external_control_allowed() override;
 
-    void filter_emulate_energy_manager_command_packet(cm_command_packet *command_packet);
-    void filter_emulate_energy_manager_state_packet(cm_state_packet *state_packet);
+    void filter_command_packet(cm_command_packet *command_packet);
+    void filter_state_packet(cm_state_packet *state_packet);
 
 private:
     typedef enum {
@@ -110,11 +111,14 @@ private:
         emulate_energy_manager = 7
     } PhaseSwitcherMode;
 
-    typedef enum {
-        idle,
-        waiting_for_zero_current,
-        switching_contactors
-    } EmulateEnergyManagerState;
+    enum class SwitchingState : uint8_t {
+        Idle = 0,
+        Stopping,
+        DisconnectingCP,
+        DisconnectingCPSettle,
+        WaitUntilSwitched,
+        WaitUntilCPReconnect
+    };
 
     bool setup_bricklets();
     uint16_t evse_get_max_current();
@@ -187,12 +191,24 @@ private:
     bool enabled, quick_charging_active;
     PhaseSwitcherMode operating_mode;
     uint8_t requested_phases_pending, requested_phases_pending_delayed, requested_phases = 1;
+
+    SwitchingState switching_state = SwitchingState::Idle, last_switching_state = SwitchingState::Idle;
+    micros_t last_state_packet = -1_h; // System boot is time 0. Timestamps must be initialized with old enough values for correct deadline calculation after start-up.
+    bool allocated_current_after_last_disconnect = true;
+    bool cp_disconnect_enabled;
+    bool skip_cp_disconnect = false;
+    uint8_t last_iec61851_state = 255;
+    uint8_t last_charger_state = 255;
+
+
     uint16_t emulate_energy_manager_allowed_current = 0;
-    EmulateEnergyManagerState emulate_energy_manager_state = idle;
     bool emulate_energy_manager_zero_current_confirmed = false;
     bool emulate_energy_manager_phase_initialized = false;
-    bool emulate_energy_manager_cp_disconnect_requested = false;
+    bool cp_disconnect_requested = false;
     bool emulate_energy_manager_cp_disconnected = false;
+
+
+
     uint16_t available_charging_power;
     PhaseSwitcherState standalone_sequencer_state;
     micros_t last_state_change = 0_us;
