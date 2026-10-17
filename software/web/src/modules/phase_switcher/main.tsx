@@ -100,7 +100,9 @@ export class PhaseSwitcherStatus extends Component<{}, PhaseSwitcherStatusState>
     }
 
     render(props: {}, state: PhaseSwitcherStatusState) {
-        if (!util.render_allowed() || !API.hasModule("phase_switcher")) {
+        if (!util.render_allowed() ||
+            !API.hasModule("phase_switcher") ||
+            !state.state) {
             return <StatusSection name="phase_switcher" />;
         }
 
@@ -137,7 +139,9 @@ export class PhaseSwitcher extends ConfigComponent<"phase_switcher/config", {sta
     }
 
     render(props: {}, state: PhaseSwitcherConfig & PhaseSwitcherPageState) {
-        if (!util.render_allowed()) {
+         if (!util.render_allowed() ||
+            !state.phase_switcher_state ||
+            !state.low_level_state) {
             return <SubPage name="phase_switcher" />;
         }
 
