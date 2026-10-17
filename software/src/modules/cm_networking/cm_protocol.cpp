@@ -351,6 +351,10 @@ void CMNetworking::register_manager(const char *const *const hosts,
             em_phase_switcher.filter_state_packet(charger_idx, &state_pkt);
 #endif
 
+#if MODULE_PHASE_SWITCHER_AVAILABLE()
+            phase_switcher.filter_state_packet(&state_pkt);
+#endif
+
             if (manager_data->client_update_received_cb) {
                 manager_data->client_update_received_cb(charger_idx, &state_pkt.v1, state_pkt.header.version >= 2 ? &state_pkt.v2 : nullptr, state_pkt.header.version >= 3 ? &state_pkt.v3 : nullptr, state_pkt.header.version >= 4 ? &state_pkt.v4 : nullptr, state_pkt.header.version >= 5 ? &state_pkt.v5 : nullptr);
             } else {
@@ -431,6 +435,10 @@ bool CMNetworking::send_command_packet(uint8_t client_id, cm_command_packet *com
 
 #if MODULE_EM_PHASE_SWITCHER_AVAILABLE()
     em_phase_switcher.filter_command_packet(client_id, command_pkt);
+#endif
+
+#if MODULE_PHASE_SWITCHER_AVAILABLE()
+    phase_switcher.filter_command_packet(command_pkt);
 #endif
 
     // Use the actual address size based on address family.

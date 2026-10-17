@@ -1,45 +1,37 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Emulate Energy Manager patch <emulate-energy-manager@localhost>
-Date: Thu, 1 Oct 2026 12:00:00 +0000
-Subject: [PATCH] CM Networking: add Emulate Energy Manager hooks
-
----
- cm_protocol.cpp | 8 ++++++++
- module.ini      | 1 +
- 2 files changed, 9 insertions(+)
-
 diff --git a/software/src/modules/cm_networking/cm_protocol.cpp b/software/src/modules/cm_networking/cm_protocol.cpp
+index 8df3f715e..379923dfb 100644
 --- a/software/src/modules/cm_networking/cm_protocol.cpp
 +++ b/software/src/modules/cm_networking/cm_protocol.cpp
-@@ -579,6 +579,10 @@ void CMNetworking::register_client(ClientManagerUpdateReceivedCallback &&manager_update_received_cb)
- 
-         const CMAuthFeedback auth_feedback = command_pkt.header.version >= 4 ? command_pkt.v4.auth_feedback : CMAuthFeedback::None;
- 
-+#if MODULE_PHASE_SWITCHER_AVAILABLE()
-+        phase_switcher.filter_emulate_energy_manager_command_packet(&command_pkt);
-+#endif
-+
-         if (manager_update_received_cb) {
-             ConfigChargeMode supported_charge_modes[ARRAY_SIZE(command_pkt.v3.supported_charge_modes) * 8];
-             size_t supported_charge_mode_length = 0;
-@@ -777,4 +781,8 @@ bool CMNetworking::send_client_update(uint32_t esp32_uid,
- 
-     state_pkt.v4.requested_charge_mode = to_underlying(requested_charge_mode);
+@@ -351,6 +351,10 @@ void CMNetworking::register_manager(const char *const *const hosts,
+             em_phase_switcher.filter_state_packet(charger_idx, &state_pkt);
+ #endif
  
 +#if MODULE_PHASE_SWITCHER_AVAILABLE()
-+    phase_switcher.filter_emulate_energy_manager_state_packet(&state_pkt);
++            phase_switcher.filter_state_packet(&state_pkt);
 +#endif
 +
-     return send_state_packet(&state_pkt);
- }
+             if (manager_data->client_update_received_cb) {
+                 manager_data->client_update_received_cb(charger_idx, &state_pkt.v1, state_pkt.header.version >= 2 ? &state_pkt.v2 : nullptr, state_pkt.header.version >= 3 ? &state_pkt.v3 : nullptr, state_pkt.header.version >= 4 ? &state_pkt.v4 : nullptr, state_pkt.header.version >= 5 ? &state_pkt.v5 : nullptr);
+             } else {
+@@ -433,6 +437,10 @@ bool CMNetworking::send_command_packet(uint8_t client_id, cm_command_packet *com
+     em_phase_switcher.filter_command_packet(client_id, command_pkt);
+ #endif
+ 
++#if MODULE_PHASE_SWITCHER_AVAILABLE()
++    phase_switcher.filter_command_packet(command_pkt);
++#endif
++
+     // Use the actual address size based on address family.
+     const struct sockaddr_storage *addr = &manager_data->managed_devices[client_id].addr;
+     socklen_t addr_len = (addr->ss_family == AF_INET6) ? sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in);
 diff --git a/software/src/modules/cm_networking/module.ini b/software/src/modules/cm_networking/module.ini
+index 5878585bb..68fde195b 100644
 --- a/software/src/modules/cm_networking/module.ini
 +++ b/software/src/modules/cm_networking/module.ini
-@@ -15,4 +15,5 @@ Optional = Device Name
+@@ -12,5 +12,6 @@ Optional = Device Name
+            WS
             Charge Manager
             EM Phase Switcher
-            NFC
 +           Phase Switcher
+            NFC
             Charge Authorization
--- 
-2.39.5
