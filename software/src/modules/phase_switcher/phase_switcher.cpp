@@ -232,6 +232,17 @@ bool PhaseSwitcher::phase_switching_capable()
     return operating_mode == emulate_energy_manager;
 }
 
+bool PhaseSwitcher::can_switch_phases_now(uint32_t phases_wanted)
+{
+    if (!initialized || !phase_switching_capable() ||
+        phases_wanted > 3 ||
+        phases_wanted == requested_phases) {
+        return false;
+    }
+
+    return get_phase_switching_state() == PhaseSwitcherBackend::SwitchingState::Ready;
+}
+
 uint32_t PhaseSwitcher::get_phases()
 {
     return requested_phases;
@@ -1040,9 +1051,9 @@ void PhaseSwitcher::update_outputs(bool evse_relay_output)
     output_channels[0] = !(
         switching_state == SwitchingState::DisconnectingCP ||
         switching_state == SwitchingState::DisconnectingCPSettle ||
-        switching_state == SwitchingState::WaitUntilSwitched && !skip_cp_disconnect ||        
+        (switching_state == SwitchingState::WaitUntilSwitched && !skip_cp_disconnect) ||
         // FIXME: Add support for cp disconnection config
-        standalone_sequencer_state != PausingWhileSwitching);
+        standalone_sequencer_state != pausing_while_switching);
 
     output_channels[1] = output_channels[2] = output_channels[3] = false;
 
@@ -1185,7 +1196,7 @@ void PhaseSwitcher::update_all_data()
     api_state.get("requested_phases_pending")->updateUint(requested_phases_pending);
     api_state.get("active_phases")->updateUint(get_active_phases());
     api_state.get("standalone_sequencer_state")->updateUint(uint8_t(standalone_sequencer_state));
-    api_state.get("emulate_energy_manager_state")->updateUint(uint8_t(emulate_energy_manager_state));
+    api_state.get("emulate_energy_manager_state")->updateUint(uint8_t(switching_state));
     api_state.get("time_since_state_change")->updateUint((now_us() - last_state_change).to<seconds_t>().as<uint32_t>());
 
     if (requested_phases_pending > requested_phases){
