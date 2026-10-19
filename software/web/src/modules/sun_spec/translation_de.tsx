@@ -30,6 +30,8 @@ let x = {
             "scan_result_model_no_supported": "Nicht unterstützt",
             "scan_result_model_other_preferred": /*SFN*/(slot: number|"?") => "Modell " + slot + " bevorzugt"/*NF*/,
 
+            "scan_no_result": "Es wurden keine SunSpec-Geräte gefunden.",
+
             "model_101": "Wechselrichter",
             "model_102": "Wechselrichter",
             "model_103": "Wechselrichter",
@@ -37,6 +39,7 @@ let x = {
             "model_112": "Wechselrichter",
             "model_113": "Wechselrichter",
             "model_122": "Wechselrichter Messwerte und Status",
+            "model_124": "Wechselrichter Speichersteuerung",
             "model_160": "PV-Erzeugung",
             "model_201": "Zähler",
             "model_202": "Zähler",

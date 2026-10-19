@@ -624,7 +624,7 @@
 - Update timezone database
 
 2026-05-13: 2.6.2 (2ca86775)
-- Fix support for TLS 1.3 signature algorithms in TLS 1.2; unbreaks solar forecast.
+- Fix support for TLS 1.3 signature algorithms in TLS 1.2; unbreaks solar forecast
 - Disallow overriding known meter locations
 - Fix Iskra WM3M4C's non-resettable energy values being marked as resettable
 - Support Iskra WM3M4
@@ -710,6 +710,20 @@
 2026-09-16: 2.9.3 (b5f7bb9f)
 - Fix "Authorize" button being shown when managed charger is in error state
 
-2026-09-17: 2.9.4 (<unknown>)
+2026-09-17: 2.9.4 (c009b78f)
 - Improve Bricklet communication robustness
 - Don't show country configuration in web interface; has no effect yet
+
+2026-10-01: 2.9.5 (<unknown>)
+- Add support for Sonnenbatterie grid and battery meters
+- Modbus TCP: Improve network communication robustness
+- SunSpec: Improve device scan robustness
+- Charge Tracker: Fix missing charger name and wrong month in monthly PDF export
+- Charge Tracker: Improve CSV/PDF generation robustness
+- ISO 15118: Improve compatibility with BMW iX2 models (and others with Delta Electronics OBC) by tentatively accepting SLAC requests
+- Battery control: Add support for SunSpec model 124 (e.g. Fronius inverters)
+- Remote access: Fix reconnect after adding account via username and password
+- EEBUS: Add QR code for SKI
+- Add §14a EnWG automation trigger
+- Update timezone database
+- Improve translations

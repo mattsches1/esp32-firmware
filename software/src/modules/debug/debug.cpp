@@ -1020,7 +1020,11 @@ void Debug::register_urls()
     });
 
     server.on_HTTPThread("/debug/task_accounting_simple", HTTP_GET, [this](WebServerRequest req) {
+#if defined(BOARD_HAS_PSRAM)
         constexpr size_t BUF_SIZE = 131072;
+#else
+        constexpr size_t BUF_SIZE = 16384;
+#endif
         auto buf = heap_alloc_array<char>(BUF_SIZE);
         StringWriter sw{buf.get(), BUF_SIZE};
 
@@ -1188,7 +1192,7 @@ void Debug::register_events()
     register_task(TCPIP_THREAD_NAME,TCPIP_THREAD_STACKSIZE);
     register_task("wifi",           6656, ExpectPresent); // stack size observed at runtime from task creation
     register_task("sys_evt",        ESP_TASKD_EVENT_STACK); // created in WiFiGeneric.cpp
-    register_task("arduino_events", 4096); // stack size from WiFiGeneric.cpp
+    register_task("arduino_events", 4096); // stack size from NetworkEvents.cpp
 
     register_task("async_udp",       0, ExpectMissing);
     register_task("btm_rrm_t",       0, ExpectMissing);
@@ -1561,7 +1565,9 @@ void Debug::TaskAccounting::add(const char *file, uint_least32_t line, micros_t 
         return;
     }
 
-    file += 4; // Cut off "src/"
+    if (strncmp(file, "src/", 4) == 0) {
+        file += 4;
+    }
 
     if (strncmp(file, "modules/", 8) == 0) {
         file += 8;

@@ -1625,6 +1625,12 @@ de_hyph = [
     "Vor-schrif-ten",
     "Task-in-for-ma-tio-nen",
     "Core-dumps",
+    "Son-nen-bat-te-rie",
+    "Ge-rä-te-in-for-ma-ti-o-nen",
+    "Spe-zi-fi-ka-ti-on",
+    "ein-ge-scannt",
+    "ver-ein-fa-chen",
+    "ver-ste-cken",
 ]
 
 en_hyph = [
@@ -1963,6 +1969,7 @@ en_hyph = [
     "de-ter-mine",
     "Re-set-ting",
     "trig-gered",
+    "Trig-gered",
     "re-quest-ed",
     "ac-ti-vat-ed",
     "Re-ject-ing",
@@ -2199,6 +2206,9 @@ en_hyph = [
     "reg-u-la-tions",
     "Switzer-land",
     "Di-rec-tive",
+    "Son-nen-bat-te-rie",
+    "spec-i-fi-ca-tion",
+    "re-solv-ing",
 ]
 
 hyphenations = [(x.replace("-", ""), x.replace("-", "\u00AD")) for x in de_hyph + en_hyph]

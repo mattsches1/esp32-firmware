@@ -1199,8 +1199,20 @@ void RemoteAccess::run_request_with_next_stage(const String &url,
                         break;
                     }
 
-                    case AsyncHTTPSClientError::HTTPError:
+                    case AsyncHTTPSClientError::HTTPError: {
+                        char err_buf[216];
+                        translate_HTTPError_detailed(event->error_handle, err_buf, sizeof(err_buf), true);
+                        if (strstr(url.c_str(), "/management") != nullptr) {
+                            if (!this->management_request_failed) {
+                                this->management_request_failed = true;
+                                logger.printfln("Management request failed with HTTPS error: %s", err_buf);
+                            }
+                        } else {
+                            update_registration_state(RegistrationState::Error, String(err_buf));
+                        }
+                        this->cleanup_after();
                         break;
+                    }
 
                     case AsyncHTTPSClientError::NoHTTPSURL:
                     case AsyncHTTPSClientError::Busy:
@@ -1314,6 +1326,7 @@ void RemoteAccess::parse_login_salt()
         return;
     }
     update_registration_state(RegistrationState::Success, String(base64));
+    this->management_request_allowed = true;
 }
 
 void RemoteAccess::login(const Config &user_config, const String &login_key)
@@ -1522,6 +1535,7 @@ static std::vector<int> find_charge_tracker_configs(const uint8_t user_id) {
 void RemoteAccess::resolve_management()
 {
     if (!this->management_request_allowed) {
+        logger.printfln("Management request not allowed, skipping resolve_management");
         return;
     }
 
@@ -2159,6 +2173,15 @@ void RemoteAccess::run_management()
             }
 
             dns_gethostbyname_addrtype_lwip_ctx_async(remote_host.c_str(), [this, response, local_port, conn_no, conn_idx](dns_gethostbyname_addrtype_lwip_ctx_async_data *data) {
+                if (data->err != ERR_OK) {
+                    if (data->err == ERR_CONN) {
+                        logger.printfln("Failed to resolve remote host: no address associated with hostname");
+                    } else {
+                        logger.printfln("Failed to resolve remote host: DNS error %i", data->err);
+                    }
+                    return;
+                }
+
                 create_sock_and_send_to(&response, sizeof(response), data->addr, 51820, local_port);
                 connect_remote_access(conn_no, local_port);
                 // Clear in_progress flag after connection setup is initiated
@@ -2285,15 +2308,17 @@ static void on_ping_end(esp_ping_handle_t handle, void *args) {
 int RemoteAccess::start_ping() {
     const char *host = config.get("relay_host")->asEphemeralCStr();
 
-    dns_gethostbyname_addrtype_lwip_ctx_async(
-        host,
-        [this, host](dns_gethostbyname_addrtype_lwip_ctx_async_data *data) {
-            if (data->err != ERR_OK || data->addr_ptr == nullptr) {
-                logger.printfln("Failed to resolve '%s' for ping: %s", host, data->addr_ptr == nullptr ? "Unknown host" : "DNS error");
-                return;
+    dns_gethostbyname_addrtype_lwip_ctx_async( host, [this, host](dns_gethostbyname_addrtype_lwip_ctx_async_data *data) {
+        if (data->err != ERR_OK) {
+            if (data->err == ERR_CONN) {
+                logger.printfln("Failed to resolve '%s' for ping: no address associated with hostname", host);
+            } else {
+                logger.printfln("Failed to resolve '%s' for ping: DNS error %i", host, data->err);
             }
+            return;
+        }
 
-            PingArgs *ping_args = new PingArgs();
+        PingArgs *ping_args = new PingArgs();
 
         esp_ping_config_t ping_config = ESP_PING_DEFAULT_CONFIG();
         ping_config.target_addr = data->addr;

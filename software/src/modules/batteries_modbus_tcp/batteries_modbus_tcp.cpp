@@ -150,9 +150,9 @@ void BatteriesModbusTCP::pre_setup()
     batteries.register_battery_generator(get_class(), this);
 
     test_table_prototypes.push_back({BatteryModbusTCPTableID::Custom, Config::Object({
-        {"mode", Config::Enum(BatteryMode::Block)},
         {"device_address", Config::Uint8(1)},
         {"repeat_interval", Config::Uint16(60)},
+        {"mode", Config::Enum(BatteryMode::Block)},
         {"effective_mode", Config::Enum(BatteryMode::Normal, BatteryMode::Block, BatteryMode::ForceDischarge)},
         {"register_blocks", Config::Array({},
             &table_custom_register_block_prototype,
@@ -165,7 +165,7 @@ void BatteriesModbusTCP::pre_setup()
     get_battery_modbus_tcp_test_table_prototypes(&test_table_prototypes);
 
     test_config = ConfigRoot{Config::Object({
-        {"slot", Config::Uint(0, 0, OPTIONS_BATTERIES_MAX_SLOTS())},
+        {"slot", Config::Uint(0, 0, OPTIONS_BATTERIES_MAX_SLOTS() - 1)},
         {"host", Config::Str("", 0, 64)},
         {"port", Config::Uint16(502)},
         {"table", Config::Union<BatteryModbusTCPTableID>(*Config::Null(),
@@ -225,9 +225,9 @@ void BatteriesModbusTCP::register_urls()
             return;
 
         case BatteryModbusTCPTableID::Custom:
-            test->mode = table_config->get("mode")->asEnum<BatteryMode>();
             test->device_address = table_config->get("device_address")->asUint8();
             test->repeat_interval = table_config->get("repeat_interval")->asUint16();
+            test->mode = table_config->get("mode")->asEnum<BatteryMode>();
             break;
 
 #include "generated/batteries_modbus_tcp_test_setup.inc"
@@ -248,7 +248,7 @@ void BatteriesModbusTCP::register_urls()
         test_printfln(language == Language::English
                       ? "Starting test for mode \"%s\""
                       : "Starte Test für Modus \"%s\"",
-                      BatteryModbusTCP::get_battery_mode_display_name(test->mode, language));
+                      Batteries::get_battery_mode_display_name(test->mode, language));
     }, true);
 
     api.addCommand("batteries_modbus_tcp/test_continue", &test_continue_config, {}, [this](Language language, String &errmsg) {
@@ -362,7 +362,7 @@ void BatteriesModbusTCP::loop()
 
             if (test->state == TestState::Discovering) {
                 test->state = TestState::DestroyDiscover;
-                test->state_after_discover = TestState::Disconnect;
+                test->state_after_destroy_discover = TestState::Disconnect;
 
                 // immediately destroy the discover to stop the separate
                 // discover task from accessing the disconnected client
@@ -456,7 +456,7 @@ void BatteriesModbusTCP::loop()
                 test_load_table(test->discover_table_config);
 
                 test->state = TestState::DestroyDiscover;
-                test->state_after_discover = TestState::CreateWriter;
+                test->state_after_destroy_discover = TestState::CreateWriter;
             });
         }
         else if (test->table_id == BatteryModbusTCPTableID::KostalPlenticoreG3) {
@@ -467,7 +467,7 @@ void BatteriesModbusTCP::loop()
                 test_load_table(test->discover_table_config);
 
                 test->state = TestState::DestroyDiscover;
-                test->state_after_discover = TestState::CreateWriter;
+                test->state_after_destroy_discover = TestState::CreateWriter;
             });
         }
         else {
@@ -480,13 +480,13 @@ void BatteriesModbusTCP::loop()
         BatteryModbusTCP::destroy_discover(test->discover_ctx);
         test->discover_ctx = nullptr;
 
-        test->state = test->state_after_discover;
+        test->state = test->state_after_destroy_discover;
         break;
 
     case TestState::Discovering:
         if (test->stop) {
             test->state = TestState::DestroyDiscover;
-            test->state_after_discover = TestState::Disconnect;
+            test->state_after_destroy_discover = TestState::Disconnect;
             break;
         }
 
@@ -507,7 +507,7 @@ void BatteriesModbusTCP::loop()
         test->writer_ctx = BatteryModbusTCP::create_writer(instances[test->slot], test->slot, true,
                                                            static_cast<TFModbusTCPSharedClient *>(test->shared_client),
                                                            test->device_address, test->transaction_id_mask, test->repeat_interval,
-                                                           test->mode, test->table,
+                                                           test->mode, test->table, "",
         [this](bool event_log, const char *fmt, va_list args) {
             test_vprintfln(fmt, args);
         },
@@ -695,7 +695,7 @@ void BatteriesModbusTCP::test_load_table(const Config *table_config)
 
 void BatteriesModbusTCP::trace_timestamp()
 {
-    if (last_trace_timestamp < 0_us || deadline_elapsed(last_trace_timestamp + 5_min)) {
+    if (last_trace_timestamp < 0_us || deadline_elapsed(last_trace_timestamp + 1_min)) {
         last_trace_timestamp = now_us();
         logger.trace_timestamp(trace_buffer_index);
     }

@@ -2,6 +2,7 @@
     slot: number;
     host: string;
     port: number;
+    table: ...
     cookie: number;
 }*/
 

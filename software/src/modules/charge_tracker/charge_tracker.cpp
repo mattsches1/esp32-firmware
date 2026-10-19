@@ -1271,153 +1271,160 @@ void ChargeTracker::repair_charges()
 }
 
 bool GenerationParams::init() {
-        auto result = task_scheduler.await([this]() {
-            this->electricity_price = charge_tracker.config.get("electricity_price")->asUint();
+    auto initialize = [this]() {
+        this->electricity_price = charge_tracker.config.get("electricity_price")->asUint();
 #if MODULE_DEVICE_NAME_AVAILABLE()
-            this->display_name = device_name.display_name.get("display_name")->asString();
-            this->unique_device_name = device_name.name.get("name")->asString();
-            if (this->display_name != this->unique_device_name)
-                this->unique_device_name = display_name + " (" + unique_device_name + ")";
+        this->display_name = device_name.display_name.get("display_name")->asString();
+        this->unique_device_name = device_name.name.get("name")->asString();
+        if (this->display_name != this->unique_device_name)
+            this->unique_device_name = display_name + " (" + unique_device_name + ")";
 #else
-            this->display_name = "unknown device";
-            this->unique_device_name = "unknown device";
+        this->display_name = "unknown device";
+        this->unique_device_name = "unknown device";
 #endif
 
-            for (size_t i = 0; i < users.config.get("users")->count(); ++i) {
-                this->configured_users[i] = users.config.get("users")->get(i)->get("id")->asUint();
-            }
+        for (size_t i = 0; i < users.config.get("users")->count(); ++i) {
+            this->configured_users[i] = users.config.get("users")->get(i)->get("id")->asUint();
+        }
 
-            for (size_t i = 0; i < charge_manager.config.get("chargers")->count(); ++i) {
-                this->configured_chargers[i] = charge_manager.config.get("chargers")->get(i)->get("uid")->asUint();
-            }
+        for (size_t i = 0; i < charge_manager.config.get("chargers")->count(); ++i) {
+            this->configured_chargers[i] = charge_manager.config.get("chargers")->get(i)->get("uid")->asUint();
+        }
 
-            // TODO: possible optimization: Only allocate one cache entry if the user filter is set to one user
-            // TODO use unique_ptr_any here?
-            this->display_name_cache = static_cast<decltype(display_name_cache)>(malloc_iram_or_psram_or_dram(MAX_PASSIVE_USERS * sizeof(display_name_cache[0])));
-            if (this->display_name_cache == nullptr)
-                return;
+        // TODO: possible optimization: Only allocate one cache entry if the user filter is set to one user
+        // TODO use unique_ptr_any here?
+        this->display_name_cache = static_cast<decltype(display_name_cache)>(malloc_iram_or_psram_or_dram(MAX_PASSIVE_USERS * sizeof(display_name_cache[0])));
+        if (this->display_name_cache == nullptr)
+            return;
 
-            // - read all usernames from file first
-            // - then overwrite users that are configured
-            // - then handle special cases to translate unknown user and/or anonymous
-            {
-                File f = LittleFS.open(USERNAME_FILE, "r");
-
-                for (size_t user_id = 0; user_id < MAX_PASSIVE_USERS; ++user_id) {
-                    f.seek(user_id * USERNAME_ENTRY_LENGTH + USERNAME_LENGTH, SeekMode::SeekSet);
-
-                    char buf[USERNAME_LENGTH];
-                    f.read((uint8_t *)buf, DISPLAY_NAME_LENGTH);
-
-                    auto length = strnlen(buf, DISPLAY_NAME_LENGTH);
-                    this->display_name_cache[user_id].set(length, buf);
-                }
-            }
-
-            {
-                const auto &c = api.getState("users/config")->get("users");
-                for (const auto &cfg : c) {
-                    auto user_id = cfg.get("id")->asUint();
-                    auto length = cfg.get("display_name")->asString().length();
-
-                    char buf[USERNAME_LENGTH];
-                    memcpy(buf, cfg.get("display_name")->asEphemeralCStr(), length);
-
-                    this->display_name_cache[user_id].set(length, buf);
-                }
-            }
+        // - read all usernames from file first
+        // - then overwrite users that are configured
+        // - then handle special cases to translate unknown user and/or anonymous
+        {
+            File f = LittleFS.open(USERNAME_FILE, "r");
 
             for (size_t user_id = 0; user_id < MAX_PASSIVE_USERS; ++user_id) {
-                char buf[USERNAME_LENGTH + 1]; // +1 to always fit \0
-                size_t length = this->display_name_cache[user_id].get(buf);
+                f.seek(user_id * USERNAME_ENTRY_LENGTH + USERNAME_LENGTH, SeekMode::SeekSet);
 
-                if (length == 0) {
-                    // length should never be 0 except if we manually upload test data to the charger.
-                    const char *b = CSVTranslations::getDeletedUser(this->language);
-                    length = strlen(b);
-                    strncpy(buf, b, DISPLAY_NAME_LENGTH);
-                } else if (user_id == 0 && strcmp(buf, "Anonymous") == 0) {
-                    // Replace "Anonymous" with translated string
-                    const char *b = CSVTranslations::getUnknownUser(this->language);
-                    length = strlen(b);
-                    strncpy(buf, b, DISPLAY_NAME_LENGTH);
-                }
+                char buf[USERNAME_LENGTH];
+                f.read((uint8_t *)buf, DISPLAY_NAME_LENGTH);
+
+                auto length = strnlen(buf, DISPLAY_NAME_LENGTH);
+                this->display_name_cache[user_id].set(length, buf);
             }
+        }
+
+        {
+            const auto &c = api.getState("users/config")->get("users");
+            for (const auto &cfg : c) {
+                auto user_id = cfg.get("id")->asUint();
+                auto length = cfg.get("display_name")->asString().length();
+
+                char buf[USERNAME_LENGTH];
+                memcpy(buf, cfg.get("display_name")->asEphemeralCStr(), length);
+
+                this->display_name_cache[user_id].set(length, buf);
+            }
+        }
+
+        for (size_t user_id = 0; user_id < MAX_PASSIVE_USERS; ++user_id) {
+            char buf[USERNAME_LENGTH + 1]; // +1 to always fit \0
+            size_t length = this->display_name_cache[user_id].get(buf);
+
+            if (length == 0) {
+                // length should never be 0 except if we manually upload test data to the charger.
+                const char *b = CSVTranslations::getDeletedUser(this->language);
+                length = strlen(b);
+                strncpy(buf, b, DISPLAY_NAME_LENGTH);
+            } else if (user_id == 0 && strcmp(buf, "Anonymous") == 0) {
+                // Replace "Anonymous" with translated string
+                const char *b = CSVTranslations::getUnknownUser(this->language);
+                length = strlen(b);
+                strncpy(buf, b, DISPLAY_NAME_LENGTH);
+            }
+        }
 
 #if OPTIONS_PRODUCT_ID_IS_WARP()
-            this->charger_display_name_cache = static_cast<decltype(charger_display_name_cache)>(malloc_iram_or_psram_or_dram(sizeof(charger_display_name_cache[0])));
-            if (this->charger_display_name_cache == nullptr)
-                return;
+        this->charger_display_name_cache = static_cast<decltype(charger_display_name_cache)>(malloc_iram_or_psram_or_dram(sizeof(charger_display_name_cache[0])));
+        if (this->charger_display_name_cache == nullptr)
+            return;
 #else
-            this->charger_display_name_cache = static_cast<decltype(charger_display_name_cache)>(malloc_iram_or_psram_or_dram(MAX_TRACKED_CHARGERS * sizeof(charger_display_name_cache[0])));
-            if (this->charger_display_name_cache == nullptr)
-                return;
+        this->charger_display_name_cache = static_cast<decltype(charger_display_name_cache)>(malloc_iram_or_psram_or_dram(MAX_TRACKED_CHARGERS * sizeof(charger_display_name_cache[0])));
+        if (this->charger_display_name_cache == nullptr)
+            return;
 
-            if (LittleFS.exists(CHARGER_NAMES_FILE)) {
-                File f = LittleFS.open(CHARGER_NAMES_FILE, "r");
+        if (LittleFS.exists(CHARGER_NAMES_FILE)) {
+            File f = LittleFS.open(CHARGER_NAMES_FILE, "r");
 
-                for (size_t i = 0; i < MAX_TRACKED_CHARGERS; ++i) {
-                    struct [[gnu::packed]] {
-                        uint32_t uid;
-                        char buf[CHARGER_NAME_LENGTH];
-                    } entry;
-
-                    f.read((uint8_t *)&entry, CHARGER_NAME_ENTRY_LENGTH);
-
-                    auto length = strnlen(entry.buf, DISPLAY_NAME_LENGTH);
-                    this->charger_display_name_cache[i].set(entry.uid, length, entry.buf);
-                }
-            }
-
-            {
-                const auto &c = api.getState("charge_manager/config")->get("chargers");
-                for (const auto &cfg : c) {
-                    auto uid = cfg.get("uid")->asUint();
-                    auto length = cfg.get("name")->asString().length();
-
+            for (size_t i = 0; i < MAX_TRACKED_CHARGERS; ++i) {
+                struct [[gnu::packed]] {
+                    uint32_t uid;
                     char buf[CHARGER_NAME_LENGTH];
-                    memcpy(buf, cfg.get("name")->asEphemeralCStr(), length);
+                } entry;
 
-                    int idx = -1;
+                f.read((uint8_t *)&entry, CHARGER_NAME_ENTRY_LENGTH);
+
+                auto length = strnlen(entry.buf, DISPLAY_NAME_LENGTH);
+                this->charger_display_name_cache[i].set(entry.uid, length, entry.buf);
+            }
+        }
+
+        {
+            const auto &c = api.getState("charge_manager/config")->get("chargers");
+            for (const auto &cfg : c) {
+                auto uid = cfg.get("uid")->asUint();
+                auto length = cfg.get("name")->asString().length();
+
+                char buf[CHARGER_NAME_LENGTH];
+                memcpy(buf, cfg.get("name")->asEphemeralCStr(), length);
+
+                int idx = -1;
+                for (size_t i = 0; i < MAX_TRACKED_CHARGERS; ++i) {
+                    if (this->charger_display_name_cache[i].uid != uid)
+                        continue;
+                    idx = i;
+                    break;
+                }
+
+                if (idx == -1) {
                     for (size_t i = 0; i < MAX_TRACKED_CHARGERS; ++i) {
-                        if (this->charger_display_name_cache[i].uid != uid)
+                        if (this->charger_display_name_cache[i].uid != 0)
                             continue;
                         idx = i;
                         break;
                     }
-
-                    if (idx == -1) {
-                        for (size_t i = 0; i < MAX_TRACKED_CHARGERS; ++i) {
-                            if (this->charger_display_name_cache[i].uid != 0)
-                                continue;
-                            idx = i;
-                            break;
-                        }
-                    }
-
-                    if (idx == -1)
-                        esp_system_abort("Charger display name cache too small");
-
-                    this->charger_display_name_cache[idx].set(uid, length, buf);
                 }
-            }
 
-            for (size_t i = 0; i < MAX_TRACKED_CHARGERS; ++i) {
-                char buf[CHARGER_NAME_LENGTH + 1]; // +1 to always fit \0
-                size_t length = this->charger_display_name_cache[i].get(buf);
+                if (idx == -1)
+                    esp_system_abort("Charger display name cache too small");
 
-                if (length == 0) {
-                    // length should never be 0 except if we manually upload test data to the charger.
-                    const char *b = CSVTranslations::getDeletedCharger(this->language);
-                    length = strlen(b);
-                    strncpy(buf, b, DISPLAY_NAME_LENGTH);
-                }
+                this->charger_display_name_cache[idx].set(uid, length, buf);
             }
+        }
+
+        for (size_t i = 0; i < MAX_TRACKED_CHARGERS; ++i) {
+            char buf[CHARGER_NAME_LENGTH + 1]; // +1 to always fit \0
+            size_t length = this->charger_display_name_cache[i].get(buf);
+
+            if (length == 0) {
+                // length should never be 0 except if we manually upload test data to the charger.
+                const char *b = CSVTranslations::getDeletedCharger(this->language);
+                length = strlen(b);
+                strncpy(buf, b, DISPLAY_NAME_LENGTH);
+            }
+        }
 #endif
-        });
+    };
 
-        return result && this->display_name_cache != nullptr && this->charger_display_name_cache != nullptr;
+    bool result = true;
+    if (running_in_main_task()) {
+        initialize();
+    } else {
+        result = task_scheduler.await(std::move(initialize));
     }
+
+    return result && this->display_name_cache != nullptr && this->charger_display_name_cache != nullptr;
+}
 
 bool GenerationParams::parse_request(std::unique_ptr<char[]> &buf, StaticJsonDocument<192> &doc, WebServerRequest &request) {
     if (request.contentLength() > 1024) {
@@ -1499,7 +1506,7 @@ bool PDFGenerationParams::parse_request(std::unique_ptr<char[]> &buf, StaticJson
     bool persist_letterhead = !doc.containsKey("persist_letterhead") || doc["persist_letterhead"];
 
     if (this->pdf_letterhead_config != nullptr && persist_letterhead) {
-        auto result = task_scheduler.await([this, letterhead, letterhead_passed](){
+        auto result = task_scheduler.await([this, letterhead, letterhead_passed]() {
             auto saved_letterhead = this->pdf_letterhead_config->get("letterhead");
             if (!letterhead_passed) {
                 strncpy(letterhead, saved_letterhead->asEphemeralCStr(), PDF_LETTERHEAD_MAX_SIZE + 1);
@@ -1516,7 +1523,7 @@ bool PDFGenerationParams::parse_request(std::unique_ptr<char[]> &buf, StaticJson
             return false;
         }
     } else if (this->pdf_letterhead_config != nullptr && !letterhead_passed) {
-        auto result = task_scheduler.await([this, letterhead](){
+        auto result = task_scheduler.await([this, letterhead]() {
             auto saved_letterhead = this->pdf_letterhead_config->get("letterhead");
             strncpy(letterhead, saved_letterhead->asEphemeralCStr(), PDF_LETTERHEAD_MAX_SIZE + 1);
         });
@@ -2131,31 +2138,41 @@ static void charge_log_send_tcp_task(void *arg)
 
     upload_args->generation_params->current_min = rtc.timestamp_minutes();
 
+    bool generation_error = false;
     if (upload_args->file_type == FileType::PDF) {
-        charge_tracker.generate_pdf(
+        int rc = charge_tracker.generate_pdf(
             [&tcp_send_fn](const void *buffer, size_t len) -> int {
                 return tcp_send_fn(buffer, len);
             },
             static_cast<PDFGenerationParams *>(upload_args->generation_params.get()),
             nullptr);
+        generation_error = rc != 0;
     } else {
         CSVChargeLogGenerator csv_generator;
-        csv_generator.generateCSV(
+        int rc = csv_generator.generateCSV(
             *static_cast<CSVGenerationParams *>(upload_args->generation_params.get()),
             [&tcp_send_fn](const char *buffer, size_t len) -> int {
                 return tcp_send_fn(buffer, len);
             }
         );
+        generation_error = rc < 0;
     }
 
-    if (send_error) {
-        logger.printfln("Error occurred while sending charge log data via TCP");
+    if (send_error || generation_error) {
+        if (send_error) {
+            logger.printfln("Error occurred while sending charge log data via TCP");
+        } else {
+            logger.printfln("Error occurred while generating charge log for upload");
+        }
+
         close(tcp_sock);
         charge_tracker.charge_log_send_ctx.tcp_sock = -1;
         charge_tracker.charge_log_send_ctx.error_code = ChargeLogSendError::ServerErrorAfterDataSend;
         charge_tracker.charge_log_send_ctx.state = ChargeLogSendState::Error;
         if (upload_args->use_format_overrides && upload_args->cookie != 0) {
-            push_upload_result_error(upload_args->cookie, "Connection lost while transmitting charge log data. Please try again.");
+            push_upload_result_error(upload_args->cookie, send_error
+                ? "Connection lost while transmitting charge log data. Please try again."
+                : "Failed to generate charge log for upload. Please try again.");
         }
         cleanup_and_delete_task();
         return;
@@ -2628,6 +2645,11 @@ int ChargeTracker::generate_pdf(
     const PDFGenerationParams *params,
     WebServerRequest *request
 ) {
+    if ((params->display_name_cache == nullptr) || (params->charger_display_name_cache == nullptr)) {
+        logger.printfln("Cannot generate PDF charge log: Generation parameters not initialized");
+        return -1;
+    }
+
     char stats_buf[384];
     double charged_sum = 0;
     uint32_t charged_cost_sum = 0;

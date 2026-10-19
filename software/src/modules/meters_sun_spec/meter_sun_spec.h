@@ -24,7 +24,7 @@
 #include "modules/meters/imeter.h"
 #include "modules/meters/generated/meter_location.enum.h"
 #include "modules/modbus_tcp_client/generic_modbus_tcp_client.h"
-#include "modules/modbus_tcp_client/modbus_tcp_tools.h"
+#include "modules/sun_spec/sun_spec_resolver.h"
 #include "config.h"
 #include "model_parser.h"
 
@@ -52,30 +52,25 @@ public:
     bool supports_currents()      override {return true;}
 
 private:
-    enum class ScanState {
-        Idle,
-        ReadSunSpecID,
-        ReadModelHeader,
-        ReadModel,
-    };
-
     void connect_callback(TFGenericTCPClientConnectResult result, TFGenericTCPClientPoolShareLevel share_level) override;
     void disconnect_callback(TFGenericTCPClientDisconnectReason reason, TFGenericTCPClientPoolShareLevel share_level) override;
 
     bool alloc_read_buffer(size_t model_regcount);
     void trace_response();
-    void read_start(size_t model_regcount);
+    void read_start(size_t start_address, size_t model_regcount);
     void read_done();
+    void record_timeout();
 
-    void scan_start_delayed();
-    void scan_start();
-    void scan_read_delayed();
-    void scan_next_base_address();
-    void scan_next();
+    void resolve_start_delayed();
+    void resolve_start();
+    void resolve_result(SunSpecResolverCommonModel *common_model, uint16_t start_address, uint16_t block_length);
 
     uint32_t slot;
     Config *state;
     Config *errors;
+
+    char print_prefix[9 + 1]; // strlen("Meter XY: ") == 9
+    char trace_prefix[5 + 1]; // strlen("mXYr ") == 5
 
     bool read_allowed = false;
     bool values_declared = false;
@@ -85,14 +80,8 @@ private:
     String serial_number;
     uint16_t model_id;
     uint16_t model_instance;
-    DCPortType dc_port_type;
-    size_t scan_base_address_index;
-    ScanState scan_state;
-    ScanState scan_state_next;
-    ModbusDeserializer scan_deserializer;
-    bool scan_device_found;
-    uint16_t scan_model_counter;
-    uint64_t scan_task_id = 0;
+    uint64_t resolve_start_delayed_task_id = 0;
+    SunSpecResolver *resolver = nullptr;
 
     uint32_t quirks = 0;
     IMetersSunSpecParser *model_parser;

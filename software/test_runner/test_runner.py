@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --group test-runner --script
+#!/usr/bin/env -S uv run --group tests --script
 
 from pathlib import Path
 import subprocess
@@ -200,7 +200,7 @@ def main():
                             case 'notify_test_success':
                                 test_finished = True
                                 if meta_test:
-                                    print("\r", end="")
+                                    tprint("\r", end="")
                                 else:
                                     tprint(green("Success"), f"({time.monotonic() - start:.3f}s)")
 

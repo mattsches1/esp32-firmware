@@ -12,17 +12,18 @@ import subprocess
 import tempfile
 import shutil
 import shlex
+import datetime
 import tinkerforge_util as tfutil
 import test_runner.parttool as parttool
 
 def find_gdb():
     path = shutil.which("xtensa-esp32-elf-gdb")
     if path is not None:
-        return path
+        return [path]
 
     path = shutil.which("pio")
     if path is not None:
-        return path + " pkg exec xtensa-esp32-elf-gdb --"
+        return [path, "pkg", "exec", "xtensa-esp32-elf-gdb", "--"]
 
     return None
 
@@ -336,13 +337,13 @@ if __name__ == '__main__':
             if os.path.exists(path):
                 firmware_path = path
 
-        def run_gdb(repo_dir="../", commit_id="<local>"):
+        def run_gdb(timeofcrash, repo_dir="../", commit_id="<local>"):
             coredump_py_gdb_cmds = ""
             if os.path.exists("coredump_py_gdb_cmds"):
                 with open("coredump_py_gdb_cmds", "r", encoding="utf-8") as f:
                     coredump_py_gdb_cmds = f.read().replace("\n", " ")
 
-            os.system(f"{gdb} " +
+            os.system(shlex.join(gdb) + " " +
                         ("-q --batch " if not args.interactive else "") +
                         "-iex 'set pagination off' " +
                         f"-iex 'directory {repo_dir}' " +
@@ -359,6 +360,7 @@ if __name__ == '__main__':
                         "-ex 'echo     - Run \"thread apply all bt full\" to print traces of all threads.\n' " +
                         "-ex 'echo\n' " +
                         f"-ex 'echo Crashed firmware {tf_coredump_data['firmware_file_name']}\n' " +
+                        f"-ex 'echo Crashed at {timeofcrash}\n' " +
                         f"-ex 'echo Using source code at commit {commit_id}\n' " +
                         (f"-ex 'echo {extra_data}\n' " if extra_data is not None else "") +
                         "-ex 'echo ================================================================================\n' " +
@@ -382,8 +384,18 @@ if __name__ == '__main__':
                         f"{firmware_path} {core_dump_path}")
 
         if firmware_path:
+            time_of_crash = "unknown time"
+            try:
+                gdb_timestamp_output = subprocess.check_output(gdb + ["-q", "--batch", "-ex", "p tf_coredump_timestamp", firmware_path, core_dump_path])
+                found_timestamp = re.compile(r"^[$]1 = (.+)$", re.MULTILINE).findall(gdb_timestamp_output.decode("utf-8"))
+
+                if found_timestamp:
+                    time_of_crash = datetime.datetime.fromtimestamp(int(found_timestamp[0]), tz=None).strftime('%Y-%m-%d %H:%M:%S')
+            except (subprocess.CalledProcessError, OSError, ValueError):
+                pass
+
             if args.local_source:
-                run_gdb()
+                run_gdb(time_of_crash)
             else:
                 with tempfile.TemporaryDirectory(prefix="coredump-git-") as d:
                     os.system(f"git clone --shared --no-checkout {script_path}/.. {d}")
@@ -399,7 +411,7 @@ if __name__ == '__main__':
                                 except:
                                     continue
 
-                    run_gdb(d, commit_id)
+                    run_gdb(time_of_crash, d, commit_id)
         else:
             print(f"Firmware {elf_name} not found in any of these places:\n")
             for path in possible_firmware_paths:
