@@ -41,7 +41,10 @@ let x = {
                 "one_two_three_phases_dynamic" : "Automatische Umschaltung ein-/zwei-/dreiphasig",
                 "emulate_energy_manager" : "Energy Manager emulieren"
             },
-
+            "enable_cp_disconnect" : {
+                "title": "CP-Trennung aktivieren",
+                "description": "Trennt für eine kurze Zeit die CP-Leitung beim Umschalten der Phasen."
+            },
             "delay_time" : {
                 "title": "Verzögerungszeit",
                 "description": "Zeit, für die die Umschaltschwelle mindestens unter-/überschritten sein muss"
@@ -93,9 +96,14 @@ let x = {
                 "50" : "Ladevorgang durch EVSE gestoppt"
             },
             "emulate_energy_manager_states" : {
-                "0" : "Bereit",
-                "1" : "Warte auf null Ladestrom",
-                "2" : "Schalte Schütze"
+                "0" : "Inaktiv",
+                "1" : "Standby",
+                "2" : "Ladevorgang aktiv",
+                "3" : "Stoppe Ladevorgang",
+                "4" : "Trenne CP",
+                "5" : "Ändere Phasen",
+                "6" : "Verbinde CP",
+                "7" : "Warte auf Fahrzeug"
             }
         }
     }

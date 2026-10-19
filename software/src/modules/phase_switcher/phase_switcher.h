@@ -112,12 +112,14 @@ private:
     } PhaseSwitcherMode;
 
     enum class SwitchingState : uint8_t {
-        Idle = 0,
+        Inactive = 0,
+        Standby,
+        Charging,
         Stopping,
         DisconnectingCP,
-        DisconnectingCPSettle,
-        WaitUntilSwitched,
-        WaitUntilCPReconnect
+        SwitchingPhases,
+        ReconnectingCP,
+        PostSwitchStateFaking,
     };
 
     bool setup_bricklets();
@@ -128,7 +130,6 @@ private:
     void set_current(uint16_t available_charging_power, uint8_t phases);
     uint8_t get_phases_for_power(uint16_t available_charging_power);
     uint8_t get_phases_from_delayed_phase_requests(bool delayed_phase_request[3]);
-    uint8_t get_emulate_energy_manager_phases();
     bool get_evse_relay_output(bool &relay_output);
     void start_quick_charging();
 
@@ -137,9 +138,9 @@ private:
 
     void monitor_requested_phases();
 
-    void standalone_sequencer();
-    void emulate_energy_manager_sequencer(bool evse_relay_output);
+    void em_emulation_sequencer();
 
+    void standalone_sequencer();
     void sequencer_state_inactive();
     void sequencer_state_standby();
     void sequencer_state_cancelling_evse_start();
@@ -191,27 +192,8 @@ private:
     bool enabled, quick_charging_active;
     PhaseSwitcherMode operating_mode;
     uint8_t requested_phases_pending, requested_phases_pending_delayed, requested_phases = 1;
-
-    SwitchingState switching_state = SwitchingState::Idle, last_switching_state = SwitchingState::Idle;
-    micros_t last_state_packet = -1_h; // System boot is time 0. Timestamps must be initialized with old enough values for correct deadline calculation after start-up.
-    bool allocated_current_after_last_disconnect = true;
-    bool cp_disconnect_enabled;
-    bool skip_cp_disconnect = false;
-    uint8_t last_iec61851_state = 255;
-    uint8_t last_charger_state = 255;
-
-
-    uint16_t emulate_energy_manager_allowed_current = 0;
-    bool emulate_energy_manager_zero_current_confirmed = false;
-    bool emulate_energy_manager_phase_initialized = false;
-    bool cp_disconnect_requested = false;
-    bool emulate_energy_manager_cp_disconnected = false;
-
-
-
     uint16_t available_charging_power;
     PhaseSwitcherState standalone_sequencer_state;
-    micros_t last_state_change = 0_us;
     bool delayed_phase_request[3] = {false, false, false};
     DelayTimer delay_timer[3];
 
@@ -219,8 +201,22 @@ private:
     IEC61851State iec61851_state;
     uint8_t auto_start_charging;
 
+    SwitchingState switching_state = SwitchingState::Standby, last_switching_state = SwitchingState::Standby;
+    micros_t last_state_packet = -1_h; // System boot is time 0. Timestamps must be initialized with old enough values for correct deadline calculation after start-up.
+    bool allocated_current_after_last_disconnect = true;
+    bool cp_disconnect_enabled;
+    bool skip_cp_disconnect = false;
+    uint8_t faked_iec61851_state = 255;
+    uint8_t faked_charger_state = 255;
+
+    bool cp_disconnect_requested = false;
+
+    micros_t last_state_change = 0_us;
+    micros_t next_state_change_after;
+
     bool input_channels[4] = {false, false, false, false};
     bool output_channels[4] = {false, false, false, false};
+    bool evse_relay_output;
     bool contactor_error;
 
     bool io_input_values[4] = {};

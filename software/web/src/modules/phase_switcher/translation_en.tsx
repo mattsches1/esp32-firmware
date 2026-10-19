@@ -41,7 +41,10 @@ let x = {
                 "one_two_three_phases_dynamic" : "Automatic switching one/two/three phases",
                 "emulate_energy_manager" : "Emulate energy manager"
             },
-
+            "enable_cp_disconnect" : {
+                "title": "Enable CP Disconnect",
+                "description": "Disconnects the CP line for a short time when switching phases."
+            },
             "delay_time" : {
                 "title": "Delay time",
                 "description": "Time for which the available power needs to be above/below the switching point"
@@ -93,9 +96,14 @@ let x = {
                 "50" : "Charging stopped by EVSE"
             },
             "emulate_energy_manager_states" : {
-                "0" : "Idle",
-                "1" : "Waiting for zero current",
-                "2" : "Switching contactors"
+                "0" : "Inactive",
+                "1" : "Standby",
+                "2" : "Charging",
+                "3" : "Stopping charging",
+                "4" : "Disconnecting CP",
+                "5" : "Changing phases",
+                "6" : "Connecting CP",
+                "7" : "Waiting for vehicle"
             }
         }
     }

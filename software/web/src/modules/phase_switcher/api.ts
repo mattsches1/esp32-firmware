@@ -17,7 +17,8 @@ export interface config {
     delay_time_more_phases: number,
     delay_time_less_phases: number,
     minimum_duration: number,
-    pause_time: number
+    pause_time: number,
+    enable_cp_disconnect: boolean
 }
 
 export interface low_level_state {

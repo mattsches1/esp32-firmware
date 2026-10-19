@@ -33,6 +33,7 @@ import { SubPage } from "../../ts/components/sub_page";
 import { NavbarItem } from "../../ts/components/navbar_item";
 import { StatusSection } from "../../ts/components/status_section";
 import { Activity } from "react-feather";
+import { Switch } from "ts/components/switch";
 
 type PhaseSwitcherConfig = API.getType["phase_switcher/config"];
 type PhaseSwitcherState = API.getType["phase_switcher/state"];
@@ -203,6 +204,19 @@ export class PhaseSwitcher extends ConfigComponent<"phase_switcher/config", {sta
                         ]}
                     />
                 </FormRow>
+                <Collapse in={(state.operating_mode == 7)}>
+                    <div>
+                        <FormRow label={__("phase_switcher.content.enable_cp_disconnect.title")} >
+                            <Switch desc={__("phase_switcher.content.enable_cp_disconnect.description")}
+                                checked={state.enable_cp_disconnect}
+                                onClick={() => {
+                                            let enable_cp_disconnect = !state.enable_cp_disconnect;
+                                            this.setState({enable_cp_disconnect: enable_cp_disconnect});
+                                        }}
+                                />
+                        </FormRow>
+                    </div>
+                </Collapse>
                 <Collapse in={(state.operating_mode != 0 && state.operating_mode != 7)}>
                     <div>
                         <FormRow label={__("phase_switcher.content.delay_time.title")} label_muted={__("phase_switcher.content.delay_time.description")}>
@@ -220,12 +234,16 @@ export class PhaseSwitcher extends ConfigComponent<"phase_switcher/config", {sta
                         </FormRow>
                     </div>
                 </Collapse>
-                <FormRow label={__("phase_switcher.content.pause_time.title")} label_muted={__("phase_switcher.content.pause_time.description")}>
-                    <div class="row gx-2 gy-1">
-                        <div class="col-md-6"><InputNumber min={10} max={3600} value={state.pause_time} unit="s" onValue={this.set("pause_time")} /></div>
-                        <div class="col-md-6"><InputText value={format_seconds(pause_time)} /></div>
+                <Collapse in={(state.operating_mode != 7 || !state.enable_cp_disconnect)}>
+                    <div>
+                        <FormRow label={__("phase_switcher.content.pause_time.title")} label_muted={__("phase_switcher.content.pause_time.description")}>
+                            <div class="row gx-2 gy-1">
+                                <div class="col-md-6"><InputNumber min={10} max={3600} value={state.pause_time} unit="s" onValue={this.set("pause_time")} /></div>
+                                <div class="col-md-6"><InputText value={format_seconds(pause_time)} /></div>
+                            </div>
+                        </FormRow>
                     </div>
-                </FormRow>
+                </Collapse>
                 <CollapsedSection heading={__("phase_switcher.content.details")}>
                     <FormRow label={__("phase_switcher.content.channel_states.title")} label_muted={__("phase_switcher.content.channel_states.description")}>
                         <div class="row gx-3">
