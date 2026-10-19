@@ -87,32 +87,32 @@ void ESP32Brick::setup()
     pinMode(BLUE_LED, OUTPUT);
     pinMode(BUTTON, INPUT);
 
+    digitalWrite(GREEN_LED, HIGH);
+
     green_led_pin = GREEN_LED;
     blue_led_pin = BLUE_LED;
     button_pin = BUTTON;
 
-    task_scheduler.scheduleUncancelable([](){
-#if MODULE_WATCHDOG_AVAILABLE()
-        static int watchdog_handle = watchdog.add("esp_led_blink", "Main thread blocked");
-        watchdog.reset(watchdog_handle);
-#endif
-        led_blink(BLUE_LED, 2000, 1, 0);
-    }, 100_ms);
+    // LED is on during boot and low-active. Switch it off on first execution by setting the pin high.
+    task_scheduler.scheduleUncancelable([led_pin_high = true, led_pin = static_cast<uint8_t>(blue_led_pin)]() mutable {
+        const bool high = led_pin_high;
+        led_pin_high = !high;
+        digitalWrite(led_pin, high);
+    }, 998_ms);
 
 
 #if MODULE_SYSTEM_AVAILABLE()
-    task_scheduler.scheduleUncancelable([](){
-        static bool last_btn_value = false;
-        static micros_t last_btn_change = 0_us;
+    // Capture list is large enough to hold 8 bytes.
+    task_scheduler.scheduleUncancelable([last_btn_change = 0_us]() mutable {
+        static bool last_btn_value = true; // Button is low-active.
 
         bool btn = digitalRead(BUTTON);
-        digitalWrite(GREEN_LED, btn);
 
         if (btn != last_btn_value) {
+            digitalWrite(GREEN_LED, btn);
             last_btn_change = now_us();
+            last_btn_value = btn;
         }
-
-        last_btn_value = btn;
 
         if (!btn && deadline_elapsed(last_btn_change + 10_s)) {
             logger.printfln("IO0 button was pressed for 10 seconds. Resetting to factory defaults.");

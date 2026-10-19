@@ -19,7 +19,7 @@
 
 #pragma once
 
-#include <FS.h> // FIXME: without this include here there is a problem with the IPADDR_NONE define in <lwip/ip4_addr.h>
+#include <IPAddress.h> // FIXME: without this include here there is a problem with the IPADDR_NONE define in <lwip/ip4_addr.h>
 #include <array>
 #include <functional>
 #include <lwip/err.h>
@@ -85,8 +85,6 @@ public:
                             bool request_reallocation);
 
     void notify_charger_unresponsive(uint8_t charger_idx);
-
-    void dns_callback(const ip_addr_t *ip, void *callback_arg);
 
 private:
     enum class HostAddressType : uint8_t {

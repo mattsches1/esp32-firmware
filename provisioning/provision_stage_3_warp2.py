@@ -9,7 +9,7 @@ import traceback
 import typing
 import functools
 import json
-from tinkerforge_util.colored import red, green, blue
+from tinkerforge_util.colored import red, green, blue, yellow
 import tinkerforge_util as tfutil
 
 tfutil.create_parent_module(__file__, 'provisioning')
@@ -127,7 +127,8 @@ class Stage3:
     def __init__(self,
                  generation,
                  is_front_panel_button_pressed_function,
-                 has_evse_error_function,
+                 get_evse_error_function,
+                 get_dc_fault_current_bits_function,
                  get_iec_state_function,
                  reset_dc_fault_function,
                  switch_phases_function,
@@ -138,10 +139,12 @@ class Stage3:
                  get_meter_voltages_function,
                  set_iso15118_enabled_function,
                  get_iso15118_ev_mac_function,
-                 get_iso15118_attenuation_profile_function):
+                 get_iso15118_attenuation_profile_function,
+                 get_gpio_state_function):
         self.generation = generation
         self.is_front_panel_button_pressed_function = is_front_panel_button_pressed_function
-        self.has_evse_error_function = has_evse_error_function
+        self.get_evse_error_function = get_evse_error_function
+        self.get_dc_fault_current_bits_function = get_dc_fault_current_bits_function
         self.get_iec_state_function = get_iec_state_function
         self.reset_dc_fault_function = reset_dc_fault_function
         self.switch_phases_function = switch_phases_function
@@ -153,6 +156,7 @@ class Stage3:
         self.set_iso15118_enabled_function = set_iso15118_enabled_function
         self.get_iso15118_ev_mac_function = get_iso15118_ev_mac_function
         self.get_iso15118_attenuation_profile_function = get_iso15118_attenuation_profile_function
+        self.get_gpio_state_function = get_gpio_state_function
 
         self.ipcon = IPConnection()
         self.inventory = Inventory(self.ipcon)
@@ -176,9 +180,9 @@ class Stage3:
                 tries -= 1
 
                 if tries == 1:
-                    print('WARNING: Could not complete action for device at position {0}, 1 try left: {1}'.format(position, e))
+                    print(yellow('WARNING: Could not complete action for device at position {0}, 1 try left: {1}'.format(position, e)))
                 elif tries > 1:
-                    print('WARNING: Could not complete action for device at position {0}, {1} tries left: {2}'.format(position, tries, e))
+                    print(yellow('WARNING: Could not complete action for device at position {0}, {1} tries left: {2}'.format(position, tries, e)))
                 else:
                     fatal_error('Could not complete action for device at position {0}: {1}'.format(position, e), other_exception=e)
 
@@ -216,9 +220,9 @@ class Stage3:
                     tries[position] -= 1
 
                     if tries[position] == 1:
-                        print('WARNING: Could not complete action {0} for device at position {1}, 1 try left: {2}'.format(position[1], position[0], e))
+                        print(yellow('WARNING: Could not complete action {0} for device at position {1}, 1 try left: {2}'.format(position[1], position[0], e)))
                     elif tries[position] > 1:
-                        print('WARNING: Could not complete action {0} for device at position {1}, {2} tries left: {3}'.format(position[1], position[0], tries[position], e))
+                        print(yellow('WARNING: Could not complete action {0} for device at position {1}, {2} tries left: {3}'.format(position[1], position[0], tries[position], e)))
                     else:
                         fatal_error('Could not complete action {0} for device at position {1}: {2}'.format(position[1], position[0], e), other_exception=e)
                 else:
@@ -475,21 +479,42 @@ class Stage3:
     # internal
     def check_iec_state(self, expected_state):
         assert self.get_iec_state_function != None
+        assert self.get_evse_error_function != None
+        assert self.get_dc_fault_current_bits_function != None
+        assert self.get_gpio_state_function != None
 
         actual_states = set()
         start = time.monotonic()
-
         error_counter = 0
+
         while time.monotonic() < start + IEC_STATE_CHECK_DURATION:
             try:
                 actual_states.add(self.get_iec_state_function()) # FIXME: missing error handling
             except:
                 error_counter += 1
+
                 if error_counter == 3:
                     raise
+
             time.sleep(IEC_STATE_CHECK_INTERVAL)
 
-        return actual_states == set(expected_state)
+        success = actual_states == set(expected_state)
+
+        if not success:
+            error = self.get_evse_error_function()
+            dc_fault_bits = self.get_dc_fault_current_bits_function() & 0b111111  # ignore sensor type
+            gpio = [int(x) for x in self.get_gpio_state_function()]
+
+            if len(actual_states) == 0:
+                actual_states_str = 'none'
+            elif len(actual_states) == 1:
+                actual_states_str = list(actual_states)[0]
+            else:
+                actual_states_str = str(actual_states)
+
+            print(yellow(f'WARNING: Charger in wrong IEC state {actual_states_str}, instead of {expected_state}, evse_error={error} evse_dc_fault_bits={dc_fault_bits} evse_gpio={gpio}'))
+
+        return success
 
     def setup(self):
         assert not self.prepared
@@ -739,6 +764,29 @@ class Stage3:
     def reset_dc_fault(self, cp_pe_state):
         print('Resetting DC fault')
 
+        # wait for DC fault to actually clear
+        start = time.monotonic()
+        duration = -1
+        timeout = 30
+
+        while duration < timeout:
+            gpio_state = self.get_gpio_state_function()
+
+            if not any(gpio_state[:3]):
+                if duration < 0:
+                    print('DC fault already cleared')
+                else:
+                    print(f'DC fault cleared after {duration}s')
+
+                break
+
+            time.sleep(0.1)
+
+            duration = time.monotonic() - start
+        else:
+            fatal_error(f'DC fault still present after {timeout}s')
+
+        # reset DC fault state in EVSE
         self.reset_dc_fault_function()
 
         time.sleep(EVSE_SETTLE_DURATION)
@@ -754,6 +802,7 @@ class Stage3:
 
         time.sleep(DC_PROTECT_SETTLE_DURATION)
 
+        # change to target CP/PE state
         if cp_pe_state != 'A':
             self.change_cp_pe_state(cp_pe_state)
 
@@ -948,11 +997,13 @@ class Stage3:
 
     # requires power_on
     def test_charger(self, result, has_phase_switch, is_warp2):
-        assert self.has_evse_error_function != None
+        assert self.get_evse_error_function != None
+        assert self.get_dc_fault_current_bits_function != None
         assert self.get_iec_state_function != None
         assert self.reset_dc_fault_function != None
         assert self.get_evse_uptime_function != None
         assert self.reset_evse_function != None
+        assert self.get_gpio_state_function != None
 
         report = result["electrical_tests"]
 
@@ -1003,7 +1054,7 @@ class Stage3:
 
                 fatal_error('Charger not in IEC state {0}. Is CP wire connected correctly to the EVSE?'.format(state))
 
-            if self.has_evse_error_function():
+            if self.get_evse_error_function() != 0:
                 if state != 'D':
                     fatal_error('Unexpected EVSE error')
             else:
@@ -1340,7 +1391,8 @@ def main():
 
     stage3 = Stage3(3,
                     is_front_panel_button_pressed_function=lambda: False,
-                    has_evse_error_function=lambda: False,
+                    get_evse_error_function=lambda: 0,
+                    get_dc_fault_current_bits_function=lambda: 0,
                     get_iec_state_function=lambda: 'A',
                     reset_dc_fault_function=lambda: None,
                     switch_phases_function=lambda x: None,
@@ -1351,7 +1403,8 @@ def main():
                     get_meter_voltages_function=lambda: None,
                     set_iso15118_enabled_function=lambda: None,
                     get_iso15118_ev_mac_function=lambda: None,
-                    get_iso15118_attenuation_profile_function=lambda: None)
+                    get_iso15118_attenuation_profile_function=lambda: None,
+                    get_gpio_state_function=lambda: None)
 
     stage3.setup()
 

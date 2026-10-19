@@ -95,17 +95,17 @@ private:
         String host;
         uint16_t port;
         uint32_t cookie;
-        BatteryMode mode;
         uint8_t device_address;
         uint16_t transaction_id_mask = UINT16_MAX;
         uint16_t repeat_interval; // seconds
+        BatteryMode mode;
         BatteryModbusTCPTableID table_id;
         Config *discover_table_config = nullptr;
         BatteryModbusTCP::DiscoverContext *discover_ctx = nullptr;
         BatteryModbusTCP::TableSpec *table = nullptr;
         BatteryModbusTCP::WriterContext *writer_ctx = nullptr;
         TestState state;
-        TestState state_after_discover;
+        TestState state_after_destroy_discover;
         char printfln_buffer[512] = "";
         micros_t printfln_last_flush = 0_us;
         size_t printfln_buffer_used = 0;

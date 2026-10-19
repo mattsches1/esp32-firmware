@@ -342,9 +342,13 @@ def reset_dc_fault():
     global evse
     return retry_wrapper(lambda: evse.reset_dc_fault_current_state(0xDC42FA23), "reset DC fault current state")
 
-def has_evse_error():
+def get_evse_error():
     global evse
-    return retry_wrapper(lambda: evse.get_state().error_state != 0, "get EVSE error state")
+    return retry_wrapper(lambda: evse.get_state().error_state, "get EVSE error state")
+
+def get_dc_fault_current_bits():
+    global evse
+    return retry_wrapper(lambda: evse.get_state().dc_fault_current_state, "get EVSE DC fault current bits")
 
 def get_contactor_state():
     global evse
@@ -674,7 +678,6 @@ def set_iso15118_enabled(enable: bool):
     except Exception as e:
         fatal_error("Failed to enable ISO 15118: {}".format(e), other_exception=e)
 
-
 def get_iso15118_ev_mac():
     try:
         with urllib.request.urlopen("http://{}/iso15118/state_slac/pev_mac".format(host), timeout=5) as f:
@@ -683,7 +686,6 @@ def get_iso15118_ev_mac():
         fatal_error("Failed to get ISO 15118 EV MAC address: {} {}".format(e, e.read()), other_exception=e)
     except Exception as e:
         fatal_error("Failed to get ISO 15118 EV MAC address: {}".format(e), other_exception=e)
-
 
 def get_iso15118_attenuation_profile():
     try:
@@ -733,6 +735,10 @@ def upload_iso15118_pib():
 
     set_iso15118_enabled(False)
 
+def get_gpio_state():
+    global evse
+    return retry_wrapper(lambda: evse.get_low_level_state().gpio, "get GPIO state")
+
 def led_wrap():
     global commit_message
     global files_to_commit
@@ -765,7 +771,8 @@ def led_wrap():
     try:
         stage3 = Stage3(int(scanner.qr_gen),
                         is_front_panel_button_pressed_function=is_front_panel_button_pressed,
-                        has_evse_error_function=has_evse_error,
+                        get_evse_error_function=get_evse_error,
+                        get_dc_fault_current_bits_function=get_dc_fault_current_bits,
                         get_iec_state_function=get_iec_state,
                         reset_dc_fault_function=reset_dc_fault,
                         switch_phases_function=switch_phases,
@@ -776,12 +783,18 @@ def led_wrap():
                         get_meter_voltages_function=get_meter_voltages,
                         set_iso15118_enabled_function=set_iso15118_enabled,
                         get_iso15118_ev_mac_function=get_iso15118_ev_mac,
-                        get_iso15118_attenuation_profile_function=get_iso15118_attenuation_profile)
+                        get_iso15118_attenuation_profile_function=get_iso15118_attenuation_profile,
+                        get_gpio_state_function=get_gpio_state)
 
         stage3.setup()
         stage3.set_led_strip_color((0, 0, 255))
     except BaseException as e:
-        print(red(f'Setup failed: {e}'))
+        e_str = str(e)
+
+        if len(e_str) == 0:
+            e_str = type(e).__name__
+
+        print(red(f'Setup failed: {e_str}'))
         orig_print(red(traceback.format_exc().rstrip()))
 
         commit_message += ' (setup failure)'
@@ -800,9 +813,14 @@ def led_wrap():
 
         print(green('Test successful. Aftermath pending...'))
     except BaseException as e:
-        print(red(f'Test failed: {e}'))
+        e_str = str(e)
 
-        result['failure_exception'] = str(e)
+        if len(e_str) == 0:
+            e_str = type(e).__name__
+
+        print(red(f'Test failed: {e_str}'))
+
+        result['failure_exception'] = e_str
         result['failure_traceback'] = traceback.format_exc()
 
         if power_off_on_error:
@@ -893,7 +911,12 @@ def led_wrap():
 
         print(green('Done!'))
     except BaseException as e:
-        print(red(f'Aftermath failed: {e}'))
+        e_str = str(e)
+
+        if len(e_str) == 0:
+            e_str = type(e).__name__
+
+        print(red(f'Aftermath failed: {e_str}'))
         orig_print(red(traceback.format_exc().rstrip()))
 
         stage3.set_led_strip_color((255, 0, 0))

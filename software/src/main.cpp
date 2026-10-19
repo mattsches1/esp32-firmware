@@ -39,7 +39,7 @@
 BootStage boot_stage = BootStage::STATIC_INITIALIZATION;
 Language default_language = Language::German;
 
-static IModule **loop_array = nullptr;
+static imodule_info *loop_array = nullptr;
 static size_t loop_array_size = 0;
 static size_t loop_array_position = 0;
 
@@ -165,10 +165,6 @@ static void pre_reboot()
     }
 }
 
-#if MODULE_WATCHDOG_AVAILABLE()
-static int watchdog_handle;
-#endif
-
 static void register_default_urls() {
     server.on_HTTPThread("/", HTTP_GET, [](WebServerRequest request) {
         return send_index_html(request);
@@ -285,40 +281,41 @@ void setup()
 
     // Add all overridden loop functions to an array for round-robin execution.
     if (loop_array_size > 0) {
-        loop_array = static_cast<IModule **>(perm_alloc(sizeof(IModule *) * loop_array_size, DRAM));
+        loop_array = static_cast<imodule_info *>(perm_alloc(sizeof(imodule_info) * loop_array_size, DRAM));
 
         size_t loop_array_used = 0;
         for (size_t i = 0; i < imodules_count; i++) {
             if (is_module_loop_overridden(*imodules[i].imodule)) {
-                loop_array[loop_array_used] = *imodules[i].imodule;
+                loop_array[loop_array_used] = imodules[i];
                 loop_array_used++;
             }
         }
     }
 
 #if MODULE_WATCHDOG_AVAILABLE()
-    watchdog_handle = watchdog.add("main_loop", "Main thread blocked", 30_s, 0_ms, true);
+    const int watchdog_handle = watchdog.add("main_loop", "Main thread or task scheduler blocked", 30_s, 0_ms, true);
+
+    task_scheduler.scheduleUncancelable([watchdog_handle]() {
+        watchdog.reset(watchdog_handle);
+    }, 0_ms, 2_s);
+
 #endif
 
     if (esp_register_shutdown_handler(pre_reboot) != ESP_OK) {
         logger.printfln("Failed to register reboot handler");
     }
 
-    logger.printfln("Initialization done");
-
 #if MODULE_IO_SCHEDULER_AVAILABLE()
     // Hand over HAL ownership from the main task to the IO task.
     io_scheduler.start_task();
 #endif
 
+    logger.printfln("Initialization done");
+
     boot_stage = BootStage::LOOP;
 }
 
 void loop() {
-#if MODULE_WATCHDOG_AVAILABLE()
-    watchdog.reset(watchdog_handle);
-#endif
-
 #if !MODULE_IO_SCHEDULER_AVAILABLE()
     tf_hal_tick(&hal, 0);
 #endif
@@ -330,7 +327,17 @@ void loop() {
 
     // Round-robin for modules' loop functions, to prioritize HAL ticks and scheduler.
     if (loop_array != nullptr) {
-        loop_array[loop_array_position]->loop();
+#if MODULE_DEBUG_AVAILABLE()
+        const micros_t t_start = now_us();
+#endif
+
+        imodule_info *module = loop_array + loop_array_position;
+        (*module->imodule)->loop();
+
+#if MODULE_DEBUG_AVAILABLE()
+        const micros_t t_runtime = now_us() - t_start;
+        debug.task_scheduler_task_accounting_call(module->name, 0, t_runtime);
+#endif
 
         loop_array_position++;
         if (loop_array_position >= loop_array_size) {

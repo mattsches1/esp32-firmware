@@ -36,7 +36,7 @@ import { DiscoveryResultGroup, DiscoveryResultItem, DiscoveryResultItemProps } f
 const SCAN_CONTINUE_INTERVAL = 3000; // milliseconds
 const SCAN_LOG_INTERVAL = 250; // milliseconds
 
-export interface SunSpecDeviceScannerResult {
+export interface SunSpecScanResult {
     unique_id: string;
     manufacturer_name: string;
     model_name: string;
@@ -47,15 +47,16 @@ export interface SunSpecDeviceScannerResult {
     model_instance: number;
 }
 
-interface SunSpecDeviceScannerProps {
+interface SunSpecScannerProps {
     host: string;
     port: number;
+    exclude_model_from_display_name?: boolean;
     on_is_model_visible: (model_id: number) => boolean;
     on_is_model_supported: (model_id: number) => boolean;
-    on_result_selected: (result: SunSpecDeviceScannerResult) => void;
+    on_result_selected: (result: SunSpecScanResult) => void;
 }
 
-interface SunSpecDeviceScannerState {
+interface SunSpecScannerState {
     device_address_first: number;
     device_address_last: number;
     running: boolean;
@@ -65,10 +66,10 @@ interface SunSpecDeviceScannerState {
     progress: number;
     log: string;
     show_log: boolean;
-    results: SunSpecDeviceScannerResult[];
+    results: SunSpecScanResult[];
 }
 
-export class SunSpecDeviceScanner extends Component<SunSpecDeviceScannerProps, SunSpecDeviceScannerState> {
+export class SunSpecScanner extends Component<SunSpecScannerProps, SunSpecScannerState> {
     continue_timer: number = undefined;
     log_timer: number = undefined;
     pending_log: string = '';
@@ -144,11 +145,18 @@ export class SunSpecDeviceScanner extends Component<SunSpecDeviceScannerProps, S
                     manufacturer_name = 'KOSTAL';
                 }
 
+                let model_name = scan_result.model_name.trim();
+                let display_name = model_name.startsWith(manufacturer_name) ? model_name : manufacturer_name + ' ' + model_name;
+
+                if (!this.props.exclude_model_from_display_name) {
+                    display_name += ': ' + translate_unchecked(`sun_spec.content.model_${scan_result.model_id}`);
+                }
+
                 this.setState({results: this.state.results.concat({
                     unique_id: unique_id,
                     manufacturer_name: scan_result.manufacturer_name,
                     model_name: scan_result.model_name,
-                    display_name: removeUnicodeHacks((scan_result.model_name.startsWith(manufacturer_name) ? scan_result.model_name.trim() : manufacturer_name + ' ' + scan_result.model_name.trim()) + ': ' + translate_unchecked(`sun_spec.content.model_${scan_result.model_id}`)).substring(0, 65),
+                    display_name: removeUnicodeHacks(display_name).substring(0, 65),
                     serial_number: scan_result.serial_number,
                     device_address: scan_result.device_address,
                     model_id: scan_result.model_id,
@@ -224,7 +232,7 @@ export class SunSpecDeviceScanner extends Component<SunSpecDeviceScannerProps, S
         await this.abort_scan();
     }
 
-    get_scan_result_item(result: SunSpecDeviceScannerResult): VNode<DiscoveryResultItemProps> {
+    get_scan_result_item(result: SunSpecScanResult): VNode<DiscoveryResultItemProps> {
         let preferred_model_id: number = null;
 
         if ([101, 102, 103, 201, 202, 203, 204].indexOf(result.model_id) >= 0 &&
@@ -373,6 +381,12 @@ export class SunSpecDeviceScanner extends Component<SunSpecDeviceScannerProps, S
                         <Download/>
                     </Button>
                 </FormRow></>
+                : undefined}
+
+            {!this.state.running && this.state.progress == 100 && this.state.results.length == 0 ?
+                <FormRow label={__("sun_spec.content.scan_results")}>
+                    <Alert variant="warning" className="mb-0">{__("sun_spec.content.scan_no_result")}</Alert>
+                </FormRow>
                 : undefined}
 
             {this.state.results.length > 0 ?
