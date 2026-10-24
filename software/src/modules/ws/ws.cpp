@@ -34,8 +34,6 @@ static const char *suffix = "}\n";
 static size_t prefix_len = strlen(prefix);
 static size_t infix_len = strlen(infix);
 static size_t suffix_len = strlen(suffix);
-static constexpr size_t MAX_API_STATES_PER_WS_SNAPSHOT_CHUNK = 8;
-static constexpr micros_t MAX_WS_SNAPSHOT_SERIALIZATION_TIME = 2_ms;
 
 void WS::pre_setup()
 {
@@ -75,16 +73,7 @@ void WS::register_urls()
 
         while (!done) {
             auto result = task_scheduler.await([&i, &done, &sb]() {
-                const auto serialization_start = now_us();
-                size_t serialized_states = 0;
-
                 for (; i < api.states.size(); ++i) {
-                    if (serialized_states >= MAX_API_STATES_PER_WS_SNAPSHOT_CHUNK ||
-                        (serialized_states > 0 && now_us() - serialization_start >= MAX_WS_SNAPSHOT_SERIALIZATION_TIME)) {
-                        done = false;
-                        return;
-                    }
-
                     auto &reg = api.states[i];
                     auto path = reg.path;
                     auto path_len = reg.get_path_len();
@@ -108,7 +97,6 @@ void WS::register_urls()
                     reg.config->to_string_except(reg.keys_to_censor, reg.get_keys_to_censor_len(), &sb);
 
                     sb.puts(suffix, suffix_len);
-                    ++serialized_states;
                 }
 
                 done = true;
@@ -166,20 +154,13 @@ bool WS::pushStateUpdate(size_t stateIdx, const String &payload, const String &p
 
     sb.puts(payload);
 
-    return pushStateUpdateEnd(&sb, stateIdx);
+    return pushStateUpdateEnd(&sb);
 }
 
 // returns true on success
 bool WS::pushRawStateUpdate(const String &payload, const String &path)
 {
-    StringBuilder sb;
-
-    if (!pushRawStateUpdateBegin(&sb, payload.length(), path.c_str(), path.length())) {
-        return false;
-    }
-
-    sb.puts(payload);
-    return pushRawStateUpdateEnd(&sb);
+    return pushStateUpdate(0, payload, path);
 }
 
 // returns true if it is okay to call pushStateUpdateEnd
@@ -203,18 +184,12 @@ bool WS::pushStateUpdateBegin(StringBuilder *sb, size_t stateIdx, size_t payload
 // returns true on success
 bool WS::pushStateUpdateEnd(StringBuilder *sb)
 {
-    return pushRawStateUpdateEnd(sb);
-}
-
-// returns true on success
-bool WS::pushStateUpdateEnd(StringBuilder *sb, size_t stateIdx)
-{
     sb->puts(suffix, suffix_len);
 
     size_t len = sb->getLength();
     char *buf = sb->take();
 
-    return web_sockets.sendToAllOwnedStateUpdate(buf, len, stateIdx);
+    return web_sockets.sendToAllOwned(buf, len);
 }
 
 // returns true if it is okay to call pushRawStateUpdateEnd
@@ -226,12 +201,7 @@ bool WS::pushRawStateUpdateBegin(StringBuilder *sb, size_t payload_len, const ch
 // returns true on success
 bool WS::pushRawStateUpdateEnd(StringBuilder *sb)
 {
-    sb->puts(suffix, suffix_len);
-
-    size_t len = sb->getLength();
-    char *buf = sb->take();
-
-    return web_sockets.sendToAllOwned(buf, len);
+    return pushStateUpdateEnd(sb);
 }
 
 IAPIBackend::WantsStateUpdate WS::wantsStateUpdate(size_t stateIdx)

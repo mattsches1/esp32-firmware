@@ -36,8 +36,6 @@ struct ws_work_item {
     char *payload;
     size_t payload_len;
     httpd_ws_type_t ws_type;
-    bool replaceable_state_update = false;
-    size_t state_idx = 0;
 };
 
 #define WEBSOCKET_WORKER_ENQUEUED 0
@@ -60,7 +58,6 @@ public:
     bool sendToClientOwned(char *payload, size_t payload_len, int sock, httpd_ws_type_t ws_type = HTTPD_WS_TYPE_TEXT);
     bool sendToAll(const char *payload, size_t payload_len, httpd_ws_type_t ws_type = HTTPD_WS_TYPE_TEXT);
     bool sendToAllOwned(char *payload, size_t payload_len, httpd_ws_type_t ws_type = HTTPD_WS_TYPE_TEXT);
-    bool sendToAllOwnedStateUpdate(char *payload, size_t payload_len, size_t state_idx);
     bool sendToAllOwnedNoFreeBlocking_HTTPThread(char *payload, size_t payload_len, httpd_ws_type_t ws_type = HTTPD_WS_TYPE_TEXT);
 
     bool haveActiveClient();
