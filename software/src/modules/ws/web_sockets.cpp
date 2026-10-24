@@ -31,6 +31,8 @@
 
 static constexpr micros_t KEEP_ALIVE_TIMEOUT = 10_s;
 static constexpr int BROADCAST_FD = -2;
+static constexpr size_t MAX_WEB_SOCKET_WORK_ITEMS_PER_RUN = 8;
+static constexpr micros_t MAX_WEB_SOCKET_WORK_TIME_PER_RUN = 2_ms;
 
 static void clear_ws_work_item(ws_work_item *wi)
 {
@@ -187,10 +189,32 @@ void WebSockets::work(void *arg)
     ws->processPendingCloses_HTTPThread();
     ws->checkActiveClients();
 
+    const auto work_start = now_us();
+    size_t work_item_count = 0;
     ws_work_item wi;
-    while (ws->haveWork(&wi)) {
+    while (work_item_count < MAX_WEB_SOCKET_WORK_ITEMS_PER_RUN &&
+           (work_item_count == 0 || (now_us() - work_start) < MAX_WEB_SOCKET_WORK_TIME_PER_RUN) &&
+           ws->haveWork(&wi)) {
         ws->send_ws_work_item(&wi);
         clear_ws_work_item(&wi);
+        ++work_item_count;
+    }
+
+    bool has_more_work;
+    {
+        std::lock_guard<std::recursive_mutex> lock{ws->work_queue_mutex};
+        has_more_work = !ws->work_queue.empty() || ws->pending_close_count > 0;
+    }
+
+    if (has_more_work) {
+#if MODULE_WATCHDOG_AVAILABLE()
+        watchdog.reset(ws->watchdog_handle);
+#endif
+        ws->worker_active = WEBSOCKET_WORKER_DONE;
+        task_scheduler.scheduleOnce([ws]() {
+            ws->triggerHttpThread();
+        }, 5_ms);
+        return;
     }
 
     ws->worker_active = WEBSOCKET_WORKER_DONE;
@@ -596,6 +620,32 @@ bool WebSockets::sendToAllOwned(char *payload, size_t payload_len, httpd_ws_type
     return sendToAllOwnedInternal(payload, payload_len, ws_type);
 }
 
+// Called by main thread. Only latest-value API state updates may be coalesced.
+bool WebSockets::sendToAllOwnedStateUpdate(char *payload, size_t payload_len, size_t state_idx)
+{
+    if (!this->haveActiveClient()) {
+        free(payload);
+        return true;
+    }
+
+    std::lock_guard<std::recursive_mutex> lock{work_queue_mutex};
+    for (auto it = work_queue.begin(); it != work_queue.end(); ++it) {
+        if (it->replaceable_state_update && it->state_idx == state_idx) {
+            clear_ws_work_item(&*it);
+            work_queue.erase(it);
+            break;
+        }
+    }
+
+    if (queueFull()) {
+        free(payload);
+        return false;
+    }
+
+    work_queue.push_back({BROADCAST_FD, payload, payload_len, HTTPD_WS_TYPE_TEXT, true, state_idx});
+    return true;
+}
+
 // Called by main thread.
 bool WebSockets::sendToAllOwnedInternal(char *payload, size_t payload_len, httpd_ws_type_t ws_type)
 {
@@ -769,24 +819,24 @@ void WebSockets::start(const char *uri, const char *state_path, const char *supp
 
             const int sock = httpd_req_to_sockfd(req);
             bool success = true;
+            this->keepAliveAdd(sock);
 
             if (this->on_client_connect_fn) {
                 WebSocketsClient *client = new WebSocketsClient{sock, this};
 
                 httpd_sess_set_ctx(httpd, sock, client, session_ctx_free_fn);
 
-                // call the client connect callback before adding the client to
-                // the keep alive list to ensure that the full state is send by the
-                // callback before any other message with a partial state might
-                // be send to all clients known by the keep alive list
+                // Work queued during the snapshot callback cannot run on the
+                // HTTP thread until this callback returns, so live updates follow
+                // the initial snapshot on the wire.
                 success = this->on_client_connect_fn(client);
             }
 
             if (success) {
                 logger.tracefln(server.get_trace_buffer_index(), "WS new fd %i connected", sock);
-                this->keepAliveAdd(sock);
                 return request.unsafe_ResponseAlreadySent(); // Don't send a HTTP response after switching to WebSockets.
             } else {
+                this->keepAliveRemove(sock);
                 logger.tracefln(server.get_trace_buffer_index(), "WS new fd %i failed on connect", sock);
                 // Returning ESP_FAIL inside the WebServerRequestReturnProtect should tell httpd to close the connection.
                 return WebServerRequestReturnProtect{.error = ESP_FAIL};

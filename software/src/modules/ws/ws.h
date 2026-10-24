@@ -45,6 +45,7 @@ public:
     bool pushStateUpdateBegin(StringBuilder *sb, size_t stateIdx, size_t payload_len, const char *path, size_t path_len);
     inline bool pushStateUpdateBegin(StringBuilder *sb, size_t stateIdx, size_t payload_len, const char *path) { return pushStateUpdateBegin(sb, stateIdx, payload_len, path, strlen(path)); }
     bool pushStateUpdateEnd(StringBuilder *sb);
+    bool pushStateUpdateEnd(StringBuilder *sb, size_t stateIdx);
     bool pushRawStateUpdateBegin(StringBuilder *sb, size_t payload_len, const char *path, size_t path_len);
     inline bool pushRawStateUpdateBegin(StringBuilder *sb, size_t payload_len, const char *path) { return pushRawStateUpdateBegin(sb, payload_len, path, strlen(path)); }
     bool pushRawStateUpdateEnd(StringBuilder *sb);
