@@ -5,10 +5,13 @@
 import tinkerforge_util as tfutil
 tfutil.create_parent_module(__file__, 'software')
 from software.test_runner.test_context import run_testsuite, TestContext
-from software.src.modules.solar_forecast.tests._common import make_forecast, midnight_today_minutes, FORECAST_COUNT, MAX_FORECAST_SLOTS
+from software.src.modules.solar_forecast.tests._common import make_forecast, midnight_today_minutes, minutes_since_epoch, FORECAST_COUNT, MAX_FORECAST_SLOTS
 
 
 def suite_setup(tc: TestContext):
+    # Pushed data is timestamped with the device clock, which reads 0 until synced
+    tc.wait_for_clock_synced()
+
     # Configure module for push mode
     config = tc.api('solar_forecast/config')
     config['enable'] = True
@@ -37,7 +40,7 @@ def test_push_single_plane(tc: TestContext):
         'forecast': forecast,
     }
 
-    tc.api('solar_forecast/planes/0/forecast_update', payload, timeout=10)
+    tc.api('solar_forecast/planes/0/forecast_update', payload)
 
     result = tc.api('solar_forecast/planes/0/forecast')
     tc.assert_eq(first_date, result.get('first_date'))
@@ -72,7 +75,7 @@ def test_push_auto_enables_plane(tc: TestContext):
         'forecast': forecast,
     }
 
-    tc.api('solar_forecast/planes/1/forecast_update', payload, timeout=10)
+    tc.api('solar_forecast/planes/1/forecast_update', payload)
 
     # Verify plane got auto-enabled
     plane_cfg = tc.api('solar_forecast/planes/1/config')
@@ -94,11 +97,12 @@ def test_push_updates_state(tc: TestContext):
         'forecast': forecast,
     }
 
-    tc.api('solar_forecast/planes/0/forecast_update', payload, timeout=10)
+    tc.api('solar_forecast/planes/0/forecast_update', payload)
 
+    now = minutes_since_epoch()
     state = tc.api('solar_forecast/planes/0/state')
-    tc.assert_gt(0, state.get('last_sync'))
-    tc.assert_gt(0, state.get('last_check'))
+    tc.assert_epsilon(now, 2, state.get('last_sync'))
+    tc.assert_epsilon(now, 2, state.get('last_check'))
 
 
 def test_push_daylight_saving_time(tc: TestContext):
@@ -111,7 +115,7 @@ def test_push_daylight_saving_time(tc: TestContext):
         'forecast': forecast,
     }
 
-    tc.api('solar_forecast/planes/0/forecast_update', payload, timeout=10)
+    tc.api('solar_forecast/planes/0/forecast_update', payload)
 
     result = tc.api('solar_forecast/planes/0/forecast')
     tc.assert_eq(first_date, result.get('first_date'))

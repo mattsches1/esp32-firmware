@@ -10,13 +10,18 @@ from software.src.modules.day_ahead_prices.tests._common import make_prices, mid
 
 
 def suite_setup(tc: TestContext):
+    # Calendar prices are only applied once the clock is synced (needed for the day of week)
+    tc.wait_for_clock_synced()
+
     config = tc.api('day_ahead_prices/config')
     config['enable'] = True
     config['source'] = 1  # Push
     config['enable_calendar'] = True
     tc.api('day_ahead_prices/config_update', config)
 
-    # Clear any leftover spot prices
+
+def setup(tc: TestContext):
+    # Clear spot prices of a previous test (e.g. test_push_plus_calendar)
     tc.api('day_ahead_prices/prices_update', {
         'first_date': midnight_today_minutes(),
         'resolution': 0,

@@ -164,6 +164,14 @@ public:
 #endif
     }
 
+    bool use_prefer_din() const {
+#if OPTIONS_ISO15118_ENABLE_TESTING_OPTIONS()
+        return config_experimental.get("prefer_din")->asBool();
+#else
+        return false;
+#endif
+    }
+
     // Post-SoC round pending, ending at SLAC matching or with Failed_NoNegotiation.
     bool nonegotiation_pending = false;
     // Deadline for the reconnect wait, polled in state_machines_loop().
@@ -190,6 +198,8 @@ public:
     void cancel_cp_resume_task();
 
     void cancel_pending_tasks();
+
+    void rearm_for_next_ev();
 
     // Modem shutdown policy for begin_iec_transition():
     // None:      Caller handles the modem (already off, off pending, or keep on).

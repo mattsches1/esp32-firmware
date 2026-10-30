@@ -11,11 +11,11 @@ from tinkerforge.bricklet_industrial_digital_in_4_v2 import BrickletIndustrialDi
 from tinkerforge.bricklet_industrial_quad_relay_v2 import BrickletIndustrialQuadRelayV2
 from tinkerforge.bricklet_rs485 import BrickletRS485
 
-from .testbox import TestBox,  Meter, Input
+from .testbox import TestBox, Meter, Input
 
 """
 RPi Port    Bricklet            Pin     Function
-A           Ind Dual Relay      0       Input 3 (open -> connected to contactor check, closed -> connected to quad relay (Port B)
+A           Ind Dual Relay      0       not connected
                                 1       Input 4 (open -> connected to contactor check, closed -> connected to quad relay (Port B)
 
 B           Ind Quad Relay V2   0       Input 3 open/closed (iff port A pin 0 is closed)
@@ -53,20 +53,13 @@ class WEMTestBox(TestBox):
 
     ## API
     def connect_meter(self, m: Meter):
-        try:
-            self.C.set_value(self.meter_relays[m])
-        except Exception as e:
-            print(e)
+        self.C.set_value(self.meter_relays[m])
 
     def get_meter_connected(self):
-        try:
-            r = self.C.get_value()
-            for k, v in self.meter_relays.items():
-                if r == v:
-                    return k
-        except Exception as e:
-            print(e)
-            return 'none'
+        r = self.C.get_value()
+        for k, v in self.meter_relays.items():
+            if r == v:
+                return k
 
     def set_input_3(self, i: Input):
         self._set_input(0, i)
@@ -81,18 +74,10 @@ class WEMTestBox(TestBox):
         return self._get_input(1)
 
     def is_relay_closed(self):
-        try:
-            return self.D.get_value()[0]
-        except Exception as e:
-            print(e)
-            return False
+        return self.D.get_value()[0]
 
     def is_contactor_closed(self, contactor: int = 0):
-        try:
-            return not self.D.get_value()[1]
-        except Exception as e:
-            print(e)
-            return False
+        return not self.D.get_value()[1]
 
     def _get_led_state(self):
         return "unknown"
@@ -150,6 +135,8 @@ class WEMTestBox(TestBox):
             self.B.set_selected_value(x, True)
             self.A.set_selected_value(x, True)
         elif i == 'contactor':
+            if x == 0:
+                raise Exception("Only input 4 can be connected to the contactor!")
             self.A.set_selected_value(x, False)
 
     def _get_input(self, x):

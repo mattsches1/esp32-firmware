@@ -304,19 +304,19 @@ specs = [
                 'value_type': 'U16',
             },
             {
-                'name': 'PV Voltage Average [0.1 V]',
+                'name': 'PV Voltage Average [V]',
                 'value_id': 'VoltagePVAvg',
-                'start_address': 'START_ADDRESS_VIRTUAL',
+                'calculate': True,
             },
             {
-                'name': 'PV Current Total [0.1 A]',
+                'name': 'PV Current Total [A]',
                 'value_id': 'CurrentPVSumExport',
-                'start_address': 'START_ADDRESS_VIRTUAL',
+                'calculate': True,
             },
             {
                 'name': 'PV Power Total [W]',
                 'value_id': 'PowerPVSumExport',
-                'start_address': 'START_ADDRESS_VIRTUAL',
+                'calculate': True,
             },
         ],
     },
@@ -999,14 +999,14 @@ specs = [
                 'variants': ['Pro'],
             },
             {
-                'name': 'PV Voltage Average [0.1 V]',
+                'name': 'PV Voltage Average [V]',
                 'value_id': 'VoltagePVAvg',
-                'start_address': 'START_ADDRESS_VIRTUAL',
+                'calculate': True,
             },
             {
-                'name': 'PV Current Total [0.01 A]',
+                'name': 'PV Current Total [A]',
                 'value_id': 'CurrentPVSumExport',
-                'start_address': 'START_ADDRESS_VIRTUAL',
+                'calculate': True,
             },
             {
                 'name': 'PV Power Total [W]',

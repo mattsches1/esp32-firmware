@@ -15,6 +15,7 @@ import atexit
 import fcntl
 import errno
 import fnmatch
+import random
 from tinkerforge_util.colored import red, green, blue, purple, gray
 from junit_xml import TestSuite as JTestSuite, TestCase as JTestCase, to_xml_report_string
 import tinkerforge_util as tfutil
@@ -34,6 +35,7 @@ def main():
     parser.add_argument("--tty",                             help="Path to the serial device of the ESP under test.")
     parser.add_argument("--brickd",                          help="Host of the brick daemon that controls the testbox hardware")
     parser.add_argument("--list-tests", action='store_true', help="Skip all tests that would be executed, only print their names")
+    parser.add_argument("--no-shuffle", action='store_true', help="Don't shuffle test suites and tests")
 
     args = parser.parse_args()
 
@@ -86,6 +88,9 @@ def main():
     # Skip underscore-prefixed helper modules and modules without "run_testsuite"
     suite_runs = [(p, f) for p, f in suite_runs if not p.name.startswith('_') and 'run_testsuite' in p.read_text()]
 
+    if not args.no_shuffle:
+        random.shuffle(suite_runs)
+
     for suite_path, test_filter in suite_runs:
         path = suite_path.absolute()
 
@@ -123,6 +128,8 @@ def main():
                 proc_args += ['--brickd', args.brickd]
             if args.list_tests:
                 proc_args += ['--list-tests']
+            if args.no_shuffle:
+                proc_args += ['--no-shuffle']
 
 
             proc = subprocess.Popen(
@@ -140,7 +147,17 @@ def main():
                     break
                 except OSError as e:
                     if e.errno == errno.ENXIO:
-                        if time.monotonic() - start > 10:
+                        # Test script either is not ready yet or it crashed.
+                        crashed = time.monotonic() - start > 10
+
+                        if not crashed:
+                            try:
+                                rc = proc.wait(0.1)
+                                crashed = True
+                            except subprocess.TimeoutExpired:
+                                pass
+
+                        if crashed:
                             print(red("test script crashed"))
                             try:
                                 print(os.read(stdout, 10000).decode('utf-8'))
@@ -152,7 +169,6 @@ def main():
                                 pass
                             atexit.unregister(os.killpg)
                             sys.exit(1)
-                        time.sleep(0.1)
                     else:
                         raise
 
@@ -228,7 +244,7 @@ def main():
                                 start = time.monotonic()
                                 if not meta_test:
                                     tprint(f"{now} Started {payload["testname"]}", end=" ")
-                                    jcase = JTestCase(payload["testname"], timestamp=now)
+                                    jcase = JTestCase(payload["testname"], timestamp=now, classname=module_name)
                                     jsuite.test_cases.append(jcase)
                                 else:
                                     tprint(gray(f"{now} Started {payload["testname"]}", bold=False), end=" ")

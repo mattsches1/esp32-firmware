@@ -307,13 +307,14 @@ void ISO15118::pre_setup()
         {"nonegotiation_autocharge", Config::Bool(false)},
         {"nonegotiation_after_soc", Config::Bool(false)},
         {"ignore_soc_compatibility", Config::Bool(false)},
+        {"prefer_din", Config::Bool(false)},
     }), [this](Config &update, ConfigSource source) -> String {
         // Restoring settings at boot must also work with a vehicle connected.
         if (source == ConfigSource::File) {
             return "";
         }
 
-        for (const char *key : {"ef_teardown", "nonegotiation_autocharge", "nonegotiation_after_soc", "ignore_soc_compatibility"}) {
+        for (const char *key : {"ef_teardown", "nonegotiation_autocharge", "nonegotiation_after_soc", "ignore_soc_compatibility", "prefer_din"}) {
             if (update.get(key)->asBool() != config_experimental.get(key)->asBool()) {
                 const auto *evse_state = api.getState("evse/state", false);
                 if (evse_state == nullptr || evse_state->get("charger_state")->asUint() != 0) {
@@ -358,8 +359,15 @@ void ISO15118::pre_setup()
                 //       If IEC 61851 charge is ongoing, we should only change the protocol after the charge is done.
                 //       If no charge is ongoing, we can change the protocol immediately.
                 //       If the EVSE Bricklet is already in ISO 15118 mode, we can continue with the state it is already in.
-                evse_v2.set_plc_modem(true);
-                iso15118.set_charging_protocol(TF_EVSE_V2_CHARGING_PROTOCOL_ISO15118, 50);
+                if (initialized) {
+                    // Re-enabled at runtime.
+                    // SLAC may still be in ModemDisabled from an earlier session and an unplug while disabled skipped the state A cleanup.
+                    iso15118.trace("ISO15118: Enabled, rearming for next EV");
+                    rearm_for_next_ev();
+                } else {
+                    evse_v2.set_plc_modem(true);
+                    iso15118.set_charging_protocol(TF_EVSE_V2_CHARGING_PROTOCOL_ISO15118, 50);
+                }
             } else {
                 // TODO: Close sockets and set is_setup = false
                 task_scheduler.cancel(state_machine_task);
@@ -608,30 +616,41 @@ void ISO15118::register_events()
                 return EventResult::OK;
             }
 
-            // Clean up session state
             iso15118.trace("ISO15118: EV disconnected (State A), cleaning up");
-            common.reset_active_socket();
-            common.reset_evcc_vendor();
-            qca700x.link_down();
-            slac.cancel_link_up_task();
-            slac.state = SLACState::ModemReset;
-            slac.api_state.get("modem_initialization_tries")->updateUint(0);
-            iso2.reset_dc_soc_done();
-            iso2.reset_session();
-            din70121.reset_session();
-            iec_temporary_active = false;
-
-            // Re-enable PLC modem for the next EV (no-op if it is already on).
-            evse_v2.set_plc_modem(true);
-
-            // Reset CP back to 5% duty for the next SLAC round.
-            iso15118.set_charging_protocol(TF_EVSE_V2_CHARGING_PROTOCOL_ISO15118, 50);
-
-            slac.reset_slac_init_retry_count();
-            slac.reset_ev_connected_reported();
+            rearm_for_next_ev();
         }
         return EventResult::OK;
     });
+}
+
+void ISO15118::rearm_for_next_ev()
+{
+    nonegotiation_pending = false;
+    reslac_guard_deadline = 0_us;
+    communication_setup_deadline = 0_us;
+
+    cancel_pending_tasks();
+
+    // Clean up session state
+    common.reset_active_socket();
+    common.reset_evcc_vendor();
+    qca700x.link_down();
+    slac.cancel_link_up_task();
+    slac.state = SLACState::ModemReset;
+    slac.api_state.get("modem_initialization_tries")->updateUint(0);
+    iso2.reset_dc_soc_done();
+    iso2.reset_session();
+    din70121.reset_session();
+    iec_temporary_active = false;
+
+    // Re-enable PLC modem for the next EV (no-op if it is already on).
+    evse_v2.set_plc_modem(true);
+
+    // Reset CP back to 5% duty for the next SLAC round.
+    iso15118.set_charging_protocol(TF_EVSE_V2_CHARGING_PROTOCOL_ISO15118, 50);
+
+    slac.reset_slac_init_retry_count();
+    slac.reset_ev_connected_reported();
 }
 
 void ISO15118::state_machines_loop()

@@ -5,16 +5,18 @@
 # configures it to pull from local server.
 
 import json
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 import tinkerforge_util as tfutil
 tfutil.create_parent_module(__file__, 'software')
 from software.test_runner.test_context import run_testsuite, TestContext, TestHTTPSServer
 from software.src.modules.solar_forecast.tests._common import make_forecast, FORECAST_COUNT
 
-_CERT_ID = 5
+CERT_ID = 5
 
 
-def _make_solar_api_response(wh_values: list[int], place: str = "Schloß Holte-Stukenbrock, Germany") -> str:
+def make_solar_api_response(wh_values: list[int], place: str = "Schloß Holte-Stukenbrock, Germany") -> str:
     """Build a forecast.solar-style API response from hourly Wh values"""
     now = datetime.now(timezone.utc)
     day1 = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -46,22 +48,22 @@ def _make_solar_api_response(wh_values: list[int], place: str = "Schloß Holte-S
     return json.dumps(response, separators=(",", ":"))
 
 
-_server: TestHTTPSServer | None = None
-_skip_reason: str | None = None
-_original_config: dict | None = None
-_PROBE_PLACE = "__pull_test_probe__"
+https_server: TestHTTPSServer | None = None
+skip_reason: str | None = None
+original_config: dict | None = None
+PROBE_PLACE = "__pull_test_probe__"
 
-def _get_server() -> TestHTTPSServer:
-    assert _server is not None, "suite_setup must run before tests"
-    return _server
-
-
-def _skip_if_needed(tc: TestContext):
-    if _skip_reason is not None:
-        tc.skip(_skip_reason)
+def get_server() -> TestHTTPSServer:
+    assert https_server is not None, "suite_setup must run before tests"
+    return https_server
 
 
-def _trigger_refetch(tc: TestContext):
+def skip_if_needed(tc: TestContext):
+    if skip_reason is not None:
+        tc.skip(skip_reason)
+
+
+def trigger_refetch(tc: TestContext):
     config = tc.api('solar_forecast/config')
     config['enable'] = False
     tc.api('solar_forecast/config_update', config)
@@ -76,14 +78,17 @@ def _trigger_refetch(tc: TestContext):
     tc.api('solar_forecast/config_update', config)
 
 
-def _configure_and_probe(tc: TestContext) -> str | None:
-    server = _get_server()
+def configure_and_probe(tc: TestContext) -> str | None:
+    # The DUT only pulls once its clock is synced
+    tc.wait_for_clock_synced()
+
+    server = get_server()
 
     config = tc.api('solar_forecast/config')
     config['enable'] = False
     config['source'] = 0 # ForecastService (pull)
     config['api_url'] = server.url
-    config['cert_id'] = _CERT_ID
+    config['cert_id'] = CERT_ID
     tc.api('solar_forecast/config_update', config)
 
     plane_cfg = tc.api('solar_forecast/planes/0/config')
@@ -96,8 +101,8 @@ def _configure_and_probe(tc: TestContext) -> str | None:
     plane_cfg['wp'] = 5000 # 5 kWp
     tc.api('solar_forecast/planes/0/config_update', plane_cfg)
 
-    server.set_response(_make_solar_api_response([0] * FORECAST_COUNT, place=_PROBE_PLACE))
-    _trigger_refetch(tc)
+    server.set_response(make_solar_api_response([0] * FORECAST_COUNT, place=PROBE_PLACE))
+    trigger_refetch(tc)
 
     def check_probe():
         state = tc.api('solar_forecast/planes/0/state')
@@ -112,11 +117,11 @@ def _configure_and_probe(tc: TestContext) -> str | None:
 
 
 def suite_setup(tc: TestContext):
-    global _server, _skip_reason, _original_config
+    global https_server, skip_reason, original_config
 
-    _original_config = tc.api('solar_forecast/config')
-    _server = tc.create_test_https_server(_CERT_ID, 'sf-pull-test')
-    place = _configure_and_probe(tc)
+    original_config = tc.api('solar_forecast/config')
+    https_server = tc.create_test_https_server(CERT_ID, 'sf-pull-test')
+    place = configure_and_probe(tc)
 
     if place is None:
         # Probe timed out, probably blocked by next_sync_forced
@@ -127,7 +132,7 @@ def suite_setup(tc: TestContext):
         # Reboot to reset next_sync_forced
         tc.reboot()
 
-        place = _configure_and_probe(tc)
+        place = configure_and_probe(tc)
         if place is None:
             raise RuntimeError("Probe fetch failed even after reboot")
 
@@ -136,19 +141,19 @@ def suite_setup(tc: TestContext):
     config['enable'] = False
     tc.api('solar_forecast/config_update', config)
 
-    if place != _PROBE_PLACE:
-        _skip_reason = f"Firmware uses hardcoded test data (unsigned build)"
+    if place != PROBE_PLACE:
+        skip_reason = f"Firmware uses hardcoded test data (unsigned build)"
 
 
 def test_pull(tc: TestContext):
-    _skip_if_needed(tc)
+    skip_if_needed(tc)
 
     wh_values = make_forecast(FORECAST_COUNT, base_wh=600, amplitude=300)
     place = "Schloß Holte-Stukenbrock, Germany"
 
-    server = _get_server()
-    server.set_response(_make_solar_api_response(wh_values, place=place))
-    _trigger_refetch(tc)
+    server = get_server()
+    server.set_response(make_solar_api_response(wh_values, place=place))
+    trigger_refetch(tc)
 
     def check():
         forecast = tc.api('solar_forecast/planes/0/forecast')
@@ -170,11 +175,11 @@ def test_pull(tc: TestContext):
 
 
 def test_pull_server_error(tc: TestContext):
-    _skip_if_needed(tc)
+    skip_if_needed(tc)
 
-    server = _get_server()
+    server = get_server()
     server.set_response('{"error":"internal server error"}', status=500)
-    _trigger_refetch(tc)
+    trigger_refetch(tc)
 
     def check_error():
         plane_state = tc.api('solar_forecast/planes/0/state')
@@ -182,29 +187,98 @@ def test_pull_server_error(tc: TestContext):
         tc.assert_eq(0, plane_state.get('last_sync'))
         # On HTTP status error, place is set to the status code string
         tc.assert_eq("500", plane_state.get('place'))
-        # Forecast should be cleared (plane config was toggled in _trigger_refetch)
+        # Forecast should be cleared (plane config was toggled in trigger_refetch)
         forecast = tc.api('solar_forecast/planes/0/forecast')
         tc.assert_eq(0, len(forecast.get('forecast', [])))
 
     tc.wait_for(check_error)
 
 
+def serve_slow_stale_then_new(server: TestHTTPSServer, stale: list[int], new: list[int]) -> threading.Event:
+    """The first request is answered after 3 s with the stale forecast, all others right away with the new one."""
+    first_request = threading.Event()
+
+    def respond(method: str, path: str, body: bytes) -> tuple[int, str]:
+        if not first_request.is_set():
+            first_request.set()
+            time.sleep(3)  # Keep the first download running while the config changes
+            return 200, make_solar_api_response(stale, place="stale")
+        return 200, make_solar_api_response(new, place="new")
+
+    server.set_response_fn(respond)
+    return first_request
+
+
+def expect_new_forecast(tc: TestContext, new: list[int]):
+    def check():
+        tc.assert_eq(new, tc.api('solar_forecast/planes/0/forecast').get('forecast'))
+        tc.assert_eq("new", tc.api('solar_forecast/planes/0/state').get('place'))
+
+    tc.wait_for(check, timeout=15, poll_delay=0.5)
+
+    # The response of the first download must not overwrite the new forecast
+    time.sleep(4)
+    check()
+
+
+def test_config_change_during_download(tc: TestContext):
+    """A module config change while a download is running discards the running download and downloads again."""
+    skip_if_needed(tc)
+
+    stale = make_forecast(FORECAST_COUNT, base_wh=100, amplitude=50)
+    new = make_forecast(FORECAST_COUNT, base_wh=900, amplitude=50)
+    first_request = serve_slow_stale_then_new(get_server(), stale, new)
+    trigger_refetch(tc)
+    tc.assert_true(first_request.wait(timeout=10))
+
+    config = tc.api('solar_forecast/config')
+    config['enable'] = False
+    tc.api('solar_forecast/config_update', config)
+    config['enable'] = True
+    tc.api('solar_forecast/config_update', config)
+
+    expect_new_forecast(tc, new)
+
+
+def test_plane_config_change_during_download(tc: TestContext):
+    """A plane config change while the forecast of this plane is downloaded discards the running download and
+    downloads again."""
+    skip_if_needed(tc)
+
+    stale = make_forecast(FORECAST_COUNT, base_wh=100, amplitude=50)
+    new = make_forecast(FORECAST_COUNT, base_wh=900, amplitude=50)
+    first_request = serve_slow_stale_then_new(get_server(), stale, new)
+    trigger_refetch(tc)
+    tc.assert_true(first_request.wait(timeout=10))
+
+    plane_cfg = tc.api('solar_forecast/planes/0/config')
+    original_wp = plane_cfg['wp']
+    try:
+        plane_cfg['wp'] = original_wp + 1000
+        tc.api('solar_forecast/planes/0/config_update', plane_cfg)
+
+        expect_new_forecast(tc, new)
+    finally:
+        plane_cfg['wp'] = original_wp
+        tc.api('solar_forecast/planes/0/config_update', plane_cfg)
+
+
 def suite_teardown(tc: TestContext):
-    global _server
+    global https_server
 
     config = tc.api('solar_forecast/config')
     config['enable'] = False
     tc.api('solar_forecast/config_update', config)
 
-    if _server is not None:
-        _server.stop()
-        _server = None
+    if https_server is not None:
+        https_server.stop()
+        https_server = None
 
-    tc.api('certs/remove', {'id': _CERT_ID})
+    tc.api('certs/remove', {'id': CERT_ID})
 
     # Restore original config
-    if _original_config is not None:
-        tc.api('solar_forecast/config_update', _original_config)
+    if original_config is not None:
+        tc.api('solar_forecast/config_update', original_config)
 
 
 if __name__ == '__main__':

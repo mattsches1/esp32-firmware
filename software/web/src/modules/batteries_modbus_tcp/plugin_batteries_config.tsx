@@ -82,8 +82,8 @@ function get_total_values_count(table: RegisterTable) {
 }
 
 class RegisterEditor extends Component<RegisterEditorProps, RegisterEditorState> {
-    constructor(props: RegisterEditorProps) {
-        super(props);
+    constructor() {
+        super();
 
         this.state = {
             register_block: {
@@ -1494,6 +1494,38 @@ export function pre_init() {
                                     min={0}
                                     max={2147483647}
                                     unit="W"
+                                    value={config[1].table[1].force_discharge_power}
+                                    onValue={(v) => {
+                                        on_config(util.get_updated_union(config, {table: util.get_updated_union(config[1].table, {force_discharge_power: v})}));
+                                    }} />
+                            </FormRow>);
+
+                        extra_values = {
+                            force_charge_power: config[1].table[1].force_charge_power,
+                            force_discharge_power: config[1].table[1].force_discharge_power,
+                        };
+                    }
+                    else if (config[1].table[0] == BatteryModbusTCPTableID.ChintPowerHybridInverter) {
+                        edit_children.push(
+                            <FormRow label={__("batteries_modbus_tcp.content.force_charge_power")}>
+                                <InputFloat
+                                    required
+                                    digits={1}
+                                    min={0}
+                                    max={200}
+                                    unit="kW"
+                                    value={config[1].table[1].force_charge_power}
+                                    onValue={(v) => {
+                                        on_config(util.get_updated_union(config, {table: util.get_updated_union(config[1].table, {force_charge_power: v})}));
+                                    }} />
+                            </FormRow>,
+                            <FormRow label={__("batteries_modbus_tcp.content.force_discharge_power")}>
+                                <InputFloat
+                                    required
+                                    digits={1}
+                                    min={0}
+                                    max={1500}
+                                    unit="kW"
                                     value={config[1].table[1].force_discharge_power}
                                     onValue={(v) => {
                                         on_config(util.get_updated_union(config, {table: util.get_updated_union(config[1].table, {force_discharge_power: v})}));
