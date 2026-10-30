@@ -18,9 +18,12 @@
  */
 
 #include "usecase_base.h"
+
 #include "../eebus.h"
 #include "../eebus_usecases.h"
 #include "../generated/module_dependencies.h"
+
+#include "gcc_warnings.h"
 
 extern EEBus eebus;
 
@@ -31,7 +34,7 @@ void EebusUsecase::send_full_read(AddressFeatureType sending_feature, FeatureAdd
     sender.device = EEBUS_USECASE_HELPERS::get_spine_device_name();
     sender.entity = this->entity_address;
     sender.feature = sending_feature;
-#ifdef EEBUS_TRACE_SUPER_VERBOSE
+#if EEBUS_TRACE_SUPER_VERBOSE()
     eebus.trace_fmtln("%s sent read of %s to target device %s", EEBUS_USECASE_HELPERS::spine_address_to_string(sender).c_str(), function_name.c_str(), EEBUS_USECASE_HELPERS::spine_address_to_string(receiver).c_str());
 #endif
     ElementTagType data{};
@@ -157,7 +160,7 @@ int EebusUsecase::send_spine_message(const FeatureAddressType &destination, Feat
         AwaitedAcks awaited_ack{.function = FunctionEnumType::nodeManagementSubscriptionRequestCall, .target_feature = destination, .cmd_type = CmdClassifierType::call, .msg_counter = msg_counter};
         awaited_acks.push_back(awaited_ack);
         // Clean up the awaited_ack if the usecase doesnt handle it by itself
-        task_scheduler.scheduleOnce(
+        schedule_once_while_alive(
             [this, msg_counter] {
                 for (auto it = awaited_acks.begin(); it != awaited_acks.end(); ++it) {
                     if (it->msg_counter == msg_counter) {
@@ -169,6 +172,48 @@ int EebusUsecase::send_spine_message(const FeatureAddressType &destination, Feat
             20_s);
     }
     return msg_counter;
+}
+
+ThrottledNotify::~ThrottledNotify()
+{
+    task_scheduler.cancel(task);
+}
+
+void ThrottledNotify::request()
+{
+    if (task != 0) {
+        return;
+    }
+    // Deferred even without a pending interval, so several updates in a row (e.g. one meter update) give one notification
+    micros_t delay = 0_us;
+    if (last_sent != 0_us) {
+        const micros_t next = last_sent + static_cast<micros_t>(min_interval);
+        const micros_t now = now_us();
+        if (next > now) {
+            delay = next - now;
+        }
+    }
+    task = task_scheduler.scheduleOnce(
+        [this]() {
+            task = 0;
+            last_sent = now_us();
+            send();
+        },
+        delay.to<millis_t>());
+}
+
+uint64_t EebusUsecase::schedule_once_while_alive(std::function<void(void)> &&fn, millis_t delay)
+{
+    const uint32_t generation = EEBusUseCases::generation;
+    return task_scheduler.scheduleOnce(
+        [generation, fn = std::move(fn)]() {
+            if (eebus.usecases == nullptr || EEBusUseCases::generation != generation) {
+                eebus.trace_fmtln("Usecases: Skipped deferred task of disabled usecases");
+                return;
+            }
+            fn();
+        },
+        delay);
 }
 
 template <typename T> int EebusUsecase::send_spine_message(const FeatureAddressType &destination, FeatureAddressType &sender, T payload, CmdClassifierType cmd_classifier, const char *function_name, bool want_ack)

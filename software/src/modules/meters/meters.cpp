@@ -21,7 +21,6 @@
 
 #include "event_log_prefix.h"
 #include "generated/module_dependencies.h"
-#include "options.h"
 #include "meter_class_none.h"
 #include "generated/comparator.enum.h"
 #include "generated/meter_value_imexdiff.h"
@@ -30,6 +29,7 @@
 #include "tools/string_builder.h"
 #include "tools/float.h"
 
+#include "options.h"
 #include "gcc_warnings.h"
 #ifdef __GNUC__
 // The code is this file contains several casts to a type defined by a macro, which may result in useless casts.
@@ -229,7 +229,9 @@ void Meters::pre_setup()
         init_uint32_array(meter_slot.index_cache_currents,      INDEX_CACHE_CURRENT_COUNT,       UINT32_MAX);
     }
 
-    generators.reserve(METER_CLASS_ID_COUNT);
+    generators = static_cast<decltype(generators)>(malloc(offsetof(generators_t, gs) + METER_CLASS_ID_COUNT * sizeof(generators->gs[0])));
+    generators->count = 0;
+
     register_meter_generator(MeterClassID::None, &meter_generator_none);
 
 #if MODULE_AUTOMATION_AVAILABLE()
@@ -262,18 +264,15 @@ void Meters::pre_setup()
 
 void Meters::setup()
 {
-    // Not necessary if the vector is cleared anyway after all meters have been set up.
-    //generators.shrink_to_fit();
-
     // Create config prototypes, depending on available generators.
-    uint8_t class_count = static_cast<uint8_t>(generators.size());
-    ConfUnionPrototype<MeterClassID> *config_prototypes = perm_new_array<ConfUnionPrototype<MeterClassID>>(class_count, DRAM);
+    ConfUnionPrototype<MeterClassID> *config_prototypes = perm_new_array<ConfUnionPrototype<MeterClassID>>(generators->count, DRAM);
 
-    for (uint32_t i = 0; i < class_count; i++) {
-        const auto &generator_tuple = generators[i];
-        MeterClassID meter_class = std::get<0>(generator_tuple);
-        IMeterGenerator *meter_generator = std::get<1>(generator_tuple);
-        config_prototypes[i] = {meter_class, *meter_generator->get_config_prototype()};
+    for (uint32_t i = 0; i < generators->count; i++) {
+        const generator_t *generator = generators->gs + i;
+        config_prototypes[i] = {
+            generator->meter_class_id,
+            *(generator->generator->get_config_prototype())
+        };
     }
 
     const Config last_reset_prototype = Config::Object({
@@ -296,7 +295,7 @@ void Meters::setup()
             *get_generator_for_class(meter_class)->get_config_prototype(),
             meter_class,
             config_prototypes,
-            class_count
+            static_cast<uint8_t>(generators->count)
         );
 
         // Load config.
@@ -345,8 +344,8 @@ void Meters::setup()
     }
 
     // The generators aren't used anymore at the moment.
-    generators.clear();
-    generators.shrink_to_fit();
+    free(generators);
+    generators = nullptr;
 
     task_scheduler.scheduleUncancelable([this](){
         micros_t now = now_us();
@@ -563,23 +562,32 @@ void Meters::pre_reboot()
 
 void Meters::register_meter_generator(MeterClassID meter_class, IMeterGenerator *generator)
 {
-    for (const auto &generator_tuple : generators) {
-        MeterClassID known_class = std::get<0>(generator_tuple);
+    for (size_t i = 0; i < generators->count; i++) {
+        const generator_t *gen = generators->gs + i;
+
+        MeterClassID known_class = gen->meter_class_id;
         if (meter_class == known_class) {
             logger.printfln("Tried to register meter generator for already registered meter class %lu.", static_cast<uint32_t>(meter_class));
             return;
         }
     }
 
-    generators.push_back({meter_class, generator});
+    assert(generators->count < METER_CLASS_ID_COUNT);
+
+    generator_t *gen = generators->gs + generators->count;
+    gen->meter_class_id = meter_class;
+    gen->generator = generator;
+    generators->count++;
 }
 
 IMeterGenerator *Meters::get_generator_for_class(MeterClassID meter_class)
 {
-    for (auto generator_tuple : generators) {
-        MeterClassID known_class = std::get<0>(generator_tuple);
+    for (size_t i = 0; i < generators->count; i++) {
+        const generator_t *gen = generators->gs + i;
+
+        MeterClassID known_class = gen->meter_class_id;
         if (meter_class == known_class) {
-            return std::get<1>(generator_tuple);
+            return gen->generator;
         }
     }
 
@@ -1067,33 +1075,68 @@ void Meters::update_value(uint32_t slot, uint32_t index, float new_value)
     }
 }
 
-void Meters::update_all_values(uint32_t slot, const float new_values[])
+void Meters::update_batch_values(uint32_t slot, size_t count, const uint32_t *indices, const float *new_values)
 {
     if (slot >= OPTIONS_METERS_MAX_SLOTS()) {
-        logger.printfln_meter("Tried to update all values from array for non-existent slot");
+        logger.printfln_meter("Tried to update values for non-existent slot");
         return;
     }
 
     MeterSlot &meter_slot = meter_slots[slot];
-
     Config &values = meter_slot.values;
-    size_t base_value_count = meter_slot.base_value_count;
+    const size_t base_value_count = meter_slot.base_value_count;
     bool changed_any_value = false;
 
-    for (size_t i = 0; i < base_value_count; i++) {
-        float new_value = new_values[i];
-        if (!isnan(new_value)) {
-            Config *conf_val = static_cast<Config *>(values.get(i));
+    if (indices == nullptr) {
+        count = base_value_count;
+    }
 
-            // Think about ordering and short-circuting issues before changing this!
-            float old_value = conf_val->asFloat();
-            if (conf_val->updateFloat(new_value) && !isnan(old_value))
-                changed_any_value = true;
+    for (size_t i = 0; i < count; i++) {
+        uint32_t index;
+
+        if (indices == nullptr) {
+            index = i;
+        } else {
+            index = indices[i];
+
+            if (index >= base_value_count) {
+                if (index == UINT32_MAX) {
+                    logger.printfln_meter("Tried to update a value that is known to not exist (index = UINT32_MAX)");
+                    continue;
+                } else {
+                    logger.printfln_meter("Tried to update value %lu that is known to not exist (index >= %zu)", index, base_value_count);
+                    continue;
+                }
+            }
+        }
+
+        const float new_value = new_values[i];
+
+        if (isnan(new_value)) {
+            continue;
+        }
+
+        Config *conf_val = static_cast<Config *>(values.get(index));
+
+        // Think about ordering and short-circuting issues before changing this!
+        float old_value = conf_val->asFloat();
+        if (conf_val->updateFloat(new_value) && !isnan(old_value)) {
+            changed_any_value = true;
         }
     }
 
     if (meter_slot.value_combiner_filters_bitmask) {
-        apply_filters(meter_slot, base_value_count, new_values);
+        if (indices == nullptr) {
+            apply_filters(meter_slot, base_value_count, new_values);
+        } else {
+            float base_values[OPTIONS_METERS_MAX_VALUES_PER_METER()];
+
+            for (size_t i = 0; i < base_value_count; i++) {
+                base_values[i] = values.get(i)->asFloat();
+            }
+
+            apply_filters(meter_slot, base_value_count, base_values);
+        }
     }
 
     if (changed_any_value) {
@@ -1101,6 +1144,11 @@ void Meters::update_all_values(uint32_t slot, const float new_values[])
     }
 
     finish_update(slot);
+}
+
+void Meters::update_all_values(uint32_t slot, const float new_values[])
+{
+    update_batch_values(slot, 0, nullptr, new_values);
 }
 
 void Meters::update_all_values(uint32_t slot, const Config *new_values)

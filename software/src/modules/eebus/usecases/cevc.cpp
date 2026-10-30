@@ -17,19 +17,23 @@
  * Boston, MA 02111-1307, USA.
  */
 
-// Include eebus.h first to get the EEBUS_MODE_* macros (which define EEBUS_ENABLE_* in eebus_usecases.h)
-#include "../eebus.h"
-#include "../eebus_usecases.h"
-
-#ifdef EEBUS_ENABLE_CEVC_USECASE
-
-#include "../generated/module_dependencies.h"
-#include "../spine_connection.h"
 #include "cevc.h"
-#include "usecase_helpers.h"
 
 #include <ctime>
 #include <string>
+
+#include "usecase_helpers.h"
+#include "../spine_connection.h"
+#include "../eebus_usecases.h"
+
+#include "../generated/module_dependencies.h"
+#include "../eebus_config.h"
+
+#if EEBUS_ENABLE_CEVC_USECASE()
+
+#include "gcc_warnings.h"
+// SPINE message dispatch switches over large enums and only handles the relevant values.
+#pragma GCC diagnostic ignored "-Wswitch-enum"
 
 // ==============================================================================
 // CEVC - Coordinated EV Charging Use Case
@@ -417,7 +421,7 @@ MessageReturn CevcUsecase::write_time_series_list(HeaderType &header, SpineOptio
         if (!received_charging_plan.empty()) {
             charging_plan_valid = true;
             plan_updated = true;
-            eebus.trace_fmtln("CEVC: Received charging plan with %d slots", received_charging_plan.size());
+            eebus.trace_fmtln("CEVC: Received charging plan with %zu slots", received_charging_plan.size());
         }
     }
 
@@ -675,7 +679,7 @@ MessageReturn CevcUsecase::write_incentive_table_data(HeaderType &header, SpineO
 
     if (!received_incentives.empty()) {
         incentives_valid = true;
-        eebus.trace_fmtln("CEVC: Updated incentive table (%d updated, %d new, total %d slots)", updated_slots, new_slots, received_incentives.size());
+        eebus.trace_fmtln("CEVC: Updated incentive table (%d updated, %d new, total %zu slots)", updated_slots, new_slots, received_incentives.size());
         notify_subscribers_incentives();
         update_api_state();
         EEBUS_USECASE_HELPERS::build_result_data(response, EEBUS_USECASE_HELPERS::ResultErrorNumber::NoError, "");
@@ -763,7 +767,7 @@ void CevcUsecase::update_api_state() const
 {
     auto api_entry = eebus.eebus_usecase_state.get("cevc");
     api_entry->get("has_charging_plan")->updateBool(has_charging_plan());
-    api_entry->get("charging_plan_start_time")->updateUint(charging_plan_start_time);
+    api_entry->get("charging_plan_start_time")->updateUint(static_cast<uint32_t>(charging_plan_start_time));
     api_entry->get("target_power_w")->updateInt(get_target_power_w());
     api_entry->get("has_incentives")->updateBool(has_incentives());
     api_entry->get("energy_broker_connected")->updateBool(energy_broker_connected);
@@ -787,12 +791,9 @@ void CevcUsecase::receive_heartbeat_timeout()
 void CevcUsecase::inform_spineconnection_usecase_update(SpineConnection *conn)
 {
     // Look for Energy Broker actors that support the CEVC use case
-    // and register for heartbeat monitoring (Scenarios 5-6)
-    auto peers = conn->get_address_of_feature(FeatureTypeEnumType::DeviceDiagnosis, RoleType::client, "coordinatedEvCharging", "EnergyBroker");
-
-    for (FeatureAddressType &peer : peers) {
-        eebus.trace_fmtln("CEVC: Found Energy Broker at %s, registering for heartbeat", EEBUS_USECASE_HELPERS::spine_address_to_string(peer).c_str());
-        eebus.usecases->evse_heartbeat.initialize_heartbeat_on_feature(peer, Usecases::CEVC, true);
+    // and subscribe to the heartbeat of their DeviceDiagnosis server (Scenarios 5-6)
+    if (eebus.usecases->evse_heartbeat.subscribe_to_actor_heartbeat(conn, "coordinatedEvCharging", "EnergyBroker", Usecases::CEVC) > 0) {
+        eebus.trace_fmtln("CEVC: Found Energy Broker, registered for heartbeat");
         energy_broker_connected = true;
         energy_broker_heartbeat_ok = true;
     }
@@ -821,4 +822,4 @@ void CevcUsecase::invalidate_broker_data()
     update_api_state();
 }
 
-#endif // EEBUS_ENABLE_CEVC_USECASE
+#endif // EEBUS_ENABLE_CEVC_USECASE()

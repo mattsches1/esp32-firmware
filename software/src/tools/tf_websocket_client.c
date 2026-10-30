@@ -303,8 +303,15 @@ static esp_err_t tf_websocket_client_error(tf_websocket_client_handle_t client, 
     va_list myargs;
     va_start(myargs, format);
 
-    size_t needed_size = vsnprintf(NULL, 0, format, myargs);
-    needed_size++; // null terminator
+    va_list args_copy;
+    va_copy(args_copy, myargs);
+    int sized = vsnprintf(NULL, 0, format, args_copy);
+    va_end(args_copy);
+    if (sized < 0) {
+        va_end(myargs);
+        return ESP_FAIL;
+    }
+    size_t needed_size = (size_t)sized + 1; // null terminator
 
     if (needed_size > client->errormsg_size) {
         if (client->errormsg_buffer) {
@@ -313,6 +320,7 @@ static esp_err_t tf_websocket_client_error(tf_websocket_client_handle_t client, 
         client->errormsg_buffer = malloc(needed_size);
         if (client->errormsg_buffer == NULL) {
             client->errormsg_size = 0;
+            va_end(myargs);
             ESP_LOGE(TAG, "Failed to allocate...");
             return ESP_ERR_NO_MEM;
         }
@@ -320,7 +328,6 @@ static esp_err_t tf_websocket_client_error(tf_websocket_client_handle_t client, 
     }
 
     needed_size = vsnprintf(client->errormsg_buffer, client->errormsg_size, format, myargs);
-
     va_end(myargs);
 
     ESP_LOGE(TAG, "%s", client->errormsg_buffer);
@@ -1438,12 +1445,13 @@ esp_err_t tf_websocket_client_start(tf_websocket_client_handle_t client)
         }
     }
 
+    xEventGroupClearBits(client->status_bits, STOPPED_BIT | CLOSE_FRAME_SENT_BIT | REQUESTED_STOP_BIT);
     if (xTaskCreatePinnedToCore(tf_websocket_client_task, client->config->task_name ? client->config->task_name : "websocket_task",
                                 client->config->task_stack, client, client->config->task_prio, &client->task_handle, client->config->task_core_id) != pdTRUE) {
         ESP_LOGE(TAG, "Error create websocket task");
+        xEventGroupSetBits(client->status_bits, STOPPED_BIT);
         return ESP_FAIL;
     }
-    xEventGroupClearBits(client->status_bits, STOPPED_BIT | CLOSE_FRAME_SENT_BIT | REQUESTED_STOP_BIT);
     ESP_LOGI(TAG, "Started");
     return ESP_OK;
 }

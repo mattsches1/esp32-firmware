@@ -31,7 +31,6 @@
 #include "event_log_prefix.h"
 #include "generated/module_dependencies.h"
 #include "language.h"
-#include "options.h"
 #include "tools/freertos.h"
 #include "tools/malloc.h"
 #include "tools/fs.h"
@@ -44,6 +43,10 @@
 #include "charge_tracker_defs.h"
 #include "bindings/base58.h"
 #include "modules/users/users.h"
+#include "modules/meters/meter_defs.h"
+#include "build.h"
+
+#include "options.h"
 
 #define PDF_LETTERHEAD_MAX_SIZE 512
 
@@ -231,6 +234,7 @@ void ChargeTracker::pre_setup()
         {"user_filter", Config::Int16(0)},
         {"device_filter", Config::Int52(DEVICE_FILTER_ALL_CHARGERS)},
         {"csv_delimiter", Config::Enum(CSVFlavor::Excel)},
+        {"filter_empty_charges", Config::Bool(true)},
         {"last_upload_timestamp_min", Config::Uint32(0)}
     });
 #endif
@@ -351,7 +355,7 @@ bool ChargeTracker::repair_last(float meter_start, const char *directory)
     return true;
 }
 
-bool ChargeTracker::startCharge(uint32_t timestamp_minutes, float meter_start, uint8_t user_id, uint32_t evse_uptime, CMAuthType auth_method, Config::ConfVariant auth_info, const char *directory) {
+bool ChargeTracker::startCharge(uint32_t timestamp_minutes, float meter_start, uint8_t user_id, uint32_t evse_uptime, CMAuthType auth_method, const Config::ConfVariant &auth_info, const char *directory) {
 #if MODULE_REQUIRE_METER_AVAILABLE()
     if (!require_meter.allow_charging(meter_start) && directory == nullptr) {
         return false;
@@ -1038,75 +1042,158 @@ static size_t timestamp_min_to_date_time_string(char buf[17], uint32_t timestamp
     return sprintf_u(buf, "%2.2i.%2.2i.%4.4i %2.2i:%2.2i", t.tm_mday, t.tm_mon + 1, t.tm_year + 1900, t.tm_hour, t.tm_min);
 }
 
-static char *tracked_charge_to_string(char *buf, ChargeStart cs, ChargeEnd ce, const GenerationParams *params, uint32_t charger_uid)
+static size_t timestamp_min_to_date_string(char buf[11], uint32_t timestamp_min, Language language)
 {
-    buf += 1 + timestamp_min_to_date_time_string(buf, cs.timestamp_minutes, params->language);
+    time_t timestamp = ((int64_t)timestamp_min) * 60;
+    struct tm t;
+    localtime_r(&timestamp, &t);
 
-    size_t name_len = params->display_name_cache[cs.user_id].get(buf);
-    buf += 1 + name_len;
+    if (language == Language::English) {
+        return sprintf_u(buf, "%4.4i-%2.2i-%2.2i", t.tm_year + 1900, t.tm_mon + 1, t.tm_mday);
+    }
 
-    name_len = params->get_charger_display_name(charger_uid, buf);
-    buf += 1 + name_len;
+    return sprintf_u(buf, "%2.2i.%2.2i.%4.4i", t.tm_mday, t.tm_mon + 1, t.tm_year + 1900);
+}
 
-    if (charged_invalid(cs, ce)) {
-        memcpy(buf, "N/A", ARRAY_SIZE("N/A"));
-        buf += ARRAY_SIZE("N/A");
-    } else {
-        float charged = ce.meter_end - cs.meter_start;
-        if (charged <= 999.999f) {
-            int written = sprintf_u(buf, "%.3f", charged);
-            if (params->language == Language::German)
-                for (int i = 0; i < written; ++i)
-                    if (buf[i] == '.')
-                        buf[i] = ',';
-            buf += 1 + written;
-        }
-        else {
-            memcpy(buf, ">=1000", ARRAY_SIZE(">=1000"));
-            buf += ARRAY_SIZE(">=1000");
+#define PDF_NO_VALUE "-"
+
+// Formats value with the given number of decimals and localized decimal and thousands separators.
+// buf must have room for at least 24 bytes. Returns the length without the null terminator.
+static size_t format_number(char *buf, double value, int decimals, Language language)
+{
+    if (!(fabs(value) < 1e12)) {
+        memcpy(buf, PDF_NO_VALUE, ARRAY_SIZE(PDF_NO_VALUE));
+        return ARRAY_SIZE(PDF_NO_VALUE) - 1;
+    }
+
+    char tmp[24];
+    int len = snprintf(tmp, sizeof(tmp), "%.*f", decimals, value);
+    if ((len <= 0) || (len >= (int)sizeof(tmp))) {
+        memcpy(buf, PDF_NO_VALUE, ARRAY_SIZE(PDF_NO_VALUE));
+        return ARRAY_SIZE(PDF_NO_VALUE) - 1;
+    }
+
+    const char thousands_separator = language == Language::English ? ',' : '.';
+    const char decimal_separator = language == Language::English ? '.' : ',';
+
+    const char *dot = strchr(tmp, '.');
+    const int int_len = dot != nullptr ? (int)(dot - tmp) : len;
+    const int digits_start = tmp[0] == '-' ? 1 : 0;
+
+    char *out = buf;
+    for (int i = 0; i < int_len; ++i) {
+        *out++ = tmp[i];
+        const int remaining_digits = int_len - i - 1;
+        if ((i >= digits_start) && (remaining_digits > 0) && ((remaining_digits % 3) == 0)) {
+            *out++ = thousands_separator;
         }
     }
 
-    // charge duration is a bitfield value of 24 bits.
-    // This results in a maximum duration of 2^24/3600 ~ 4660 hours.
-    // We handle up to 9999 hours here -> No need for a fallback.
-    int hours = ce.charge_duration / 3600;
-    ce.charge_duration = ce.charge_duration % 3600;
-    int minutes = ce.charge_duration / 60;
-    ce.charge_duration = ce.charge_duration % 60;
-    int seconds = ce.charge_duration;
-
-    buf += 1 + sprintf_u(buf, "%i:%2.2i:%2.2i", hours, minutes, seconds);
-
-    if (isnan(cs.meter_start)) {
-        memcpy(buf, "N/A", ARRAY_SIZE("N/A"));
-        buf += ARRAY_SIZE("N/A");
-    } else {
-        int written = sprintf_u(buf, "%.3f", cs.meter_start);
-        if (params->language == Language::German)
-            for (int i = 0; i < written; ++i)
-                if (buf[i] == '.')
-                    buf[i] = ',';
-        buf += 1 + written;
+    if (dot != nullptr) {
+        *out++ = decimal_separator;
+        const size_t frac_len = strlen(dot + 1);
+        memcpy(out, dot + 1, frac_len);
+        out += frac_len;
     }
 
-    if (params->electricity_price == 0) {
-        memcpy(buf, "---", ARRAY_SIZE("---"));
-        buf += ARRAY_SIZE("---");
-    } else if (charged_invalid(cs, ce)) {
-        memcpy(buf, "N/A", ARRAY_SIZE("N/A"));
-        buf += ARRAY_SIZE("N/A");
-    } else {
-        double charged = ce.meter_end - cs.meter_start;
-        uint32_t cost = round(charged * params->electricity_price / 100.0f);
-        if (cost > 999999) {
-            memcpy(buf, ">=10000", ARRAY_SIZE(">=10000"));
-            buf += ARRAY_SIZE(">=10000");
+    *out = '\0';
+    return (size_t)(out - buf);
+}
+
+static size_t format_duration(char *buf, uint32_t duration_s)
+{
+    return sprintf_u(buf, "%lu:%02lu:%02lu", duration_s / 3600, (duration_s / 60) % 60, duration_s % 60);
+}
+
+static uint32_t charge_cost_cents(double charged_kwh, uint32_t electricity_price)
+{
+    // electricity_price is in ct/100 per kWh
+    return (uint32_t)round(charged_kwh * electricity_price / 100.0);
+}
+
+#define PDF_TABLE_LINE_LEN (17   /* start: "01.02.3456 12:34\0" or "3456-02-01 12:34\0" (or unknown) */ \
+                          + 17   /* end */ \
+                          + DISPLAY_NAME_LENGTH + 4 /* user display name + \0 + slack written by display_name_entry::get */ \
+                          + DISPLAY_NAME_LENGTH + 4 /* charger display name + \0 + slack */ \
+                          + 11   /* duration: max "4660:00:00\0" (24 bit seconds) */ \
+                          + 24   /* meter start */ \
+                          + 24   /* meter end */ \
+                          + 24   /* energy */ \
+                          + 24)  /* cost */
+
+// Writes one '\0'-separated table row for the PDF. See PDFTableColumn.
+static char *tracked_charge_to_pdf_row(char *buf, const ChargeStart &cs, const ChargeEnd &ce, const GenerationParams *params, uint32_t charger_uid)
+{
+    const Language lang = params->language;
+    const uint32_t duration = ce.charge_duration;
+
+    // Start
+    buf += 1 + timestamp_min_to_date_time_string(buf, cs.timestamp_minutes, lang);
+
+    // End: The start time is only known with minute resolution.
+    buf += 1 + timestamp_min_to_date_time_string(buf, cs.timestamp_minutes == 0 ? 0 : cs.timestamp_minutes + (duration + 30) / 60, lang);
+
+    // User
+    buf += 1 + params->display_name_cache[cs.user_id].get(buf);
+
+    // Charger
+    buf += 1 + params->get_charger_display_name(charger_uid, buf);
+
+    // Duration
+    buf += 1 + format_duration(buf, duration);
+
+    // Meter start and end
+    for (float meter_value : {cs.meter_start, ce.meter_end}) {
+        if (isnan(meter_value)) {
+            memcpy(buf, PDF_NO_VALUE, ARRAY_SIZE(PDF_NO_VALUE));
+            buf += ARRAY_SIZE(PDF_NO_VALUE);
         } else {
-            buf += 1 + sprintf_u(buf, "%ld%c%02ld", cost / 100, (params->language == Language::English) ? '.' : ',', cost % 100);
+            buf += 1 + format_number(buf, meter_value, 3, lang);
         }
     }
+
+    // Energy and cost
+    if (charged_invalid(cs, ce)) {
+        memcpy(buf, PDF_NO_VALUE, ARRAY_SIZE(PDF_NO_VALUE));
+        buf += ARRAY_SIZE(PDF_NO_VALUE);
+
+        if (params->electricity_price != 0) {
+            memcpy(buf, PDF_NO_VALUE, ARRAY_SIZE(PDF_NO_VALUE));
+            buf += ARRAY_SIZE(PDF_NO_VALUE);
+        }
+    } else {
+        const float charged = ce.meter_end - cs.meter_start;
+        buf += 1 + format_number(buf, charged, 3, lang);
+
+        if (params->electricity_price != 0) {
+            buf += 1 + format_number(buf, charge_cost_cents(charged, params->electricity_price) / 100.0, 2, lang);
+        }
+    }
+
     return buf;
+}
+
+static const char *get_meter_type_name(uint8_t meter_type)
+{
+    switch (meter_type) {
+        case METER_TYPE_SDM72DM:       return "Eastron SDM72";
+        case METER_TYPE_SDM630:        return "Eastron SDM630";
+        case METER_TYPE_SDM72DMV2:     return "Eastron SDM72V2";
+        case METER_TYPE_SDM630MCTV2:   return "Eastron SDM630MCT";
+        case METER_TYPE_DSZ15DZMOD:    return "Eltako DSZ15DZMOD";
+        case METER_TYPE_DEM4A:         return "YTL DEM4A";
+        case METER_TYPE_DMED341MID7ER: return "Lovato DMED341MID7ER";
+        case METER_TYPE_DSZ16DZE:      return "Eltako DSZ16DZE";
+        case METER_TYPE_WM3M4C:        return "Iskra WM3M4C";
+        case METER_TYPE_WM3M4:         return "Iskra WM3M4";
+        default:                       return nullptr;
+    }
+}
+
+// All meter types known to get_meter_type_name are MID certified.
+static bool meter_type_is_mid(uint8_t meter_type)
+{
+    return get_meter_type_name(meter_type) != nullptr;
 }
 
 static bool repair_logic(Charge *buf)
@@ -1278,9 +1365,30 @@ bool GenerationParams::init() {
         this->unique_device_name = device_name.name.get("name")->asString();
         if (this->display_name != this->unique_device_name)
             this->unique_device_name = display_name + " (" + unique_device_name + ")";
+        this->display_type = device_name.name.get("display_type")->asString();
+        if (this->display_type.isEmpty()) {
+            this->display_type = OPTIONS_PRODUCT_NAME();
+        }
 #else
+        this->display_type = OPTIONS_PRODUCT_NAME();
         this->display_name = "unknown device";
         this->unique_device_name = "unknown device";
+#endif
+
+        this->local_uid = esp32_common.get_uid_num();
+
+#if MODULE_EVSE_COMMON_AVAILABLE() && MODULE_METERS_AVAILABLE()
+        {
+            // Only the meter classes of built-in meters report a meter type.
+            uint32_t slot = evse_common.get_charger_meter();
+            MeterClassID meter_class = meters.get_meter_class(slot);
+            if ((meter_class == MeterClassID::EVSEV2) || (meter_class == MeterClassID::RS485Bricklet) || (meter_class == MeterClassID::EnergyManager)) {
+                const Config *meter_state = api.getState(meters.get_path(slot, Meters::PathType::State), false);
+                if (meter_state != nullptr) {
+                    this->charger_meter_type = static_cast<uint8_t>(meter_state->get("type")->asUint());
+                }
+            }
+        }
 #endif
 
         for (size_t i = 0; i < users.config.get("users")->count(); ++i) {
@@ -1306,7 +1414,7 @@ bool GenerationParams::init() {
             for (size_t user_id = 0; user_id < MAX_PASSIVE_USERS; ++user_id) {
                 f.seek(user_id * USERNAME_ENTRY_LENGTH + USERNAME_LENGTH, SeekMode::SeekSet);
 
-                char buf[USERNAME_LENGTH];
+                char buf[USERNAME_LENGTH] = {}; // Stays empty if the file does not exist.
                 f.read((uint8_t *)buf, DISPLAY_NAME_LENGTH);
 
                 auto length = strnlen(buf, DISPLAY_NAME_LENGTH);
@@ -1331,27 +1439,38 @@ bool GenerationParams::init() {
             char buf[USERNAME_LENGTH + 1]; // +1 to always fit \0
             size_t length = this->display_name_cache[user_id].get(buf);
 
+            const char *b = nullptr;
+
             if (length == 0) {
                 // length should never be 0 except if we manually upload test data to the charger.
-                const char *b = CSVTranslations::getDeletedUser(this->language);
-                length = strlen(b);
-                strncpy(buf, b, DISPLAY_NAME_LENGTH);
+                b = CSVTranslations::getDeletedUser(this->language);
             } else if (user_id == 0 && strcmp(buf, "Anonymous") == 0) {
                 // Replace "Anonymous" with translated string
-                const char *b = CSVTranslations::getUnknownUser(this->language);
-                length = strlen(b);
-                strncpy(buf, b, DISPLAY_NAME_LENGTH);
+                b = CSVTranslations::getUnknownUser(this->language);
+            }
+
+            if (b != nullptr) {
+                length = std::min(strlen(b), static_cast<size_t>(DISPLAY_NAME_LENGTH));
+                strncpy(buf, b, DISPLAY_NAME_LENGTH); // Pads with \0: set() copies whole 32 bit words.
+                this->display_name_cache[user_id].set(length, buf);
             }
         }
 
+        char empty_name[4] = {};
 #if OPTIONS_PRODUCT_ID_IS_WARP()
         this->charger_display_name_cache = static_cast<decltype(charger_display_name_cache)>(malloc_iram_or_psram_or_dram(sizeof(charger_display_name_cache[0])));
         if (this->charger_display_name_cache == nullptr)
             return;
+
+        this->charger_display_name_cache[0].set(0, 0, empty_name);
 #else
         this->charger_display_name_cache = static_cast<decltype(charger_display_name_cache)>(malloc_iram_or_psram_or_dram(MAX_TRACKED_CHARGERS * sizeof(charger_display_name_cache[0])));
         if (this->charger_display_name_cache == nullptr)
             return;
+
+        for (size_t i = 0; i < MAX_TRACKED_CHARGERS; ++i) {
+            this->charger_display_name_cache[i].set(0, 0, empty_name);
+        }
 
         if (LittleFS.exists(CHARGER_NAMES_FILE)) {
             File f = LittleFS.open(CHARGER_NAMES_FILE, "r");
@@ -1426,7 +1545,7 @@ bool GenerationParams::init() {
     return result && this->display_name_cache != nullptr && this->charger_display_name_cache != nullptr;
 }
 
-bool GenerationParams::parse_request(std::unique_ptr<char[]> &buf, StaticJsonDocument<192> &doc, WebServerRequest &request) {
+bool GenerationParams::parse_request(std::unique_ptr<char[]> &buf, StaticJsonDocument<256> &doc, WebServerRequest &request) {
     if (request.contentLength() > 1024) {
         request.send_plain(413);
         return false;
@@ -1461,6 +1580,7 @@ bool GenerationParams::parse_request(std::unique_ptr<char[]> &buf, StaticJsonDoc
     this->start_min = doc["start_timestamp_min"];
     this->end_min = doc["end_timestamp_min"];
     this->language = (Language)((uint8_t)doc["language"]);
+    this->filter_empty_charges = doc["filter_empty_charges"] | false; // Default to false
 
     this->current_min = rtc.timestamp_minutes();
     // This is 0 if there is no time sync.
@@ -1481,11 +1601,26 @@ size_t GenerationParams::get_charger_display_name(uint32_t uid, char *buf) const
         }
     }
 
+    // Charges of the local charger (uid 0 is used if only local charges are tracked) are named after this device if the charge manager does not know a name for it.
+    if ((uid == 0) || (uid == this->local_uid)) {
+        size_t len = std::min(this->display_name.length(), static_cast<size_t>(DISPLAY_NAME_LENGTH));
+        const char *name = this->display_name.c_str();
+
+        // Don't cut UTF-8 sequences
+        while ((len > 0) && (len < this->display_name.length()) && ((name[len] & 0xC0) == 0x80)) {
+            --len;
+        }
+
+        memcpy(buf, name, len);
+        buf[len] = '\0';
+        return len;
+    }
+
     *buf = '\0';
     return 0;
 }
 
-bool PDFGenerationParams::parse_request(std::unique_ptr<char[]> &buf, StaticJsonDocument<192> &doc, WebServerRequest &request) {
+bool PDFGenerationParams::parse_request(std::unique_ptr<char[]> &buf, StaticJsonDocument<256> &doc, WebServerRequest &request) {
     if (!this->GenerationParams::parse_request(buf, doc, request))
         return false;
 
@@ -1559,6 +1694,10 @@ bool GenerationParams::include_charge(const Charge *charge) const {
                      || charge->cs.user_id == user; // User matches.
     if (!include_user)
         return false;
+
+    if (this->filter_empty_charges && (charged_invalid(charge->cs, charge->ce) || ((charge->ce.meter_end - charge->cs.meter_start) < CHARGE_TRACKER_EMPTY_CHARGE_THRESHOLD_KWH))) {
+        return false;
+    }
 
     // device intentionally not checked here: Checking this for every charge is inefficient, because we know which device a complete set of charge-record files belongs to.
     return true;
@@ -1673,14 +1812,15 @@ void ChargeTracker::register_urls()
         logger.printfln("Beginning PDF generation. Please ignore timeout errors (rc -1 etc.) until it is done.");
 
         PDFGenerationParams params{&this->pdf_letterhead_config};
-        if (!params.init())
-            return request.send_plain(500, "Failed to generate PDF: Task timed out");
-
         {
             auto buf = heap_alloc_array<char>(1024);
-            StaticJsonDocument<192> doc;
+            StaticJsonDocument<256> doc;
             if (!params.parse_request(buf, doc, request))
                 return request.unsafe_ResponseAlreadySent();
+        }
+
+        if (!params.init()) {
+            return request.send_plain(500, "Failed to generate PDF: Task timed out");
         }
 
         const auto callback = [this, &request](const void *data, size_t len) -> esp_err_t {
@@ -1711,14 +1851,15 @@ void ChargeTracker::register_urls()
         logger.printfln("Beginning CSV generation. Please ignore timeout errors (rc -1 etc.) until it is done.");
 
         CSVGenerationParams params{};
-        if (!params.init())
-            return request.send_plain(500, "Failed to generate CSV: Task timed out");
-
         {
             auto buf = heap_alloc_array<char>(1024);
-            StaticJsonDocument<192> doc;
+            StaticJsonDocument<256> doc;
             if (!params.parse_request(buf, doc, request))
                 return request.unsafe_ResponseAlreadySent();
+        }
+
+        if (!params.init()) {
+            return request.send_plain(500, "Failed to generate CSV: Task timed out");
         }
 
         const auto callback = [this, &request](const char* buffer, size_t len) -> esp_err_t {
@@ -1744,15 +1885,12 @@ void ChargeTracker::register_urls()
         }
 
         auto params = std::make_unique<PDFGenerationParams>(&this->pdf_letterhead_config);
-        if (!params->init())
-            return request.send_plain(500, "Failed to generate PDF mail: Task timed out");
-
         uint32_t cookie = 0;
         String remote_access_user_uuid;
 
         {
             auto buf = heap_alloc_array<char>(1024);
-            StaticJsonDocument<192> doc;
+            StaticJsonDocument<256> doc;
             if (!params->parse_request(buf, doc, request))
                 return request.unsafe_ResponseAlreadySent();
 
@@ -1766,6 +1904,10 @@ void ChargeTracker::register_urls()
                 return request.send_plain(400, "Missing remote_access_user_uuid parameter");
             }
             remote_access_user_uuid = String(doc["remote_access_user_uuid"].as<const char*>());
+        }
+
+        if (!params->init()) {
+            return request.send_plain(500, "Failed to generate PDF mail: Task timed out");
         }
 
         ChargeLogGenerationLockHelper *lock_helper_ptr = lock_helper.release();
@@ -1788,15 +1930,12 @@ void ChargeTracker::register_urls()
         }
 
         auto params = std::make_unique<CSVGenerationParams>();
-        if (!params->init())
-            return request.send_plain(500, "Failed to generate CSV mail: Task timed out");
-
         uint32_t cookie = 0;
         String remote_access_user_uuid;
 
         {
             auto buf = heap_alloc_array<char>(1024);
-            StaticJsonDocument<192> doc;
+            StaticJsonDocument<256> doc;
             if (!params->parse_request(buf, doc, request))
                 return request.unsafe_ResponseAlreadySent();
 
@@ -1810,6 +1949,10 @@ void ChargeTracker::register_urls()
                 return request.send_plain(400, "Missing remote_access_user_uuid parameter");
             }
             remote_access_user_uuid = String(doc["remote_access_user_uuid"].as<const char*>());
+        }
+
+        if (!params->init()) {
+            return request.send_plain(500, "Failed to generate CSV mail: Task timed out");
         }
 
         ChargeLogGenerationLockHelper *lock_helper_ptr = lock_helper.release();
@@ -2237,6 +2380,8 @@ bool ChargeTracker::try_start_monthly_upload_for_user(int user_idx)
     params->start_min = monthly_upload_start_timestamp_min;
     params->end_min = monthly_upload_end_timestamp_min;
     params->language = upload_config->get("language")->asEnum<Language>();
+    // Not part of the config hash on purpose. The hash is used for deduplication of uploads and would change for all existing configs when adding this field.
+    params->filter_empty_charges = upload_config->get("filter_empty_charges")->asBool();
 
     params->init();
 
@@ -2640,6 +2785,457 @@ bool ChargeTracker::handle_charge_log_send_packet(PacketType type, NackReason na
 }
 #endif
 
+namespace {
+struct SubtotalStats {
+    uint64_t duration_s;
+    double charged;
+    uint32_t cost_cents;
+    uint32_t charges;
+
+    void add(const ChargeStart &cs, const ChargeEnd &ce, uint32_t electricity_price) {
+        ++charges;
+        duration_s += ce.charge_duration;
+
+        if (charged_invalid(cs, ce)) {
+            return;
+        }
+
+        const float kwh = ce.meter_end - cs.meter_start;
+        charged += kwh;
+        if (electricity_price != 0) {
+            cost_cents += charge_cost_cents(kwh, electricity_price);
+        }
+    }
+};
+
+struct Subtotal {
+    SubtotalStats stats;
+    uint32_t id; // User ID or charger UID
+};
+
+// Growable list of subtotals, only containing the users or chargers that occur in the report.
+// Doesn't use std::vector: A failed allocation must not abort.
+struct SubtotalList {
+    Subtotal *items = nullptr;
+    uint16_t count = 0;
+    uint16_t capacity = 0;
+    uint16_t last = 0;   // Index of the last found entry: Consecutive charges often have the same user or charger.
+    bool failed = false; // The list is incomplete and must not be shown (oom?).
+
+    SubtotalList() {}
+    SubtotalList(const SubtotalList &) = delete;
+    SubtotalList &operator=(const SubtotalList &) = delete;
+
+    ~SubtotalList() {
+        free_any(items);
+    }
+
+    Subtotal *find_or_add(uint32_t id) {
+        if ((last < count) && (items[last].id == id)) {
+            return &items[last];
+        }
+
+        for (uint16_t i = 0; i < count; ++i) {
+            if (items[i].id == id) {
+                last = i;
+                return &items[i];
+            }
+        }
+
+        if (failed) {
+            return nullptr;
+        }
+
+        if (count == capacity) {
+            // There are at most MAX_PASSIVE_USERS users and MAX_TRACKED_CHARGERS chargers.
+            const uint16_t new_capacity = (capacity == 0) ? 8 : (capacity * 2);
+            Subtotal *new_items = static_cast<Subtotal *>(malloc_psram_or_dram(new_capacity * sizeof(Subtotal)));
+            if (new_items == nullptr) {
+                failed = true;
+                return nullptr;
+            }
+
+            if (count > 0) {
+                memcpy(new_items, items, count * sizeof(Subtotal));
+            }
+            free_any(items);
+            items = new_items;
+            capacity = new_capacity;
+        }
+
+        items[count] = Subtotal{};
+        items[count].id = id;
+        last = count;
+        return &items[count++];
+    }
+
+    // Shown only if there is more than one entry
+    uint16_t rows() const {
+        return ((count > 1) && !failed) ? count : 0;
+    }
+};
+
+struct PDFStats {
+    SubtotalStats total = {};
+    bool seen_charges_without_meter = false;
+    bool only_local_charges = true;
+    uint32_t unknown_start_charges = 0;
+    uint32_t first_known_start_min = 0;
+    uint32_t last_known_start_min = 0;
+
+    // Sorted by name after sort() was called
+    SubtotalList users;
+    SubtotalList chargers;
+
+    void add(const ChargeStart &cs, const ChargeEnd &ce, uint32_t charger_uid, uint32_t electricity_price) {
+        total.add(cs, ce, electricity_price);
+
+        if (charged_invalid(cs, ce)) {
+            seen_charges_without_meter = true;
+        }
+
+        if (cs.timestamp_minutes == 0) {
+            ++unknown_start_charges;
+        } else {
+            if ((first_known_start_min == 0) || (cs.timestamp_minutes < first_known_start_min)) {
+                first_known_start_min = cs.timestamp_minutes;
+            }
+            if (cs.timestamp_minutes > last_known_start_min) {
+                last_known_start_min = cs.timestamp_minutes;
+            }
+        }
+
+        Subtotal *user = users.find_or_add(cs.user_id);
+        if (user != nullptr) {
+            user->stats.add(cs, ce, electricity_price);
+        }
+
+        Subtotal *charger = chargers.find_or_add(charger_uid);
+        if (charger != nullptr) {
+            charger->stats.add(cs, ce, electricity_price);
+        }
+    }
+
+    void sort(const GenerationParams *params) {
+        if (users.failed || chargers.failed) {
+            logger.printfln("Not enough memory for subtotals in PDF charge log");
+        }
+
+        std::sort(users.items, users.items + users.count, [params](const Subtotal &a, const Subtotal &b) {
+            char name_a[DISPLAY_NAME_LENGTH + 4];
+            char name_b[DISPLAY_NAME_LENGTH + 4];
+            params->display_name_cache[a.id].get(name_a);
+            params->display_name_cache[b.id].get(name_b);
+            int cmp = strcasecmp(name_a, name_b);
+            return (cmp != 0) ? (cmp < 0) : (a.id < b.id);
+        });
+
+        std::sort(chargers.items, chargers.items + chargers.count, [params](const Subtotal &a, const Subtotal &b) {
+            char name_a[DISPLAY_NAME_LENGTH + 4];
+            char name_b[DISPLAY_NAME_LENGTH + 4];
+            params->get_charger_display_name(a.id, name_a);
+            params->get_charger_display_name(b.id, name_b);
+            int cmp = strcasecmp(name_a, name_b);
+            return (cmp != 0) ? (cmp < 0) : (a.id < b.id);
+        });
+    }
+};
+
+struct PDFTexts {
+    PDFStats stats;
+
+    char period[64];
+    char created[24];
+    char users[DISPLAY_NAME_LENGTH + 8];
+    char meter[64];
+    char price[40];
+    char tile_energy[40];
+    char tile_count[24];
+    char tile_third[40];
+    char totals_duration[24];
+    char totals_energy[24];
+    char totals_cost[24];
+    char note[1024]; // The longest possible note is about 850 bytes currently
+    char footer[256];
+    char doc_subject[64];
+    char doc_creator[64];
+    char table_lines[PDF_TABLE_LINES_PER_OBJECT * PDF_TABLE_LINE_LEN];
+};
+} // anonymous namespace
+
+// Sum of charge durations as h:mm:ss. buf must have room for 24 bytes.
+// Can't overflow: max. 32768 charges * 2^24 s.
+static void format_duration_sum(char *buf, uint64_t duration_s)
+{
+    snprintf(buf, 24, "%llu:%02llu:%02llu", duration_s / 3600, (duration_s / 60) % 60, duration_s % 60);
+}
+
+// Writes the cells of a subtotal row, see PDFSubtotalColumn.
+static void subtotal_row_to_cells(char *buf, const char *name, const SubtotalStats &s, const GenerationParams *params)
+{
+    const Language lang = params->language;
+    char *head = buf;
+
+    const size_t name_len = std::min(strlen(name), static_cast<size_t>(DISPLAY_NAME_LENGTH + 3));
+    memcpy(head, name, name_len);
+    head[name_len] = '\0';
+    head += name_len + 1;
+
+    head += 1 + format_number(head, s.charges, 0, lang);
+    format_duration_sum(head, s.duration_s);
+    head += 1 + strlen(head);
+    head += 1 + format_number(head, s.charged, 3, lang);
+    if (params->electricity_price != 0) {
+        format_number(head, s.cost_cents / 100.0, 2, lang);
+    }
+}
+
+static_assert(DISPLAY_NAME_LENGTH + 4 + 4 * 24 <= PDF_SUBTOTAL_ROW_LEN, "PDF_SUBTOTAL_ROW_LEN too small");
+
+static void build_pdf_report(PDFReport &report, PDFTexts &texts, const PDFGenerationParams *params)
+{
+    const PDFStats &stats = texts.stats;
+    const bool en = params->language == Language::English;
+    const Language lang = params->language;
+    const bool show_cost = params->electricity_price != 0;
+    char num[24];
+
+#if OPTIONS_PRODUCT_ID_IS_ELTAKO()
+    report.doc_title = en ? "ELTAKO Charge Log" : "ELTAKO Ladelog";
+#else
+    report.doc_title = en ? "WARP Charge Log" : "WARP Ladelog";
+#endif
+    report.title = en ? "Charge Log" : "Ladelog";
+    report.subtitle = en ? "Record of the tracked charging sessions" : "Ladenachweis der erfassten Ladevorgänge";
+
+    // Period. Use the dates of the first charge and the export if no filter is set.
+    {
+        StringWriter sw(texts.period, sizeof(texts.period));
+        if (params->start_min != 0) {
+            timestamp_min_to_date_string(num, params->start_min, lang);
+            sw.puts(num);
+        } else if (stats.first_known_start_min != 0) {
+            timestamp_min_to_date_string(num, stats.first_known_start_min, lang);
+            sw.puts(num);
+        } else {
+            sw.puts(en ? "start of records" : "Aufzeichnungsbeginn");
+        }
+
+        sw.puts(" - ");
+
+        if (params->end_min != 0) {
+            // The end of the filter is exclusive.
+            timestamp_min_to_date_string(num, params->end_min - 1, lang);
+            sw.puts(num);
+        } else if (params->current_min != 0) {
+            timestamp_min_to_date_string(num, params->current_min, lang);
+            sw.puts(num);
+        } else if (stats.last_known_start_min != 0) {
+            timestamp_min_to_date_string(num, stats.last_known_start_min, lang);
+            sw.puts(num);
+        } else {
+            sw.puts(en ? "end of records" : "Aufzeichnungsende");
+        }
+        report.period = texts.period;
+    }
+
+    // Document properties
+    report.doc_author = params->unique_device_name.c_str();
+    {
+        StringWriter sw(texts.doc_subject, sizeof(texts.doc_subject));
+        sw.printf("%s %s", report.title, texts.period);
+    }
+    report.doc_subject = texts.doc_subject;
+    {
+        StringWriter sw(texts.doc_creator, sizeof(texts.doc_creator));
+        sw.printf("%s, Firmware %s", params->display_type.c_str(), build_version_full_str());
+    }
+    report.doc_creator = texts.doc_creator;
+
+    report.letterhead = params->letterhead_buf.get();
+    report.letterhead_lines = params->letterhead_lines;
+
+    // Info block
+    const char *meter_name = stats.only_local_charges ? get_meter_type_name(params->charger_meter_type) : nullptr;
+    const bool meter_is_mid = (meter_name != nullptr) && meter_type_is_mid(params->charger_meter_type);
+    {
+        int row = 0;
+        report.info_labels[row] = en ? "Period" : "Zeitraum";
+        report.info_bold[row] = true;
+        report.info_values[row++] = texts.period;
+
+        report.info_labels[row] = en ? "Device" : "Gerät";
+        report.info_values[row++] = params->unique_device_name.c_str();
+
+        if (meter_name != nullptr) {
+            snprintf(texts.meter, sizeof(texts.meter), "%s%s", meter_name, meter_is_mid ? " (MID)" : "");
+            report.info_labels[row] = en ? "Energy meter" : "Stromzähler";
+            report.info_values[row++] = texts.meter;
+        }
+
+        if (params->user == USER_FILTER_ALL_USERS) {
+            strcpy(texts.users, en ? "All users" : "Alle Benutzer");
+        } else if (params->user == USER_FILTER_CONFIGURED_USERS) {
+            strcpy(texts.users, en ? "Configured users" : "Konfigurierte Benutzer");
+        } else if (params->user == USER_FILTER_DELETED_USERS) {
+            strcpy(texts.users, en ? "Deleted users" : "Gelöschte Benutzer");
+        } else {
+            params->display_name_cache[params->user].get(texts.users);
+        }
+        report.info_labels[row] = en ? "Users" : "Benutzer";
+        report.info_values[row++] = texts.users;
+
+        if (show_cost) {
+            format_number(num, params->electricity_price / 100.0, 2, lang);
+            snprintf(texts.price, sizeof(texts.price), "%s ct/kWh", num);
+            report.info_labels[row] = en ? "Electricity price" : "Strompreis";
+            report.info_values[row++] = texts.price;
+        }
+
+        timestamp_min_to_date_time_string(texts.created, params->current_min, lang);
+        report.info_labels[row] = en ? "Created on" : "Erstellt am";
+        report.info_values[row++] = texts.created;
+
+        report.info_rows = row;
+    }
+
+    // Tiles
+    format_number(num, stats.total.charged, 3, lang);
+    snprintf(texts.tile_energy, sizeof(texts.tile_energy), "%s kWh", num);
+    report.tile_labels[0] = en ? "Total energy" : "Gesamtenergie";
+    report.tile_values[0] = texts.tile_energy;
+
+    format_number(texts.tile_count, stats.total.charges, 0, lang);
+    report.tile_labels[1] = en ? "Charging sessions" : "Ladevorgänge";
+    report.tile_values[1] = texts.tile_count;
+
+    if (show_cost) {
+        format_number(num, stats.total.cost_cents / 100.0, 2, lang);
+        snprintf(texts.tile_third, sizeof(texts.tile_third), "%s €", num);
+        report.tile_labels[2] = en ? "Total cost" : "Gesamtkosten";
+    } else {
+        format_duration_sum(num, stats.total.duration_s);
+        snprintf(texts.tile_third, sizeof(texts.tile_third), "%s h", num);
+        report.tile_labels[2] = en ? "Total charging time" : "Gesamtladedauer";
+    }
+    report.tile_values[2] = texts.tile_third;
+
+    // Table
+    report.section_title = en ? "Tracked charging sessions" : "Erfasste Ladevorgänge";
+    report.show_cost_column = show_cost;
+    // One cell per visible column, see PDFTableVisibleColumn. The second line of a header belongs to the second line of a charge, except for the units of the single line columns.
+    report.table_header = en ? "No.\0" "Start\nEnd\0" "User\nCharger\0" "Duration\n(h:mm:ss)\0" "Start reading\nEnd reading\0" "Energy\n(kWh)\0" "Cost\n(€)"
+                             : "Nr.\0" "Start\nEnde\0" "Benutzer\nWallbox\0" "Ladedauer\n(h:mm:ss)\0" "Start-Zählerstand\nEnd-Zählerstand\0" "Energie\n(kWh)\0" "Kosten\n(€)";
+    report.no_charges_text = en ? "No charging sessions were tracked in the selected period."
+                                : "Im ausgewählten Zeitraum wurden keine Ladevorgänge erfasst.";
+
+    // Totals
+    report.totals_label = en ? "Total" : "Summe";
+    format_duration_sum(texts.totals_duration, stats.total.duration_s);
+    report.totals_duration = texts.totals_duration;
+    format_number(texts.totals_energy, stats.total.charged, 3, lang);
+    report.totals_energy = texts.totals_energy;
+    if (show_cost) {
+        format_number(texts.totals_cost, stats.total.cost_cents / 100.0, 2, lang);
+        report.totals_cost = texts.totals_cost;
+    }
+
+    // Subtotals. Only shown if there is more than one user or charger.
+    if (stats.users.rows() > 0) {
+        PDFSubtotalTable &t = report.subtotal_tables[report.subtotal_table_count++];
+        t.title = en ? "Summary by user" : "Übersicht nach Benutzer";
+        t.header = en ? "User\0" "Charging sessions\0" "Duration\n(h:mm:ss)\0" "Energy\n(kWh)\0" "Cost\n(€)"
+                      : "Benutzer\0" "Ladevorgänge\0" "Ladedauer\n(h:mm:ss)\0" "Energie\n(kWh)\0" "Kosten\n(€)";
+        t.rows = stats.users.rows();
+    }
+
+    const int charger_table = (stats.chargers.rows() > 0) ? report.subtotal_table_count : -1;
+    if (charger_table >= 0) {
+        PDFSubtotalTable &t = report.subtotal_tables[report.subtotal_table_count++];
+        t.title = en ? "Summary by charger" : "Übersicht nach Wallbox";
+        t.header = en ? "Charger\0" "Charging sessions\0" "Duration\n(h:mm:ss)\0" "Energy\n(kWh)\0" "Cost\n(€)"
+                      : "Wallbox\0" "Ladevorgänge\0" "Ladedauer\n(h:mm:ss)\0" "Energie\n(kWh)\0" "Kosten\n(€)";
+        t.rows = stats.chargers.rows();
+    }
+
+    report.subtotal_row = [&stats, params, charger_table](int table, uint32_t row, char *buf) {
+        char name[DISPLAY_NAME_LENGTH + 4];
+
+        if (table == charger_table) {
+            const Subtotal &charger = stats.chargers.items[row];
+            params->get_charger_display_name(charger.id, name);
+            subtotal_row_to_cells(buf, name, charger.stats, params);
+        } else {
+            const Subtotal &user = stats.users.items[row];
+            params->display_name_cache[user.id].get(name);
+            subtotal_row_to_cells(buf, name, user.stats, params);
+        }
+    };
+
+    // Note
+    {
+        StringWriter sw(texts.note, sizeof(texts.note));
+
+        sw.puts(en ? "This report was generated automatically from the charge log of the device listed above."
+                   : "Dieser Bericht wurde automatisch aus dem Ladelog des oben genannten Geräts erstellt.");
+
+        sw.puts(en ? " It contains all charging sessions that started within the stated period. All times are in the local time of the device."
+                   : " Enthalten sind alle Ladevorgänge, die im angegebenen Zeitraum begonnen haben. Alle Zeitangaben in Ortszeit des Geräts.");
+
+        if (meter_name != nullptr) {
+            if (en) {
+                sw.printf(" The energy was measured by the %senergy meter %s.", meter_is_mid ? "MID certified " : "", meter_name);
+            } else {
+                sw.printf(" Die Energiemengen wurden mit dem %sStromzähler %s gemessen.", meter_is_mid ? "MID-konformen " : "", meter_name);
+            }
+        } else {
+            // The meter type is not known here (e.g. charges of other chargers exported on an Energy Manager), but all chargers we support are only sold with MID certified meters.
+            sw.puts(en ? " The energy was measured with MID certified energy meters."
+                       : " Die Energiemengen wurden mit MID-konformen Stromzählern gemessen.");
+        }
+
+        sw.puts(en ? " The energy of a charging session is the difference between the meter readings at its end and start."
+                   : " Die Energie eines Ladevorgangs ergibt sich aus der Differenz der Zählerstände bei Ende und Start.");
+
+        if (show_cost) {
+            if (en) {
+                sw.printf(" Costs were calculated with the configured electricity price of %s.", texts.price);
+            } else {
+                sw.printf(" Die Kosten wurden mit dem konfigurierten Strompreis von %s berechnet.", texts.price);
+            }
+        }
+
+        if (params->filter_empty_charges) {
+            sw.puts(en ? " Charging sessions without significant energy flow (1 Wh or less) are not listed."
+                       : " Ladevorgänge ohne nennenswerten Energiefluss (höchstens 1 Wh) sind nicht aufgeführt.");
+        }
+
+        if (stats.unknown_start_charges == 1) {
+            sw.puts(en ? " The start time of one charging session is unknown, because the device's clock was not synchronized at that time."
+                       : " Bei einem Ladevorgang ist die Startzeit unbekannt, da die Uhr des Geräts zu diesem Zeitpunkt nicht synchronisiert war.");
+        } else if (stats.unknown_start_charges > 1) {
+            if (en) {
+                sw.printf(" The start time of %lu charging sessions is unknown, because the device's clock was not synchronized at that time.", stats.unknown_start_charges);
+            } else {
+                sw.printf(" Bei %lu Ladevorgängen ist die Startzeit unbekannt, da die Uhr des Geräts zu diesem Zeitpunkt nicht synchronisiert war.", stats.unknown_start_charges);
+            }
+        }
+
+        if (stats.seen_charges_without_meter) {
+            sw.puts(en ? " At least one charging session has no valid meter readings. The totals are therefore incomplete."
+                       : " Für mindestens einen Ladevorgang liegen keine gültigen Zählerstände vor. Die Summen sind daher unvollständig.");
+        }
+
+        report.note_title = en ? "Note" : "Hinweis";
+        report.note = texts.note;
+    }
+
+    snprintf(texts.footer, sizeof(texts.footer), "%s \xC2\xB7 %s \xC2\xB7 %s \xC2\xB7 Firmware %s",
+             report.title, params->unique_device_name.c_str(), params->display_type.c_str(), build_version_full_str());
+    report.footer = texts.footer;
+    report.page_label_format = en ? "Page %d of %d" : "Seite %d von %d";
+}
+
 int ChargeTracker::generate_pdf(
     std::function<int(const void *buffer, size_t len)> &&callback,
     const PDFGenerationParams *params,
@@ -2650,11 +3246,13 @@ int ChargeTracker::generate_pdf(
         return -1;
     }
 
-    char stats_buf[384];
-    double charged_sum = 0;
-    uint32_t charged_cost_sum = 0;
-    bool seen_charges_without_meter = false;
-    int charge_records = 0;
+    unique_ptr_any<PDFTexts> texts = make_unique_psram<PDFTexts>();
+    if (texts == nullptr) {
+        logger.printfln("Cannot generate PDF charge log: Out of memory");
+        return -1;
+    }
+
+    PDFStats &stats = texts->stats;
 
 #if OPTIONS_PRODUCT_ID_IS_WARP()
     // WARP1 has limited memory (no PSRAM), use file-by-file reading
@@ -2684,15 +3282,7 @@ int ChargeTracker::generate_pdf(
                     first_charge = j;
                 last_file = i;
                 last_charge = j;
-                ++charge_records;
-                if (charged_invalid(c.cs, c.ce)) {
-                    seen_charges_without_meter = true;
-                } else {
-                    double charged = c.ce.meter_end - c.cs.meter_start;
-                    charged_sum += charged;
-                    if (params->electricity_price != 0)
-                        charged_cost_sum += round(charged * params->electricity_price / 100.0f);
-                }
+                stats.add(c.cs, c.ce, 0, params->electricity_price);
             }
         }
     }
@@ -2702,102 +3292,24 @@ search_done:
     size_t filtered_count = 0;
     ExportCharge *filtered_charges = getFilteredCharges(*params, &filtered_count);
 
-    // Calculate statistics from filtered charges
-    charge_records = static_cast<int>(filtered_count);
     for (size_t i = 0; i < filtered_count; ++i) {
-        const ChargeStart &cs = filtered_charges[i].charge.cs;
-        const ChargeEnd &ce = filtered_charges[i].charge.ce;
-        if (charged_invalid(cs, ce)) {
-            seen_charges_without_meter = true;
-        } else {
-            double charged = ce.meter_end - cs.meter_start;
-            charged_sum += charged;
-            if (params->electricity_price != 0)
-                charged_cost_sum += round(charged * params->electricity_price / 100.0f);
+        stats.add(filtered_charges[i].charge.cs, filtered_charges[i].charge.ce, filtered_charges[i].charger_uid, params->electricity_price);
+        if (filtered_charges[i].charger_uid != params->local_uid) {
+            stats.only_local_charges = false;
         }
     }
 #endif
 
-    bool english = params->language == Language::English;
+    stats.sort(params);
 
-    char *stats_head = stats_buf;
-    stats_head += 1 + sprintf_u(stats_head, "%s: %s", english ? "Device" : "Gerät", params->unique_device_name.c_str());
-    stats_head += sprintf_u(stats_head, "%s: ", english ? "Exported on" : "Exportiert am");
-    stats_head += 1 + timestamp_min_to_date_time_string(stats_head, params->current_min, params->language);
-    stats_head += sprintf_u(stats_head, "%s: ", english ? "Exported users" : "Exportierte Benutzer");
-    if (params->user == USER_FILTER_ALL_USERS)
-        stats_head += sprintf_u(stats_head, "%s", english ? "all users" : "Alle Benutzer");
-    else if (params->user == USER_FILTER_CONFIGURED_USERS)
-        stats_head += sprintf_u(stats_head, "%s", english ? "configured users" : "Konfigurierte Benutzer");
-    else if (params->user == USER_FILTER_DELETED_USERS)
-        stats_head += sprintf_u(stats_head, "%s", english ? "deleted users" : "Gelöschte Benutzer");
-    else
-        stats_head += params->display_name_cache[params->user].get(stats_head);
-    ++stats_head;
-    stats_head += sprintf_u(stats_head, "%s: ", english ? "Exported period" : "Exportierter Zeitraum");
-    if (params->start_min == 0)
-        stats_head += sprintf_u(stats_head, "%s", english ? "record start" : "Aufzeichnungsbeginn");
-    else
-        stats_head += timestamp_min_to_date_time_string(stats_head, params->start_min, params->language);
-    stats_head += sprintf_u(stats_head, "%s", english ? " to " : " bis ");
-    if (params->end_min == 0)
-        stats_head += sprintf_u(stats_head, "%s", english ? "record end" : (params->start_min == 0 ? "-ende" : "Aufzeichnungsende"));
-    else
-        stats_head += timestamp_min_to_date_time_string(stats_head, params->end_min, params->language);
-    ++stats_head;
-    stats_head += sprintf_u(stats_head, "%s: ", english ? "Total energy of exported charges" : "Gesamtenergie exportierter Ladevorgänge");
-    if (charged_sum <= 999999999.999f) {
-        int written = sprintf_u(stats_head, "%.3f kWh", charged_sum);
-        if (params->language == Language::German)
-            for (int i = 0; i < written; ++i)
-                if (stats_head[i] == '.')
-                    stats_head[i] = ',';
-        stats_head += 1 + written;
-    }
-    else {
-        memcpy(stats_head, ">=1000000000 kWh", ARRAY_SIZE(">=1000000000 kWh"));
-        stats_head += ARRAY_SIZE(">=1000000000 kWh");
-    }
-    if (params->electricity_price != 0) {
-        int written = sprintf_u(stats_head, "%s: %ld.%02ld€ (%.2f ct/kWh)%s",
-                        english ? "Total cost" : "Gesamtkosten",
-                        charged_cost_sum / 100, charged_cost_sum % 100,
-                        params->electricity_price / 100.0f,
-                        seen_charges_without_meter ? (english ? " Incomplete!" : " Unvollständig!") : "");
-        if (params->language == Language::German)
-            for (int i = 0; i < written; ++i)
-                if (stats_head[i] == '.')
-                    stats_head[i] = ',';
-        stats_head += 1 + written;
-    }
+    PDFReport report;
+    build_pdf_report(report, *texts, params);
+
+    char *table_lines_buffer = texts->table_lines;
+    const size_t table_lines_buffer_size = sizeof(texts->table_lines);
+    const bool any_charges_tracked = stats.total.charges > 0;
+
     std::lock_guard<std::mutex> lock2{pdf_mutex};
-
-#define TABLE_LINE_LEN (17 /* start date: 01.02.3456 12:34\0 or 3456-02-01 12:34\0 */ \
-                      + 33 /* display name: max 32 chars + \0 */ \
-                      + 33 /* charger display name: max 32 chars + \0 */ \
-                      + 8  /* charged: (assumed max) "999.999\0" kWh else truncated to "> 1000\0" */ \
-                      + 11 /* charge duration max "9999:59:59\0" */ \
-                      + 16 /* meter start max 99'999'999.999\0 */ \
-                      + 8) /* cost max 9999.99\0 else truncated to >10000 */
-
-    char table_lines_buffer[8 * TABLE_LINE_LEN];
-    const char * table_header_de = "Startzeit\0"
-                                   "Benutzer\0"
-                                   "Wallbox\0"
-                                   "geladen (kWh)\0"
-                                   "Ladedauer\0"
-                                   "Zählerstand Start\0"
-                                   "Kosten (€)";
-    const char * table_header_en = "Start time\0"
-                                   "User\0"
-                                   "Charger\0"
-                                   "Charged (kWh)\0"
-                                   "Duration\0"
-                                   "Meter start\0"
-                                   "Cost (€)";
-    bool any_charges_tracked = charge_records > 0;
-    if (!any_charges_tracked)
-        charge_records = 1;
 
 #if OPTIONS_PRODUCT_ID_IS_WARP()
     int current_file = (first_file > -1 ? first_file : first_charge_record);
@@ -2806,13 +3318,10 @@ search_done:
     File f;
 
     int rc = init_pdf_generator(callback,
-                       english ? "WARP Charge Log" : "WARP Ladelog",
-                       stats_buf, (params->electricity_price == 0) ? 5 : 6,
-                       params->letterhead_buf.get(), params->letterhead_lines,
-                       english ? table_header_en : table_header_de,
-                       charge_records,
-                       params->language,
-                       [&table_lines_buffer,
+                       report,
+                       stats.total.charges,
+                       [table_lines_buffer,
+                        table_lines_buffer_size,
                         &f,
                         params,
                         first_file,
@@ -2823,7 +3332,7 @@ search_done:
                         &current_charge,
                         any_charges_tracked]
                        (const char * * table_lines) {
-        memset(table_lines_buffer, 0, ARRAY_SIZE(table_lines_buffer));
+        memset(table_lines_buffer, 0, table_lines_buffer_size);
         int lines_generated = 0;
         char *table_lines_head = table_lines_buffer;
         Charge c;
@@ -2836,15 +3345,16 @@ search_done:
                 f.seek(CHARGE_RECORD_SIZE * current_charge);
             }
             for (; current_charge < (CHARGE_RECORD_MAX_FILE_SIZE / CHARGE_RECORD_SIZE); ++current_charge) {
-                if ((lines_generated == 8) || (current_file == last_file && current_charge > last_charge))
+                if ((lines_generated == PDF_TABLE_LINES_PER_OBJECT) || ((current_file == last_file) && (current_charge > last_charge))) {
                     break;
+                }
                 if (f.read((uint8_t *)&c, CHARGE_RECORD_SIZE) != CHARGE_RECORD_SIZE)
                     break;
 
                 if (!params->include_charge(&c))
                     continue;
 
-                table_lines_head = tracked_charge_to_string(table_lines_head, c.cs, c.ce, params, 0);
+                table_lines_head = tracked_charge_to_pdf_row(table_lines_head, c.cs, c.ce, params, 0);
                 ++lines_generated;
             }
             if (current_charge >= (CHARGE_RECORD_MAX_FILE_SIZE / CHARGE_RECORD_SIZE)) {
@@ -2852,8 +3362,9 @@ search_done:
                 ++current_file;
                 current_charge = 0;
             }
-            if ((lines_generated == 8))
+            if ((lines_generated == PDF_TABLE_LINES_PER_OBJECT)) {
                 break;
+            }
             if (current_file == last_file && current_charge >= last_charge) {
                 f.close();
                 break;
@@ -2867,31 +3378,24 @@ search_done:
     size_t current_charge_idx = 0;
 
     int rc = init_pdf_generator(callback,
-#if OPTIONS_PRODUCT_ID_IS_ELTAKO()
-                       english ? "ELTAKO Charge Log" : "ELTAKO Ladelog",
-#else
-                       english ? "WARP Charge Log" : "WARP Ladelog",
-#endif
-                       stats_buf, (params->electricity_price == 0) ? 5 : 6,
-                       params->letterhead_buf.get(), params->letterhead_lines,
-                       english ? table_header_en : table_header_de,
-                       charge_records,
-                       params->language,
-                       [&table_lines_buffer,
+                       report,
+                       stats.total.charges,
+                       [table_lines_buffer,
+                        table_lines_buffer_size,
                         &current_charge_idx,
                         params,
                         filtered_charges,
                         filtered_count,
                         any_charges_tracked]
                        (const char * * table_lines) {
-        memset(table_lines_buffer, 0, ARRAY_SIZE(table_lines_buffer));
+        memset(table_lines_buffer, 0, table_lines_buffer_size);
         int lines_generated = 0;
         char *table_lines_head = table_lines_buffer;
 
-        while (any_charges_tracked && current_charge_idx < filtered_count && lines_generated < 8) {
-            auto c = filtered_charges[current_charge_idx];
+        while (any_charges_tracked && (current_charge_idx < filtered_count) && (lines_generated < PDF_TABLE_LINES_PER_OBJECT)) {
+            const auto &c = filtered_charges[current_charge_idx];
 
-            table_lines_head = tracked_charge_to_string(table_lines_head, c.charge.cs, c.charge.ce, params, c.charger_uid);
+            table_lines_head = tracked_charge_to_pdf_row(table_lines_head, c.charge.cs, c.charge.ce, params, c.charger_uid);
             ++lines_generated;
             ++current_charge_idx;
         }

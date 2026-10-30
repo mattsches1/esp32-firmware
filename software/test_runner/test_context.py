@@ -10,26 +10,34 @@ import json
 import os
 import re
 import io
+import ssl
 import socket
 import subprocess
+import sys
 import tempfile
 import time
+import random
 from urllib.error import URLError, HTTPError
-from urllib.request import Request, urlopen
+from urllib.request import Request, urlopen, HTTPDigestAuthHandler, build_opener, install_opener
 
 import esptool.cmds
 from esptool.targets import ESP32ROM
+
+from tinkerforge.ip_connection import IPConnection, Device
 
 from . import parttool
 from .https_server import TestHTTPSServer
 from .testbox.testbox import TestBox
 from .testbox.warp2 import WARP2TestBox
 from .testbox.warp3 import WARP3TestBox
+from .testbox.warp4 import WARP4TestBox
 from .testbox.wem import WEMTestBox
 from .device_type import DeviceType
 
 import tinkerforge_util as tfutil
 tfutil.create_parent_module(__file__, 'software')
+
+from tinkerforge_util.colored import red, green, blue, purple, gray
 
 try:
     from software.src.modules.meters.generated.meter_value_id import MeterValueID
@@ -70,15 +78,26 @@ class TestContext:
 
     _testbox: TestBox | None = None
 
+    _to_restore_suite: dict[str, JSON] = field(default_factory=dict)
     _to_restore: dict[str, JSON] = field(default_factory=dict)
 
     _debug_fs_enabled: bool | None = None
+
+    _args: typing.Any = None
+
+    _test_start: float = None
+
+    _http_digest_credentials: tuple[str, str] = None
+
+    api_schema_port_list: list[tuple[str, int]] = field(default_factory=lambda: [('http', 80), ('https', 443)])
 
     def init_testbox(self):
         if self._brickd_host is None:
             return False
 
-        if self._brickd_host.startswith('warp3'):
+        if self._brickd_host.startswith('warp4'):
+            self._testbox = WARP4TestBox()
+        elif self._brickd_host.startswith('warp3'):
             self._testbox = WARP3TestBox()
         elif self._brickd_host.startswith('warp2'):
             self._testbox = WARP2TestBox()
@@ -110,12 +129,36 @@ class TestContext:
         raise TestContext.SkipTestError(reason)
 
     def _to_runner(self, cmd, **kwargs):
-        payload = json.dumps([cmd, dict({"testname": self.testname}, **kwargs)], separators=(',', ':')) + "\n"
+        kwargs = dict({"testname": self.testname}, **kwargs)
+        payload = json.dumps([cmd, kwargs], separators=(',', ':')) + "\n"
         if self._fifo_out is not None:
             self._fifo_out.write(payload)
         else:
-            # TODO do we want to print this or just drop it?
-            print(payload, end="") # payload already contains \n
+            match cmd:
+                case 'notify_test_start':
+                    self._test_start = time.monotonic()
+                    print(f"Started {kwargs["testname"]}", end=" ")
+                    sys.stdout.flush()
+
+                case 'notify_test_success':
+                    print(green("Success"), f"({time.monotonic() - self._test_start:.3f}s)")
+
+                case 'notify_test_failure':
+                    print(red("Failure"), f"({time.monotonic() - self._test_start:.3f}s)")
+                    print("    " + "\n    ".join(x.removeprefix('  ') for x in kwargs["error"].split("\n")))
+
+                case 'notify_test_error':
+                    print(purple("Error"), f"({time.monotonic() - self._test_start:.3f}s)")
+                    print("    " + "\n    ".join(kwargs["tb"].split("\n")))
+
+                case 'notify_test_skipped':
+                    print(blue("Skipped"), kwargs["reason"])
+
+                case 'set_test_timeout':
+                    print(gray("Set test timeout to"), kwargs["timeout"])
+
+                case 'dbg':
+                    print(kwargs["message"], end="")
 
     def set_test_timeout(self, timeout: float):
         self._to_runner("set_test_timeout", timeout=timeout)
@@ -170,24 +213,73 @@ class TestContext:
             esptool.cmds.erase_region(esp, partition_offset, 8192)
         return True
 
-    def http_request(self, method: typing.Literal['GET', 'PUT', 'POST', 'DELETE'], path: str, payload: str | bytes = "", headers: typing.MutableMapping[str, str] = {}, timeout: float = 1, parse: bool = False):
+    def enable_digest_auth(self, user, password):
+        self._http_digest_credentials = (user, password)
+
+    def disable_digest_auth(self):
+        self._http_digest_credentials = None
+
+    def http_request(self,
+                     method: typing.Literal['GET', 'PUT', 'POST', 'DELETE'],
+                     path: str, payload: str | bytes = "",
+                     headers: typing.MutableMapping[str, str] = {},
+                     timeout: float = 120,
+                     parse: bool = False,
+                     schema_port: tuple[str, int] = None,
+                     verify_cert: bool = False,
+                     credentials: tuple[str, str] = None):
         if self._esp_host is None:
             self.skip("ESP Host not passed. Can't send HTTP requests")
 
         if isinstance(payload, str):
             payload = payload.encode('utf-8')
 
-        req = Request(f'http://{self._esp_host}{path}', data=payload, method=method, headers=headers)
+        if not verify_cert:
+            old_default_context = ssl._create_default_https_context
+            ssl._create_default_https_context = ssl._create_unverified_context
+
         try:
-            with urlopen(req, timeout=timeout) as resp:
-                result = resp.read()
-                if parse:
-                    return json.loads(result)
+            if schema_port is not None:
+                schema_list = [schema_port]
+            else:
+                schema_list = self.api_schema_port_list
+
+            exc = None
+            for schema, port in schema_list:
+                uri = f'{schema}://{self._esp_host}:{port}{path}'
+
+                req = Request(uri, data=payload, method=method, headers=headers)
+
+                if credentials is None and self._http_digest_credentials is None:
+                    open_fn = urlopen
                 else:
-                    return result
-        except HTTPError as e:
-            e.msg += ":" + e.read().decode('utf-8')
-            raise
+                    creds = credentials if credentials else self._http_digest_credentials
+
+                    auth_handler = HTTPDigestAuthHandler()
+                    auth_handler.add_password(realm='esp32-lib',
+                                              uri=uri,
+                                              user=creds[0],
+                                              passwd=creds[1])
+                    opener = build_opener(auth_handler)
+                    open_fn = opener.open
+
+                try:
+                    with open_fn(req, timeout=timeout) as resp:
+                        result = resp.read()
+                        if parse:
+                            return json.loads(result)
+                        else:
+                            return result
+                except HTTPError as e:
+                    e.msg += ":" + e.read().decode('utf-8')
+                    exc = e
+                except Exception as e:
+                    exc = e
+
+            raise exc
+        finally:
+            if not verify_cert:
+                ssl._create_default_https_context = old_default_context
 
     def factory_reset(self):
         if self._serial_port:
@@ -195,38 +287,35 @@ class TestContext:
         else:
             self.api('factory_reset', {"do_i_know_what_i_am_doing": True})
 
-    def reboot(self):
-        rebooted = False
-
-        # Fast reboot via esptool, if serial port available
-        if (self._serial_port):
-            with ESP32ROM(self._serial_port) as esp:
-                esp.connect()
-                esptool.cmds.reset_chip(esp)
-                time.sleep(6.5)
-                rebooted = True
-
-        # No serial port, use slow reboot via API
-        if not rebooted:
-            self.api('reboot', '')
-            time.sleep(9)
+    def wait_for_reboot(self, pre_reboot_delay=10):
+        time.sleep(pre_reboot_delay)
 
         # Wait for the host to be responsive
-        for i in range(10, 0, -1):
+
+        BOOTUP_TIMEOUT = 30
+
+        for retry in range(BOOTUP_TIMEOUT):
             try:
                 self.api('info/version', timeout=1)
                 break
-            except URLError as e:
-                errtype = type(e.reason)
-                if errtype is TimeoutError:
-                    # ESP's interface not up yet
-                    pass
-                elif errtype is ConnectionRefusedError:
-                    # ESP's interface up but web server not running yet
-                    if i > 1:
-                        time.sleep(1)
-                else:
-                    raise e
+            except Exception as e:
+                if retry < BOOTUP_TIMEOUT - 1:
+                    time.sleep(1)
+                    continue
+                raise
+
+    def reboot(self, wait_for_host_responsive=True):
+        # Fast reboot via esptool, if serial port available
+        if self._serial_port:
+            with ESP32ROM(self._serial_port) as esp:
+                esp.connect()
+                esptool.cmds.reset_chip(esp)
+        else:
+            # No serial port, use slow reboot via API
+            self.api('reboot', '')
+
+        if wait_for_host_responsive:
+            self.wait_for_reboot(6.5 if self._serial_port else 9)
 
     def assert_(self, actual):
         if not actual:
@@ -260,7 +349,7 @@ class TestContext:
 
     def assert_ne(self, expected, actual):
         if not (actual != expected):
-            raise AssertionError(f"Expected{actual=} to not be equal to {expected=}\n" + self._get_callee())
+            raise AssertionError(f"Expected {actual=} to not be equal to {expected=}\n" + self._get_callee())
 
         return actual
 
@@ -299,9 +388,15 @@ class TestContext:
 
         return match
 
+    def assert_contains(self, expected, actual):
+        if not (expected in actual):
+            raise AssertionError(f"Expected {actual=} to contain {expected=}\n" + self._get_callee())
+
+        return actual
+
     def assert_in(self, expected, actual):
         if not (actual in expected):
-            raise AssertionError(f"Expected {actual=} to contain {expected=}\n" + self._get_callee())
+            raise AssertionError(f"Expected {actual=} to be in {expected=}\n" + self._get_callee())
 
         return actual
 
@@ -311,10 +406,40 @@ class TestContext:
 
         return actual
 
+    def assert_list_eq(self, expected, actual):
+        if len(expected) != len(actual):
+            missing = set(expected).difference(set(actual))
+            unexpected = set(actual).difference(set(expected))
+            msg = f"Expected list of length {len(actual)} but got list of length {len(expected)}."
+            if missing:
+                msg += f"\n\tMissing {", ".join(missing)}"
+            if unexpected:
+                msg += f"\n\tUnexpected {", ".join(unexpected)}"
+            raise AssertionError(msg)
+
+        errors = []
+
+        for i, tup in enumerate(zip(expected, actual)):
+            e, a = tup
+            if e != a:
+                errors.append(f"At index {i}: Expected {e} but got {a}")
+
+        if len(errors) > 0:
+            raise AssertionError(f"Expected lists to be equal but they are not.\n\t{'\n\t'.join(errors)}")
+
+    def assert_not_raising(self, expected: type, actual: Callable[[], typing.Any]):
+        try:
+            actual()
+        except Exception as e:
+            if isinstance(e, expected):
+                traceback.print_exc(e)
+                raise AssertionError(f"Expected to not raise {expected} but an exception of this type was raised!")
+            raise e
+
     class NoPayload:
         pass
 
-    def api(self, api: str, payload: JSON | NoPayload = NoPayload(), *, timeout: float = 1, auth: tuple[str, str] | None = None) -> typing.Any:
+    def api(self, api: str, payload: JSON | NoPayload = NoPayload(), *, timeout: float = 120, auth: tuple[str, str] | None = None) -> typing.Any:
         if isinstance(payload, TestContext.NoPayload):
             method, body, extra_headers = 'GET', '', {}
         else:
@@ -412,16 +537,23 @@ class TestContext:
 
         return act
 
+    def wait_for_clock_synced(self, timeout: float = 30) -> dict:
+        """Waits until the device clock is synced (e.g. via NTP after a reboot) and returns rtc/time."""
+        def check() -> dict:
+            t = self.api('rtc/time')
+            self.assert_ne(0, t['year'])
+            return t
+
+        return self.wait_for(check, timeout=timeout, poll_delay=0.5)
+
     def assert_fail(self, assert_fn: typing.Callable[[], typing.Any]):
         """Assert that the passed function raises an AssertionError"""
         error = None
-        self.dbg("Assert fail {")
+
         try:
             assert_fn()
         except AssertionError as e:
             error = e
-            self.dbg(" Failed")
-        self.dbg("}")
 
         if error is None:
             raise AssertionError(f"Assertion failed: expected inner asserts to fail but all succeeded. ({self._get_callee()})")
@@ -431,24 +563,15 @@ class TestContext:
         left_error = None
         right_error = None
 
-        self.dbg("Assert XOR {")
-        self.dbg("left:")
-
         try:
             assert_fn_left()
         except AssertionError as e:
             left_error = e
-            self.dbg(" Failed")
-
-        self.dbg("right:")
 
         try:
             assert_fn_right()
         except AssertionError as e:
             right_error = e
-            self.dbg(" Failed")
-
-        self.dbg("}")
 
         if left_error is None and right_error is None:
             raise AssertionError(f"Assertion failed: expected one failed assertion but both succeeded\n" + self._get_callee())
@@ -536,6 +659,13 @@ class TestContext:
         return DeviceType(self.api('info/name/type'))
 
     def restore_before_suite_teardown(self, api: str):
+        self._to_restore_suite[api] = self.api(api)
+
+    def _restore_suite(self):
+        for api, payload in self._to_restore_suite.items():
+            self.api(api, payload)
+
+    def restore_before_teardown(self, api: str):
         self._to_restore[api] = self.api(api)
 
     def _restore(self):
@@ -582,6 +712,94 @@ class TestContext:
             self.skip("Firmware was built without DEBUG_FS_ENABLE")
 
         return self.http_request('GET', f"/debug/fs{path}")
+
+    def remove_file(self, path: str, missing_ok: bool = False):
+        if not self.debug_fs_enabled():
+            self.skip("Firmware was built without DEBUG_FS_ENABLE")
+
+        try:
+            self.http_request('DELETE', f"/debug/fs{path}")
+        except HTTPError as e:
+            if missing_ok and e.code == 404:
+                return
+            raise
+
+    def list_dir(self, path: str, recursive: bool = False):
+        if not path.endswith('/'):
+            path = path + '/'
+
+        if not self.debug_fs_enabled():
+            self.skip("Firmware was built without DEBUG_FS_ENABLE")
+
+        html = self.http_request('GET', f"/debug/fs{path}").decode('utf-8')
+
+        if listed_path := re.search('<h1>([^<]+)</h1>', html).group(1) != (path.removesuffix('/') if path != '/' else path):
+            raise Exception(f"Attempted to list directory {path}, but received listing of directory {listed_path}!")
+
+        entries = [path + e for e in re.findall('<a href="([^"]+)"', html)]
+
+        if not recursive:
+            return entries
+
+        files = []
+
+        for f in entries:
+            if not f.endswith("/"):
+                files.append(f)
+            else:
+                files += self.list_dir(f, True)
+
+        return files
+
+    @dataclass
+    class Bricklet[T]:
+        tc: 'TestContext'
+        device_class: type[Device]
+        enumeration_timeout: float = 1
+
+        active_counter: typing.ClassVar[int] = 0
+
+        def __enter__(self) -> T:
+            self.ipcon = IPConnection()
+
+            dev = None
+
+            def cb_enumerate(uid, connected_uid, position, hardware_version, firmware_version, device_identifier, enumeration_type):
+                nonlocal dev
+
+                if enumeration_type == IPConnection.ENUMERATION_TYPE_DISCONNECTED:
+                    return
+
+                if device_identifier == self.device_class.DEVICE_IDENTIFIER:
+                    dev = self.device_class(uid, self.ipcon)
+
+            self.ipcon.register_callback(IPConnection.CALLBACK_ENUMERATE, cb_enumerate)
+
+            if TestContext.Bricklet.active_counter == 0:
+                self.tc.http_request('GET', '/hidden_proxy/enable')
+
+            TestContext.Bricklet.active_counter += 1
+
+            self.ipcon.connect(self.tc._esp_host, 4223)
+            self.ipcon.enumerate()
+
+            start = time.monotonic()
+            while dev is None and time.monotonic() - start < self.enumeration_timeout:
+                time.sleep(0.01)
+
+            if dev is None:
+                self.tc.skip(f"No {self.device_class.DEVICE_DISPLAY_NAME} enumerated.")
+
+            return dev
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            self.ipcon.disconnect()
+
+            TestContext.Bricklet.active_counter -= 1
+            if TestContext.Bricklet.active_counter == 0:
+                self.tc.http_request('GET', '/hidden_proxy/disable')
+
+            return False
 
     # @dataclass
     # class Cap:
@@ -637,13 +855,22 @@ class TestContext:
 
 
 def _run_test(tc: TestContext, name: str, fn: TestFn | None) -> bool:
-    tc._wait_for_start()
+    if tc._args.list_tests:
+        if fn is not None:
+            tc._wait_for_start()
+            tc._notify_test_start(name)
+            tc._notify_test_skipped(reason="Listing tests")
+        return True
 
+
+    tc._wait_for_start()
     tc._notify_test_start(name)
 
     try:
-        if name.endswith("/suite_teardown"):
+        if name.endswith("/teardown"):
             tc._restore()
+        if name.endswith("/suite_teardown"):
+            tc._restore_suite()
 
         if fn is not None:
             fn(tc)
@@ -668,6 +895,8 @@ def run_testsuite(l: dict[str, typing.Any]):
     parser.add_argument("--host")
     parser.add_argument("--tty")
     parser.add_argument("--brickd")
+    parser.add_argument("--list-tests", action='store_true')
+    parser.add_argument("--no-shuffle", action='store_true')
     args = parser.parse_args()
 
     # l is locals() of the calling test suite script, containing test, setup and teardown functions.
@@ -688,8 +917,15 @@ def run_testsuite(l: dict[str, typing.Any]):
             open(args.fifo_out_path, 'w', buffering=1) if args.fifo_in_path else None,
             args.tty,
             args.host,
-            args.brickd
+            args.brickd,
+            _args=args
         )
+
+    if len(suite.tests) == 0:
+        return
+
+    if not args.no_shuffle:
+        random.shuffle(suite.tests)
 
     if not _run_test(tc, f"{suite.module}/{suite.suite}/suite_setup", suite.suite_setup):
         _run_test(tc, f"{suite.module}/{suite.suite}/suite_teardown", suite.suite_teardown)

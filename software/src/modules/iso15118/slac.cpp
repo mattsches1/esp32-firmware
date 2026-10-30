@@ -21,16 +21,17 @@
 
 #include "slac.h"
 
-#include "event_log_prefix.h"
-#include "generated/module_dependencies.h"
-#include "build.h"
-
 #include <unistd.h>
+#include <esp_random.h>
 #include <errno.h>
 #include <mbedtls/sha256.h>
 
+#include "event_log_prefix.h"
+#include "generated/module_dependencies.h"
+#include "build.h"
 #include "qca700x.h"
 
+#include "options.h"
 #include "gcc_warnings.h"
 
 extern const uint8_t slac_mac_plc_peer[SLAC_MAC_ADDRESS_LENGTH]  = {0x00, 0xB0, 0x52, 0x00, 0x00, 0x01};
@@ -90,8 +91,9 @@ void SLAC::generate_nid_from_nmk(void)
 
 void SLAC::generate_new_nmk_and_nid(void)
 {
+    esp_fill_random(nmk, SLAC_NMK_LENGTH);
+
     for (uint8_t i = 0; i < SLAC_NMK_LENGTH; i++) {
-        nmk[i] = static_cast<uint8_t>(random(256));
         api_state.get("nmk")->get(i)->updateUint(nmk[i]);
     }
 
@@ -396,11 +398,12 @@ void SLAC::handle_cm_slac_parm_request(const CM_SLACParmRequest &cm_slac_parm_re
     iso15118.common.detect_evcc_vendor_from_mac(pev_mac);
 
 #if OPTIONS_ISO15118_ENABLE_TESTING_OPTIONS()
-    iso15118.trace("ISO15118: SLAC attempt: autocharge=%d read_soc=%d charge_via_iso15118=%d; experimental: ef_teardown=%d nonegotiation_autocharge=%d nonegotiation_after_soc=%d ignore_soc_compatibility=%d",
+    iso15118.trace("ISO15118: SLAC attempt: autocharge=%d read_soc=%d charge_via_iso15118=%d; experimental: ef_teardown=%d nonegotiation_autocharge=%d nonegotiation_after_soc=%d ignore_soc_compatibility=%d prefer_din=%d",
                    iso15118.is_autocharge(), iso15118.config.get("read_soc")->asBool(),
                    iso15118.config.get("charge_via_iso15118")->asBool(),
                    iso15118.use_ef_teardown(), iso15118.use_nonegotiation_autocharge(),
-                   iso15118.use_nonegotiation_after_soc(), iso15118.config_experimental.get("ignore_soc_compatibility")->asBool());
+                   iso15118.use_nonegotiation_after_soc(), iso15118.config_experimental.get("ignore_soc_compatibility")->asBool(),
+                   iso15118.use_prefer_din());
 #endif
 
     memcpy(pev_run_id, cm_slac_parm_request.run_id, SLAC_RUN_ID_LENGTH);
@@ -826,8 +829,26 @@ void SLAC::handle_cm_qualcomm_op_attr_confirmation(const CM_QualcommOpAttrConfir
 
 void SLAC::handle_cm_qualcomm_host_action_indication(const CM_QualcommHostActionIndication &ind)
 {
-    iso15118.trace("SLAC: VS_HOST_ACTION.IND: PLC stack restarted (action=%u, version=%u.%u)",
-                   ind.maction, ind.major_version, ind.minor_version);
+    const char *name;
+    switch (ind.maction) {
+        case 0x00: name = "Start device";                   break;
+        case 0x01: name = "Store firmware";                 break;
+        case 0x02: name = "Store parameters";               break;
+        case 0x03: name = "Update host";                    break;
+        case 0x04: name = "Config memory";                  break;
+        case 0x05: name = "Restore defaults";               break;
+        case 0x06: name = "Store parameters without reset"; break;
+        case 0x08: name = "Firmware started";               break;
+        case 0x09: name = "Ready to join AVLN";             break;
+        case 0x0A: name = "AVLN joined";                    break;
+        case 0x0B: name = "AVLN disconnected";              break;
+        case 0x0F: name = "NEK rotation start";             break;
+        case 0x10: name = "NEK rotation done";              break;
+        default:   name = "Unknown";                        break;
+    }
+
+    iso15118.trace("SLAC: VS_HOST_ACTION.IND: %s (action=0x%02x, version=%u.%u)",
+                   name, ind.maction, ind.major_version, ind.minor_version);
 }
 
 void SLAC::handle_vs_module_operation_confirmation(const uint8_t *data, size_t length)

@@ -21,7 +21,6 @@
 
 #include "module.h"
 #include "config.h"
-#include "options.h"
 #include "lwip/sockets.h"  // For struct pollfd
 #include "qca700x.h"
 #include "slac.h"
@@ -33,6 +32,8 @@
 #include "debug_mode.h"
 #include "pib_manager.h"
 #include "bindings/bricklet_evse_v2.h"
+
+#include "options.h"
 
 // If defined, the iso15118 module logs verbose, per-message protocol decode dumps
 // (DIN70121 / ISO15118-2 / ISO15118-20 / SLAC / SDP) to the "iso15118" tracelog via trace_iso().
@@ -163,6 +164,14 @@ public:
 #endif
     }
 
+    bool use_prefer_din() const {
+#if OPTIONS_ISO15118_ENABLE_TESTING_OPTIONS()
+        return config_experimental.get("prefer_din")->asBool();
+#else
+        return false;
+#endif
+    }
+
     // Post-SoC round pending, ending at SLAC matching or with Failed_NoNegotiation.
     bool nonegotiation_pending = false;
     // Deadline for the reconnect wait, polled in state_machines_loop().
@@ -189,6 +198,8 @@ public:
     void cancel_cp_resume_task();
 
     void cancel_pending_tasks();
+
+    void rearm_for_next_ev();
 
     // Modem shutdown policy for begin_iec_transition():
     // None:      Caller handles the modem (already off, off pending, or keep on).
@@ -222,3 +233,5 @@ public:
     uint8_t evseid_din[16];
     uint16_t evseid_din_len;
 };
+
+#include "options_end.h"

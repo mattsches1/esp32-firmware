@@ -5,16 +5,17 @@
 # configures it to pull from local server.
 
 import json
+import threading
 import time
 import tinkerforge_util as tfutil
 tfutil.create_parent_module(__file__, 'software')
 from software.test_runner.test_context import run_testsuite, TestContext, TestHTTPSServer
 from software.src.modules.day_ahead_prices.tests._common import make_prices, midnight_today_minutes, SLOTS_TOTAL
 
-_CERT_ID = 7
+CERT_ID = 7
 
 
-def _set_prices(server: TestHTTPSServer, first_date_seconds: int, prices: list[int], next_date_seconds: int):
+def set_prices(server: TestHTTPSServer, first_date_seconds: int, prices: list[int], next_date_seconds: int):
     payload = {
         "first_date": first_date_seconds,
         "prices": prices,
@@ -23,44 +24,50 @@ def _set_prices(server: TestHTTPSServer, first_date_seconds: int, prices: list[i
     server.set_response(json.dumps(payload, separators=(",", ":")))
 
 
-_server: TestHTTPSServer | None = None
-_original_config: dict | None = None
+https_server: TestHTTPSServer | None = None
+original_config: dict | None = None
 
-def _get_server() -> TestHTTPSServer:
-    assert _server is not None, "suite_setup must run before tests"
-    return _server
+def get_server() -> TestHTTPSServer:
+    assert https_server is not None, "suite_setup must run before tests"
+    return https_server
+
+
+def base_config(tc: TestContext, **overrides) -> dict:
+    config = tc.api('day_ahead_prices/config')
+    config['enable'] = False
+    config['source'] = 0 # SpotMarket (pull)
+    config['api_url'] = get_server().url
+    config['cert_id'] = CERT_ID
+    config['region'] = 0 # DE
+    config['resolution'] = 0 # Min15
+    config['enable_calendar'] = False
+    config.update(overrides)
+    return config
 
 
 def suite_setup(tc: TestContext):
-    global _server, _original_config
+    global https_server, original_config
 
-    _original_config = tc.api('day_ahead_prices/config')
+    # The DUT only pulls once its clock is synced
+    tc.wait_for_clock_synced()
 
-    _server = tc.create_test_https_server(_CERT_ID, 'dap-pull-test')
+    original_config = tc.api('day_ahead_prices/config')
+
+    https_server = tc.create_test_https_server(CERT_ID, 'dap-pull-test')
 
     # Zero out calendar
     tc.api('day_ahead_prices/calendar', {'prices': [0] * SLOTS_TOTAL})
 
-    # Configure device
-    config = tc.api('day_ahead_prices/config')
-    config['enable'] = True
-    config['source'] = 0 # SpotMarket (pull)
-    config['api_url'] = _server.url
-    config['cert_id'] = _CERT_ID
-    config['region'] = 0 # DE
-    config['resolution'] = 0 # Min15
-    config['enable_calendar'] = False
-    tc.api('day_ahead_prices/config_update', config)
+
+def setup(tc: TestContext):
+    tc.api('day_ahead_prices/config_update', base_config(tc))
 
 
-def _trigger_refetch(tc: TestContext):
+def trigger_refetch(tc: TestContext):
     # Disable and re-enable the module to force a re-fetch
     # (clears prices, last_sync, last_check).
-    config = tc.api('day_ahead_prices/config')
-    config['enable'] = False
-    tc.api('day_ahead_prices/config_update', config)
-    config['enable'] = True
-    tc.api('day_ahead_prices/config_update', config)
+    tc.api('day_ahead_prices/config_update', base_config(tc, enable=False))
+    tc.api('day_ahead_prices/config_update', base_config(tc, enable=True))
 
 
 def test_pull_15min(tc: TestContext):
@@ -71,9 +78,9 @@ def test_pull_15min(tc: TestContext):
 
     next_date_seconds = first_date_seconds + 7 * 86400
 
-    server = _get_server()
-    _set_prices(server, first_date_seconds, prices, next_date_seconds)
-    _trigger_refetch(tc)
+    server = get_server()
+    set_prices(server, first_date_seconds, prices, next_date_seconds)
+    trigger_refetch(tc)
 
     # Wait for the device to pull and apply the prices
     def check():
@@ -93,13 +100,9 @@ def test_pull_60min(tc: TestContext):
     prices = make_prices(count, base_price=6000, amplitude=4000)
     next_date_seconds = first_date_seconds + 7 * 86400
 
-    server = _get_server()
-    _set_prices(server, first_date_seconds, prices, next_date_seconds)
-
-    # Switch to 60-min resolution (also triggers re-fetch)
-    config = tc.api('day_ahead_prices/config')
-    config['resolution'] = 1 # Min60
-    tc.api('day_ahead_prices/config_update', config)
+    server = get_server()
+    set_prices(server, first_date_seconds, prices, next_date_seconds)
+    tc.api('day_ahead_prices/config_update', base_config(tc, enable=True, resolution=1)) # Min60
 
     def check():
         state = tc.api('day_ahead_prices/prices')
@@ -121,9 +124,9 @@ def test_pull_updates_next_check(tc: TestContext):
     next_date_minutes = next_date_seconds // 60
 
     prices_v1 = make_prices(48, base_price=5000, amplitude=1000)
-    server = _get_server()
-    _set_prices(server, first_date_seconds, prices_v1, next_date_seconds)
-    _trigger_refetch(tc)
+    server = get_server()
+    set_prices(server, first_date_seconds, prices_v1, next_date_seconds)
+    trigger_refetch(tc)
 
     def check_v1():
         state = tc.api('day_ahead_prices/state')
@@ -136,7 +139,7 @@ def test_pull_updates_next_check(tc: TestContext):
     # Phase 2: Swap server to new prices and wait for DUT to fetch again
     prices_v2 = make_prices(48, base_price=8000, amplitude=500)
     far_future_seconds = first_date_seconds + 14 * 86400
-    _set_prices(server, first_date_seconds, prices_v2, far_future_seconds)
+    set_prices(server, first_date_seconds, prices_v2, far_future_seconds)
 
     def check_v2():
         p = tc.api('day_ahead_prices/prices')
@@ -148,9 +151,9 @@ def test_pull_updates_next_check(tc: TestContext):
 def test_pull_server_error(tc: TestContext):
     """Server returns HTTP 500. DUT should update last_check but not last_sync, prices stay empty."""
 
-    server = _get_server()
+    server = get_server()
     server.set_response('{"error":"internal server error"}', status=500)
-    _trigger_refetch(tc)
+    trigger_refetch(tc)
 
     # After the failed fetch: last_check > 0 but last_sync == 0, no prices
     def check_error():
@@ -168,8 +171,8 @@ def test_pull_server_error(tc: TestContext):
     prices = make_prices(48, base_price=3000, amplitude=1000)
     next_date_seconds = first_date_seconds + 7 * 86400
 
-    _set_prices(server, first_date_seconds, prices, next_date_seconds)
-    _trigger_refetch(tc)
+    set_prices(server, first_date_seconds, prices, next_date_seconds)
+    trigger_refetch(tc)
 
     def check_recovery():
         state = tc.api('day_ahead_prices/state')
@@ -184,9 +187,9 @@ def test_pull_server_error(tc: TestContext):
 def test_pull_invalid_json(tc: TestContext):
     """Server returns HTTP 200 with garbage body. DUT should fail to parse, prices stay empty."""
 
-    server = _get_server()
+    server = get_server()
     server.set_response('this is not valid json at all', status=200)
-    _trigger_refetch(tc)
+    trigger_refetch(tc)
 
     # After the failed parse: last_check > 0 but last_sync == 0, no prices
     def check_error():
@@ -204,8 +207,8 @@ def test_pull_invalid_json(tc: TestContext):
     prices = make_prices(48, base_price=7000, amplitude=2000)
     next_date_seconds = first_date_seconds + 7 * 86400
 
-    _set_prices(server, first_date_seconds, prices, next_date_seconds)
-    _trigger_refetch(tc)
+    set_prices(server, first_date_seconds, prices, next_date_seconds)
+    trigger_refetch(tc)
 
     def check_recovery():
         state = tc.api('day_ahead_prices/state')
@@ -217,20 +220,57 @@ def test_pull_invalid_json(tc: TestContext):
     tc.wait_for(check_recovery)
 
 
+def test_config_change_during_download(tc: TestContext):
+    """ A config change while a download is running discards the running download and downloads again."""
+
+    first_date_minutes = midnight_today_minutes()
+    first_date_seconds = first_date_minutes * 60
+    next_date_seconds = first_date_seconds + 7 * 86400
+    stale_prices = make_prices(48, base_price=1000, amplitude=500)
+    new_prices = make_prices(48, base_price=9000, amplitude=500)
+
+    def payload(prices: list[int]) -> str:
+        return json.dumps({"first_date": first_date_seconds, "prices": prices, "next_date": next_date_seconds}, separators=(",", ":"))
+
+    first_request = threading.Event()
+
+    def respond(method: str, path: str, body: bytes) -> tuple[int, str]:
+        if not first_request.is_set():
+            first_request.set()
+            time.sleep(3)  # Keep the first download running while the config changes
+            return 200, payload(stale_prices)
+        return 200, payload(new_prices)
+
+    server = get_server()
+    server.set_response_fn(respond)
+    tc.api('day_ahead_prices/config_update', base_config(tc, enable=True))
+    tc.assert_true(first_request.wait(timeout=10))
+    trigger_refetch(tc)
+
+    def check():
+        tc.assert_eq(new_prices, tc.api('day_ahead_prices/prices').get('prices'))
+
+    tc.wait_for(check, timeout=15, poll_delay=0.5)
+
+    # The response of the first download must not overwrite the new prices
+    time.sleep(4)
+    check()
+
+
 def suite_teardown(tc: TestContext):
-    global _server
+    global https_server
 
     # Stop HTTPS server
-    if _server is not None:
-        _server.stop()
-        _server = None
+    if https_server is not None:
+        https_server.stop()
+        https_server = None
 
     # Remove test cert from the device
-    tc.api('certs/remove', {'id': _CERT_ID})
+    tc.api('certs/remove', {'id': CERT_ID})
 
     # Restore original config
-    if _original_config is not None:
-        tc.api('day_ahead_prices/config_update', _original_config)
+    if original_config is not None:
+        tc.api('day_ahead_prices/config_update', original_config)
 
 if __name__ == '__main__':
     run_testsuite(locals())

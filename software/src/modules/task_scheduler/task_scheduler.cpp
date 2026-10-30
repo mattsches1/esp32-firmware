@@ -27,6 +27,7 @@
 
 #include "event_log_prefix.h"
 #include "generated/module_dependencies.h"
+
 #include "options.h"
 
 // Shared between all TaskScheduler instances so that task IDs stay globally unique.
@@ -437,6 +438,7 @@ bool TaskScheduler::await(std::function<void(void)> &&fn, millis_t millis_to_wai
         ptr->awaited_by = this_thread;
         tasks.emplace(ptr);
 
+        // Clear notify flags before taking in case the last take timed out.
         xTaskNotifyStateClear(this_thread);
     }
 

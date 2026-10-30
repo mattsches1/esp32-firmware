@@ -25,7 +25,6 @@
 #include "event_log_prefix.h"
 #include "generated/module_dependencies.h"
 #include "build.h"
-#include "options.h"
 #include "bindings/hal_common.h"
 #include "bindings/errors.h"
 #include "config_migrations.h"
@@ -34,6 +33,7 @@
 #include "tools/malloc.h"
 #include "tools/memory.h"
 
+#include "options.h"
 #include "gcc_warnings.h"
 
 extern TF_HAL hal;
@@ -805,6 +805,8 @@ void API::register_urls()
             json.addMemberNumber("uptime", now_us().to<millis_t>().as<int64_t>());
             json._addRaw("\n ", 2);
             json.addMemberString("firmware", build_filename_str());
+            json._addRaw("\n ", 2);
+            json.addMemberString("env", build_environment_name());
             json._addRaw("\n ", 2);
             json.addMemberString("build_info", build_info_str());
             json._addRaw("\n ", 2);

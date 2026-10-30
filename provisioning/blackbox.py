@@ -92,7 +92,7 @@ METREL_RESULTS = {
 
 CallResult = namedtuple('CallResult', 'success response')
 DeviceInfo = namedtuple('DeviceInfo', 'product_name model_name firmware_version serial_number calibration_date')
-TestResult = namedtuple('TestResult', 'passed parameters limits results')
+TestResult = namedtuple('TestResult', 'passed aborted parameters limits results')
 
 
 class BlackboxException(Exception):
@@ -132,8 +132,13 @@ def bb_call(request):
             pending_response_bytes += data
 
             while b'\r' in pending_response_bytes:
+                prev_pending_response_bytes = pending_response_bytes
                 response_bytes, pending_response_bytes = pending_response_bytes.split(b'\r', 1)
-                response = response_bytes.decode('ascii').strip()
+
+                try:
+                    response = response_bytes.decode('ascii').strip()
+                except Exception as e:
+                    raise BlackboxException(f'Could not decode {repr(response_bytes)} / {repr(prev_pending_response_bytes)} as ASCII: {e}') from e
 
                 if len(response) == 0:
                     continue
@@ -203,79 +208,60 @@ def bb_get_device_info():
     return DeviceInfo(product_name, model_name, firmware_version, serial_number, calibration_date)
 
 
-def bb_start_test(suffix, retry_on_empty=True, retry_on_cancel=True):
+def bb_start_test(suffix):
     result = bb_call('BB; START_SINGLETEST ' + suffix)
 
     if not result.success:
         raise BlackboxException(f'ST failed: {result.response}')
 
-    is_retry = False
+    passed = None
+    aborted = False
+    parameters = {}
+    limits = {}
+    results = {}
 
-    while True:
-        passed = None
-        empty = False
-        cancel = False
-        parameters = {}
-        limits = {}
-        results = {}
+    for response in result.response:
+        kind, suffix = response.removeprefix('BB; ST; ').split(' ', 1)
 
-        for response in result.response:
-            kind, suffix = response.removeprefix('BB; ST; ').split(' ', 1)
-
-            if kind == 'START':
-                pass
-            elif kind == 'STATUS':
-                if suffix == '= pass':
-                    passed = True
-                elif suffix == '= fail':
-                    passed = False
-                elif suffix == '= empty':
-                    empty = True
-                elif suffix == '= cancel':
-                    cancel = True
-                else:
-                    raise BlackboxException(f'ST response malformed: {result.response}')
+        if kind == 'START':
+            pass
+        elif kind == 'STATUS':
+            if suffix == '= pass':
+                passed = True
+            elif suffix == '= fail':
+                passed = False
+            elif suffix == '= empty':
+                passed = False
+                aborted = True
+            elif suffix == '= cancel':
+                passed = False
+                aborted = True
+            elif suffix == '= none':
+                passed = False
+                aborted = True
             else:
-                if '=' in suffix:
-                    key, value = suffix.split(' = ', 1)
-                    value = value.split(';')[0]  # FIXME: drop tail
-                else:
-                    key = suffix
-                    value = None
+                raise BlackboxException(f'ST response with unknown STATUS {suffix}: {result.response}')
+        else:
+            if '=' in suffix:
+                key, value = suffix.split(' = ', 1)
+                value = value.split(';')[0]  # FIXME: drop tail
+            else:
+                key = suffix
+                value = None
 
-                if kind == 'PARAMETER':
-                    parameters[METREL_PARAMETERS[key]] = value
-                elif kind == 'LIMIT':
-                    limits[METREL_LIMITS[key]] = value
-                elif kind == 'RESULT':
-                    results[METREL_RESULTS[key]] = value
-                else:
-                    raise BlackboxException(f'ST response malformed: {result.response}')
+            if kind == 'PARAMETER':
+                parameters[METREL_PARAMETERS[key]] = value
+            elif kind == 'LIMIT':
+                limits[METREL_LIMITS[key]] = value
+            elif kind == 'RESULT':
+                results[METREL_RESULTS[key]] = value
+            else:
+                raise BlackboxException(f'ST response with unknown part {kind}: {result.response}')
 
-        if passed != None:
-            break
+    if passed == None:
+        raise BlackboxException(f'ST response without STATUS: {result.response}')
 
-        if empty:
-            if retry_on_empty:
-                retry_on_empty = False
-                is_retry = True
-                debug(f'ST response with empty status, retrying: {result.response}')
-                time.sleep(5)
-                continue
-
-            raise BlackboxException(f'ST response with empty status{" after retry" if is_retry else ""}: {result.response}')
-
-        if cancel:
-            if retry_on_cancel:
-                retry_on_cancel = False
-                is_retry = True
-                debug(f'ST response with cancel status, retrying: {result.response}')
-                time.sleep(5)
-                continue
-
-            raise BlackboxException(f'ST response with cancel status{" after retry" if is_retry else ""}: {result.response}')
-
-    return TestResult(passed, parameters, limits, results)
+    return TestResult(passed, aborted, parameters, limits, results)
 
 
 def bb_measure_voltage():

@@ -876,7 +876,7 @@ bool Debug::repartition(String &errmsg, bool reboot_immediately)
     }
 
 #if MODULE_FIRMWARE_UPDATE_AVAILABLE()
-    if (!firmware_update.erase_other_partition(errmsg, FirmwareUpdate::EraseType::Beginning)) {
+    if (!firmware_update.erase_other_partition(errmsg, PartitionEraseType::Beginning)) {
         logger.printfln("Destroying other partition failed: %s", errmsg.c_str());
         // Clear errmsg to make this error non-fatal.
         errmsg.clear();
@@ -1190,7 +1190,9 @@ void Debug::register_events()
     }
 
     register_task(TCPIP_THREAD_NAME,TCPIP_THREAD_STACKSIZE);
+#if MODULE_WIFI_AVAILABLE()
     register_task("wifi",           6656, ExpectPresent); // stack size observed at runtime from task creation
+#endif
     register_task("sys_evt",        ESP_TASKD_EVENT_STACK); // created in WiFiGeneric.cpp
     register_task("arduino_events", 4096); // stack size from NetworkEvents.cpp
 

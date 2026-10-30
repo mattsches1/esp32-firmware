@@ -32,12 +32,18 @@
 #include "tools/hexdump.h"
 #include "tools/printf.h"
 
+#if !MODULE_NFC_AVAILABLE()
+// Keep the register layout independent of the NFC module.
+#define NFC_TAG_ID_LENGTH 10
+#endif
+
 // MODBUS TABLE CHANGELOG
 // 1 - Initial release
 // 2 - Add coils 1000, 1001
 // 3 - Add phase switch, EVSE LED color, EVSE GPIOs, NFC tag injection
 // 4 - Add button state
-#define MODBUS_TABLE_VERSION 4
+// 5 - Add beta version number
+#define MODBUS_TABLE_VERSION 5
 
 struct WarpInputRegisterCtx {
         Option<float> energy_abs = {};
@@ -199,6 +205,7 @@ static inline uint16_t swapBytes(uint16_t x) {
 
 #define REQUIRE(x) if(!cache->has_feature_##x) break
 
+#if MODULE_NFC_AVAILABLE()
 static uint8_t hex_digit_to_byte(char digit)
 {
     if (digit >= '0' && digit <= '9')
@@ -210,6 +217,7 @@ static uint8_t hex_digit_to_byte(char digit)
 
     return 0xFF;
 }
+#endif
 
 Option<ModbusTCP::TwoRegs> ModbusTCP::getWarpInputRegister(uint16_t reg, WarpInputRegisterCtx *ctx) {
     ModbusTCP::TwoRegs val{0};
@@ -224,6 +232,7 @@ Option<ModbusTCP::TwoRegs> ModbusTCP::getWarpInputRegister(uint16_t reg, WarpInp
         case 8: val.u = build_timestamp(); break;
         case 10: val.u = esp32_common.get_uid_num(); break;
         case 12: val.u = now_us().to<seconds_t>().as<uint32_t>(); break;
+        case 14: val.u = BUILD_VERSION_BETA == 255 /* no beta */ ? 0 : BUILD_VERSION_BETA; break;
 
         case 1000: REQUIRE(evse); val.u = cache->evse_state->get("iec61851_state")->asUint(); break;
         case 1002: REQUIRE(evse); val.u = cache->evse_state->get("charger_state")->asUint(); break;

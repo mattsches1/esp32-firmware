@@ -97,7 +97,6 @@ private:
     const TableSpec *table = nullptr;
 
     bool read_allowed = false;
-    bool values_declared = false;
     size_t read_index = 0;
     size_t max_register_count = METER_MODBUS_TCP_REGISTER_BUFFER_SIZE;
 
@@ -119,20 +118,12 @@ private:
             int output_type;
             uint16_t running_state;
             int16_t battery_current;
-            float mppt1_voltage;
-            float mppt1_current;
-            float mppt2_voltage;
-            float mppt2_current;
         } sungrow_hybrid_inverter;
 
         // Sungrow string inverter
         struct {
             SungrowStringInverterVirtualMeter virtual_meter;
             int output_type;
-            float mppt1_voltage;
-            float mppt1_current;
-            float mppt2_voltage;
-            float mppt2_current;
         } sungrow_string_inverter;
 
         // Solarmax Max Storage
@@ -179,24 +170,6 @@ private:
         // Alpha ESS hybrid inverter
         struct {
             AlphaESSHybridInverterVirtualMeter virtual_meter;
-            float pv1_voltage;
-            float pv1_current;
-            float pv1_power;
-            float pv2_voltage;
-            float pv2_current;
-            float pv2_power;
-            float pv3_voltage;
-            float pv3_current;
-            float pv3_power;
-            float pv4_voltage;
-            float pv4_current;
-            float pv4_power;
-            float pv5_voltage;
-            float pv5_current;
-            float pv5_power;
-            float pv6_voltage;
-            float pv6_current;
-            float pv6_power;
         } alpha_ess_hybrid_inverter;
 
         // Shelly Pro EM
@@ -246,12 +219,6 @@ private:
         // Solax hybrid inverter
         struct {
             SolaxHybridInverterVirtualMeter virtual_meter;
-            float pv1_voltage;
-            float pv2_voltage;
-            float pv1_current;
-            float pv2_current;
-            float pv1_power;
-            float pv2_power;
         } solax_hybrid_inverter;
 
         // Fronius GEN24 Plus
@@ -299,35 +266,11 @@ private:
         // Hailei hybrid inverter
         struct {
             HaileiHybridInverterVirtualMeter virtual_meter;
-            float pv1_voltage;
-            float pv1_current;
-            float pv1_power;
-            float pv2_voltage;
-            float pv2_current;
-            float pv2_power;
-            float pv3_voltage;
-            float pv3_current;
-            float pv3_power;
-            float pv4_voltage;
-            float pv4_current;
-            float pv4_power;
-            float pv5_voltage;
-            float pv5_current;
-            float pv5_power;
-            float pv6_voltage;
-            float pv6_current;
-            float pv6_power;
         } hailei_hybrid_inverter;
 
         // Fox ESS H3 AC3 hybrid inverter
         struct {
             FoxESSH3AC3HybridInverterVirtualMeter virtual_meter;
-            float pv1_voltage;
-            float pv1_current;
-            float pv1_power;
-            float pv2_voltage;
-            float pv2_current;
-            float pv2_power;
         } fox_ess_h3_ac3_hybrid_inverter;
 
         // Carlo Gavazzi EM100
@@ -359,6 +302,7 @@ private:
         struct {
             SolaredgeInverterVirtualMeter virtual_meter;
             uint32_t battery_1_status;
+            float battery_1_rated_energy;
             float battery_1_temperature;
             float battery_1_voltage;
             float battery_1_current;
@@ -408,15 +352,6 @@ private:
         // Solax string inverter
         struct {
             SolaxStringInverterVirtualMeter virtual_meter;
-            float pv1_voltage;
-            float pv2_voltage;
-            float pv1_current;
-            float pv2_current;
-            float pv1_power;
-            float pv2_power;
-            float pv3_voltage;
-            float pv3_current;
-            float pv3_power;
         } solax_string_inverter;
 
         // Fox ESS H3 Smart hybrid inverter
@@ -429,14 +364,6 @@ private:
             float bms_1_soc;
             float bms_1_design_energy;
             uint16_t bms_2_connection_status;
-            float pv1_voltage;
-            float pv1_current;
-            float pv2_voltage;
-            float pv2_current;
-            float pv3_voltage;
-            float pv3_current;
-            float pv4_voltage;
-            float pv4_current;
         } fox_ess_h3_smart_hybrid_inverter;
 
         // Fox ESS H3 Pro hybrid inverter
@@ -449,18 +376,6 @@ private:
             float bms_1_soc;
             float bms_1_design_energy;
             uint16_t bms_2_connection_status;
-            float pv1_voltage;
-            float pv1_current;
-            float pv2_voltage;
-            float pv2_current;
-            float pv3_voltage;
-            float pv3_current;
-            float pv4_voltage;
-            float pv4_current;
-            float pv5_voltage;
-            float pv5_current;
-            float pv6_voltage;
-            float pv6_current;
         } fox_ess_h3_pro_hybrid_inverter;
 
         // SMA hybrid inverter
@@ -491,12 +406,6 @@ private:
         // Chisage ESS hybrid inverter
         struct {
             ChisageESSHybridInverterVirtualMeter virtual_meter;
-            float pv1_voltage;
-            float pv1_current;
-            float pv2_voltage;
-            float pv2_current;
-            float pv1_power;
-            float pv2_power;
         } chisage_ess_hybrid_inverter;
 
         // Huawei Smart Logger 3000
@@ -528,40 +437,26 @@ private:
             float battery_current;
             float battery_discharge_power;
             float battery_charge_power;
-            float pv1_voltage;
-            float pv1_current;
-            float pv2_voltage;
-            float pv2_current;
-            float pv3_voltage;
-            float pv3_current;
-            float pv4_voltage;
-            float pv4_current;
         } growatt_hybrid_inverter;
 
         // QCells hybrid inverter
         struct {
             QCellsHybridInverterVirtualMeter virtual_meter;
-            float pv1_voltage;
-            float pv2_voltage;
-            float pv1_current;
-            float pv2_current;
-            float pv1_power;
-            float pv2_power;
         } qcells_hybrid_inverter;
 
         // QCells string inverter
         struct {
             QCellsStringInverterVirtualMeter virtual_meter;
-            float pv1_voltage;
-            float pv2_voltage;
-            float pv1_current;
-            float pv2_current;
-            float pv1_power;
-            float pv2_power;
-            float pv3_voltage;
-            float pv3_current;
-            float pv3_power;
         } qcells_string_inverter;
+
+        // Chint Power hybrid inverter
+        struct {
+            ChintPowerHybridInverterVirtualMeter virtual_meter;
+        } chint_power_hybrid_inverter;
+    };
+
+    union {
+#include "generated/meter_modbus_tcp_calculate_structs.inc"
     };
 };
 

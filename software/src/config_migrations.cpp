@@ -29,10 +29,11 @@
 #include "event_log_prefix.h"
 #include "main_dependencies.h"
 #include "build.h"
-#include "options.h"
 #include "config.h"
 #include "digest_auth.h"
 #include "tools/fs.h"
+
+#include "options.h"
 
 struct ConfigMigration {
     int major, minor, patch;
@@ -1115,31 +1116,36 @@ void migrate_config()
 
     size_t migration_count = ARRAY_SIZE(migrations);
 
-    if (!LittleFS.exists("/config") && LittleFS.exists("/migration/version")) {
-        // The migration is done, we were interrupted while moving over the migrated files to /config.
-        remove_directory("/config");
-        LittleFS.rename("/migration", "/config");
-        return;
+    if (!LittleFS.exists("/config")) {
+        if (LittleFS.exists("/migration/version")) {
+            // The migration is done, we were interrupted while moving over the migrated files to /config.
+            remove_directory("/config");
+            LittleFS.rename("/migration", "/config");
+            return;
+        }
+
+        LittleFS.mkdir("/config");
     }
 
     /*
         Pre 2.0.0 configs are just in /
         2.0.0 and higher configs are in /config/
         This requires a "special" migration first:
-        Create the config folder, move all configs there, /version last
+        Create the config folder, move all configs there, /spiffs.json last
         (This is the marker that this migration is done)
 
         Interruption check:
-        - Check if /version exists. If yes run again.
+        - Check if /spiffs.json exists. If yes run again.
         Moving files is atomic (guaranteed by LittleFS),
-        so if /version still exists we can just move all files
+        so if /spiffs.json still exists we can just move all files
         into /config/ again.
+
+        spiffs.json is renamed to (/config/)version.
     */
-    if (!LittleFS.exists("/config/version")) {
+    if (!LittleFS.exists("/config/version") && LittleFS.exists("/spiffs.json")) {
         logger.printfln("Moving all config files into config folder");
-        if (LittleFS.exists("/config"))
-            remove_directory("/config");
-        LittleFS.mkdir("/config");
+        if (!LittleFS.exists("/config"))
+            LittleFS.mkdir("/config");
 
         for_file_in("/", [](File *file) {
             String name = file->name();
@@ -1149,8 +1155,8 @@ void migrate_config()
             return true;
         });
 
-        if (LittleFS.exists("/spiffs.json"))
-            LittleFS.rename("/spiffs.json", "/config/version");
+
+        LittleFS.rename("/spiffs.json", "/config/version");
     }
 
     bool write_version_file = false;

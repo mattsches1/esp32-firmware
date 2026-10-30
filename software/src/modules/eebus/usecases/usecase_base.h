@@ -19,13 +19,19 @@
 
 #pragma once
 
+#include <functional>
+#include <map>
+#include <vector>
+
 #include "../generated/usecases.enum.h"
 #include "../spine_connection.h"
 #include "../spine_types.h"
 #include "config.h"
 #include "usecase_helpers.h"
-#include <map>
-#include <vector>
+
+// Minimum interval between two notifications of measurement data (MPC, MGCP, EVCEM). Changes are notified at most this late.
+// The MPC test specification (V1.0.2, 6.7) requires changes to be notified within 120 s.
+#define EEBUS_MEASUREMENT_NOTIFY_INTERVAL 5_s
 
 /**
  * @brief Return structure for usecase message handlers.
@@ -50,6 +56,32 @@ struct MessageReturn {
 
 // Forward declaration
 class EEBusUseCases;
+
+/**
+ * @brief Coalesces and rate-limits notifications of frequently changing data, e.g. measurements.
+ *
+ * request() schedules the send function to run once, at the earliest min_interval after the last send.
+ * All requests until then result in a single notification with the data current at send time.
+ */
+class ThrottledNotify
+{
+public:
+    ThrottledNotify(millis_t min_interval, std::function<void(void)> &&send) : min_interval(min_interval), send(std::move(send))
+    {
+    }
+    ~ThrottledNotify();
+    ThrottledNotify(const ThrottledNotify &) = delete;
+    ThrottledNotify &operator=(const ThrottledNotify &) = delete;
+
+    /** @brief Request a notification. Does nothing if one is already scheduled. */
+    void request();
+
+private:
+    const millis_t min_interval;
+    const std::function<void(void)> send;
+    micros_t last_sent = 0_us;
+    uint64_t task = 0;
+};
 
 /**
  * @brief Base class for all EEBUS use cases.
@@ -190,8 +222,10 @@ public:
      * @brief Called when a heartbeat is received.
      *
      * Override this in use cases that utilize heartbeats.
+     *
+     * @param source The DeviceDiagnosis server that sent the heartbeat. The device is not set if it is unknown.
      */
-    virtual void receive_heartbeat()
+    virtual void receive_heartbeat(const FeatureAddressType & /*source*/)
     {
     }
 
@@ -212,6 +246,30 @@ public:
      * @param conn The SpineConnection that was updated.
      */
     virtual void inform_spineconnection_usecase_update(SpineConnection *conn)
+    {
+    }
+
+    /**
+     * @brief Called before a binding request of a peer is accepted.
+     *
+     * Override this to reject bindings to features of this use case.
+     *
+     * @param client The client feature of the peer requesting the binding. The device is always set.
+     * @param server The local server feature to be bound. The device is always set.
+     * @return false if the binding has to be rejected.
+     */
+    virtual bool validate_binding_request(const FeatureAddressType &client, const FeatureAddressType &server)
+    {
+        return true;
+    }
+
+    /**
+     * @brief Called after a new binding of a peer was accepted.
+     *
+     * @param client The client feature of the peer. The device is always set.
+     * @param server The local server feature that was bound. The device is always set.
+     */
+    virtual void inform_binding_added(const FeatureAddressType &client, const FeatureAddressType &server)
     {
     }
 
@@ -262,7 +320,7 @@ protected:
 
     NodeManagementDetailedDiscoveryFeatureInformationType build_feature_information(FeatureTypeEnumType feature_type, RoleType role = RoleType::server) const;
 
-    FunctionPropertyType build_function_property(FunctionEnumType function, bool write = false, bool partial_write = false) const;
+    [[gnu::const]] FunctionPropertyType build_function_property(FunctionEnumType function, bool write = false, bool partial_write = false) const;
 
     struct AwaitedAcks {
         FunctionEnumType function;
@@ -287,4 +345,10 @@ protected:
     int send_spine_message(const FeatureAddressType &destination, FeatureAddressType &sender, JsonVariantConst payload, CmdClassifierType cmd_classifier, bool want_ack = false);
 
     template <typename T> int send_spine_message(const FeatureAddressType &destination, FeatureAddressType &sender, T payload, CmdClassifierType cmd_classifier, const char *function_name, bool want_ack = false);
+
+    /**
+     * Schedule a one-shot task that is skipped if the usecases were destroyed (EEBUS disabled) in the meantime.
+     * Use it for every deferred task that captures a usecase and is not cancelled in its destructor.
+     */
+    static uint64_t schedule_once_while_alive(std::function<void(void)> &&fn, millis_t delay = 0_ms);
 };

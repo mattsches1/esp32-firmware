@@ -19,14 +19,19 @@
 
 #include "evse_v2.h"
 
+#include "LittleFS.h"
+
 #include "event_log_prefix.h"
 #include "generated/module_dependencies.h"
-#include "options.h"
 #include "bindings/errors.h"
 #include "tools.h"
 #include "tools/string_builder.h"
 #include "generated/evse_v2_bricklet_firmware_bin.embedded.h"
 #include "modules/meters/meter_defs.h"
+
+#include "options.h"
+
+#include "preinit.h"
 
 extern EVSEV2 evse_v2;
 
@@ -191,6 +196,10 @@ void EVSEV2::post_setup()
         io_scheduler.hal_call([this, &press_time]() { return tf_evse_v2_get_button_press_boot_time(&device, true, &press_time); });
         if (press_time != 0)
             logger.printfln("Reset boot button press time");
+
+        if (LittleFS.exists(RECOVERY_STATE_PATH)) {
+            LittleFS.remove(RECOVERY_STATE_PATH);
+        }
     }, 40_s);
 
     // Get all data once before announcing the EVSE feature.
@@ -1483,7 +1492,7 @@ static void energy_meter_values_callback(struct TF_EVSEV2 * /*evse_v2*/, float p
 
     struct closure_t {
         aligned_storage<Task> task_buf;
-        float current[3];
+        float values[4];
     };
 
     closure_t *closure = new closure_t;
@@ -1492,13 +1501,15 @@ static void energy_meter_values_callback(struct TF_EVSEV2 * /*evse_v2*/, float p
         return;
     }
 
-    closure->current[0] = current[0];
-    closure->current[1] = current[1];
-    closure->current[2] = current[2];
+    float *values = closure->values;
+    values[0] = power;
+    values[1] = current[0];
+    values[2] = current[1];
+    values[3] = current[2];
 
     // Transfer ownership, will free the whole closure.
-    task_scheduler.scheduleOnceNoAlloc(&closure->task_buf, true, [power, closure]() {
-        meters_evse_v2.energy_meter_values_callback(power, closure->current);
+    task_scheduler.scheduleOnceNoAlloc(&closure->task_buf, true, [values]() {
+        meters_evse_v2.energy_meter_values_callback(values);
     });
 #endif
 }

@@ -17,17 +17,21 @@
  * Boston, MA 02111-1307, USA.
  */
 
-// Include eebus.h first to get the EEBUS_MODE_* macros (which define EEBUS_ENABLE_* in eebus_usecases.h)
-#include "../eebus.h"
-#include "../eebus_usecases.h"
-
-#ifdef EEBUS_ENABLE_MPC_USECASE
-
-#include "../generated/module_dependencies.h"
 #include "mpc.h"
-#include "usecase_helpers.h"
 
 #include <array>
+
+#include "usecase_helpers.h"
+#include "../eebus_usecases.h"
+
+#include "../generated/module_dependencies.h"
+#include "../eebus_config.h"
+
+#if EEBUS_ENABLE_MPC_USECASE()
+
+#include "gcc_warnings.h"
+// SPINE message dispatch switches over large enums and only handles the relevant values.
+#pragma GCC diagnostic ignored "-Wswitch-enum"
 
 // ==============================================================================
 // MPC - Monitoring of Power Consumption Use Case
@@ -44,7 +48,7 @@
 MpcUsecase::MpcUsecase()
 {
     // Initialize with default values
-    task_scheduler.scheduleOnce(
+    schedule_once_while_alive(
         [this]() {
             update_api();
         },
@@ -69,8 +73,10 @@ MessageReturn MpcUsecase::handle_message(HeaderType &header, SpineDataTypeHandle
                     case SpineDataTypeHandler::Function::electricalConnectionParameterDescriptionListData:
                         response["electricalConnectionParameterDescriptionListData"] = EVSEEntity::get_electrical_connection_parameter_description_list_data();
                         return {true, true, CmdClassifierType::reply};
-                    default:;
+                    default:
+                        break;
                 }
+                break;
             case FeatureTypeEnumType::Measurement:
                 switch (data->last_cmd) {
                     case SpineDataTypeHandler::Function::measurementDescriptionListData:
@@ -82,9 +88,12 @@ MessageReturn MpcUsecase::handle_message(HeaderType &header, SpineDataTypeHandle
                     case SpineDataTypeHandler::Function::measurementListData:
                         response["measurementListData"] = EVSEEntity::get_measurement_list_data();
                         return {true, true, CmdClassifierType::reply};
-                    default:;
+                    default:
+                        break;
                 }
-            default:;
+                break;
+            default:
+                break;
         }
     }
     return {false};
@@ -153,7 +162,7 @@ void MpcUsecase::get_electricalConnection_parameter_description_list_data(Electr
         ElectricalConnectionPhaseNameEnumType::b,
         ElectricalConnectionPhaseNameEnumType::c,
     }};
-    for (int i = 0; i < 3; i++) {
+    for (size_t i = 0; i < 3; i++) {
         ElectricalConnectionParameterDescriptionDataType a_description_data{};
         a_description_data.electricalConnectionId = id_ec_1;
         a_description_data.parameterId = power_phase_ids[i].first;
@@ -191,7 +200,7 @@ void MpcUsecase::get_electricalConnection_parameter_description_list_data(Electr
         {id_p_5_3, id_m_5_3},
     }};
 
-    for (int i = 0; i < 3; i++) {
+    for (size_t i = 0; i < 3; i++) {
         ElectricalConnectionParameterDescriptionDataType a_description_data{};
         a_description_data.electricalConnectionId = id_ec_1;
         a_description_data.parameterId = current_phase_ids[i].first;
@@ -447,6 +456,12 @@ void MpcUsecase::get_measurement_list_data(MeasurementListDataType *data) const
     }
 }
 
+void MpcUsecase::notify_measurements()
+{
+    MeasurementListDataType measurement_data = EVSEEntity::get_measurement_list_data();
+    eebus.usecases->inform_subscribers(entity_address, feature_addresses.at(FeatureTypeEnumType::Measurement), measurement_data, "measurementListData");
+}
+
 void MpcUsecase::update_api() const
 {
     // Update API state for monitoring
@@ -456,8 +471,8 @@ void MpcUsecase::update_api() const
     api_entry->get("power_phase_1_w")->updateInt(power_phase_w[0]);
     api_entry->get("power_phase_2_w")->updateInt(power_phase_w[1]);
     api_entry->get("power_phase_3_w")->updateInt(power_phase_w[2]);
-    api_entry->get("energy_consumed_wh")->updateInt(energy_consumed_wh);
-    api_entry->get("energy_produced_wh")->updateInt(energy_produced_wh);
+    api_entry->get("energy_consumed_wh")->updateInt(static_cast<int32_t>(energy_consumed_wh));
+    api_entry->get("energy_produced_wh")->updateInt(static_cast<int32_t>(energy_produced_wh));
     api_entry->get("current_phase_1_ma")->updateInt(current_phase_ma[0]);
     api_entry->get("current_phase_2_ma")->updateInt(current_phase_ma[1]);
     api_entry->get("current_phase_3_ma")->updateInt(current_phase_ma[2]);
@@ -489,9 +504,7 @@ void MpcUsecase::update_power(int total_power, int power_phase_1, int power_phas
         usecase_updated();
     }
 
-    // Inform subscribers of measurement data
-    MeasurementListDataType measurement_data = EVSEEntity::get_measurement_list_data();
-    eebus.usecases->inform_subscribers(entity_address, feature_addresses.at(FeatureTypeEnumType::Measurement), measurement_data, "measurementListData");
+    measurement_notify.request();
 
     update_api();
 }
@@ -502,9 +515,7 @@ void MpcUsecase::update_energy(uint32_t energy_consumed, uint32_t energy_produce
     energy_consumed_wh = energy_consumed;
     energy_produced_wh = energy_produced;
 
-    // Inform subscribers of measurement data
-    MeasurementListDataType measurement_data = EVSEEntity::get_measurement_list_data();
-    eebus.usecases->inform_subscribers(entity_address, feature_addresses.at(FeatureTypeEnumType::Measurement), measurement_data, "measurementListData");
+    measurement_notify.request();
 
     update_api();
 }
@@ -515,9 +526,7 @@ void MpcUsecase::update_current(int current_phase_1, int current_phase_2, int cu
     current_phase_ma[1] = current_phase_2;
     current_phase_ma[2] = current_phase_3;
 
-    // Inform subscribers of measurement data
-    MeasurementListDataType measurement_data = EVSEEntity::get_measurement_list_data();
-    eebus.usecases->inform_subscribers(entity_address, feature_addresses.at(FeatureTypeEnumType::Measurement), measurement_data, "measurementListData");
+    measurement_notify.request();
 
     update_api();
 }
@@ -544,9 +553,7 @@ void MpcUsecase::update_voltage(int voltage_phase_1, int voltage_phase_2, int vo
         eebus.usecases->inform_subscribers(entity_address, feature_addresses.at(FeatureTypeEnumType::Measurement), measurement_description_data, "measurementDescriptionListData");
     }
 
-    // Inform subscribers of measurement data
-    MeasurementListDataType measurement_data = EVSEEntity::get_measurement_list_data();
-    eebus.usecases->inform_subscribers(entity_address, feature_addresses.at(FeatureTypeEnumType::Measurement), measurement_data, "measurementListData");
+    measurement_notify.request();
 
     update_api();
 }
@@ -555,9 +562,7 @@ void MpcUsecase::update_frequency(int frequency_millihertz)
 {
     frequency_mhz = frequency_millihertz;
 
-    // Inform subscribers of measurement data
-    MeasurementListDataType measurement_data = EVSEEntity::get_measurement_list_data();
-    eebus.usecases->inform_subscribers(entity_address, feature_addresses.at(FeatureTypeEnumType::Measurement), measurement_data, "measurementListData");
+    measurement_notify.request();
 
     update_api();
 }
@@ -626,4 +631,4 @@ void MpcUsecase::update_constraints(int power_min, int power_max, int power_step
     update_api();
 }
 
-#endif // EEBUS_ENABLE_MPC_USECASE
+#endif // EEBUS_ENABLE_MPC_USECASE()

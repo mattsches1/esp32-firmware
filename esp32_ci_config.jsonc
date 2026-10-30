@@ -1,0 +1,29 @@
+{
+    "working_dir": "software",
+    "pass_env": true,
+    "artifacts": false,
+    "nightly": false,
+    "environments": {
+        // This order is optimized to start testing on testboxes as fast as possible.
+        "warp":                {"artifacts":true, "nightly":true},
+        "warp2":               {"artifacts":true, "nightly":true},
+        "warp3":               {"artifacts":true, "nightly":true},
+        "warp4":               {"artifacts":true, "nightly":true},
+        "energy_manager":      {"artifacts":true},
+        "energy_manager_v2":   {"artifacts":true},
+
+        "warp_with_ocpp":      {},
+
+        "minimal":             {},
+        "esp32":               {"artifacts":true},
+        "esp32_ethernet":      {"artifacts":true},
+
+        "eltako":              {"artifacts":true, "nightly":true},
+
+
+        "smart_energy_broker": {"artifacts":true},
+
+        "jenkins":             {},
+        "empty":               {"pass_env": false}
+    }
+}

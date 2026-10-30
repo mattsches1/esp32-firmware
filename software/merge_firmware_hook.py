@@ -26,11 +26,17 @@ firmware_basename = metadata['firmware_basename']
 split_esptool_ota = metadata['split_esptool_ota']
 secure_boot = metadata['secure_boot']
 
-if sys.platform == 'win32':
-    def symlink(src, dst):
+
+def symlink(src, dst):
+    try:
+        os.unlink(dst)
+    except FileNotFoundError:
+        pass
+
+    if sys.platform == 'win32':
         shutil.copy2(os.path.join('build', src), dst)
-else:
-    symlink = os.symlink
+    else:
+        os.symlink(src, dst)
 
 
 def add_post_action_elf(title, action):
@@ -181,7 +187,7 @@ def merge_firmware_esptool_secure():
     global otadata_offset
     global secure_boot
 
-    # Expected format of the custom_secure_boot setting: "<UID/name>,<efuses block3>,<factory MAC>"
+    # Expected format of the custom_secure_boot setting: "<UID/name>,<efuses block3>,<factory MAC>,<optional non-derived flash encryption key (efuses block1)>"
     # Example:
     # custom_secure_boot = "8555,0000123456789abcdef0123456789abcdef012345678ab00cdef012345678900,a8:03:2a:12:34:56"
 

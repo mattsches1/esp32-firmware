@@ -17,16 +17,20 @@
  * Boston, MA 02111-1307, USA.
  */
 
-// Include eebus.h first to get the EEBUS_MODE_* macros (which define EEBUS_ENABLE_* in eebus_usecases.h)
-#include "../eebus.h"
+#include "mgcp.h"
+
+#include "entity_data.h"
+#include "usecase_helpers.h"
 #include "../eebus_usecases.h"
 
-#ifdef EEBUS_ENABLE_MGCP_USECASE
-
 #include "../generated/module_dependencies.h"
-#include "entity_data.h"
-#include "mgcp.h"
-#include "usecase_helpers.h"
+#include "../eebus_config.h"
+
+#if EEBUS_ENABLE_MGCP_USECASE()
+
+#include "gcc_warnings.h"
+// SPINE message dispatch switches over large enums and only handles the relevant values.
+#pragma GCC diagnostic ignored "-Wswitch-enum"
 
 extern EEBus eebus;
 
@@ -51,7 +55,7 @@ extern EEBus eebus;
 MgcpUsecase::MgcpUsecase()
 {
     // Initialize with default values
-    task_scheduler.scheduleOnce(
+    schedule_once_while_alive(
         [this]() {
             update_api();
         },
@@ -462,9 +466,7 @@ void MgcpUsecase::update_power(int total_power)
         try_activate();
     }
 
-    // Inform subscribers of measurement changes
-    auto measurement_data = EVSEEntity::get_measurement_list_data();
-    eebus.usecases->inform_subscribers(entity_address, feature_addresses.at(FeatureTypeEnumType::Measurement), measurement_data, "measurementListData");
+    measurement_notify.request();
 
     update_api();
 }
@@ -482,9 +484,7 @@ void MgcpUsecase::update_energy_feed_in(uint32_t energy_wh)
         try_activate();
     }
 
-    // Inform subscribers of measurement changes
-    auto measurement_data = EVSEEntity::get_measurement_list_data();
-    eebus.usecases->inform_subscribers(entity_address, feature_addresses.at(FeatureTypeEnumType::Measurement), measurement_data, "measurementListData");
+    measurement_notify.request();
 
     update_api();
 }
@@ -502,9 +502,7 @@ void MgcpUsecase::update_energy_consumed(uint32_t energy_wh)
         try_activate();
     }
 
-    // Inform subscribers of measurement changes
-    auto measurement_data = EVSEEntity::get_measurement_list_data();
-    eebus.usecases->inform_subscribers(entity_address, feature_addresses.at(FeatureTypeEnumType::Measurement), measurement_data, "measurementListData");
+    measurement_notify.request();
 
     update_api();
 }
@@ -515,9 +513,7 @@ void MgcpUsecase::update_current(int current_phase_1_ma, int current_phase_2_ma,
     current_phase_ma[1] = current_phase_2_ma;
     current_phase_ma[2] = current_phase_3_ma;
 
-    // Inform subscribers of measurement changes
-    auto measurement_data = EVSEEntity::get_measurement_list_data();
-    eebus.usecases->inform_subscribers(entity_address, feature_addresses.at(FeatureTypeEnumType::Measurement), measurement_data, "measurementListData");
+    measurement_notify.request();
 
     update_api();
 }
@@ -528,9 +524,7 @@ void MgcpUsecase::update_voltage(int voltage_phase_1_v, int voltage_phase_2_v, i
     voltage_phase_v[1] = voltage_phase_2_v;
     voltage_phase_v[2] = voltage_phase_3_v;
 
-    // Inform subscribers of measurement changes
-    auto measurement_data = EVSEEntity::get_measurement_list_data();
-    eebus.usecases->inform_subscribers(entity_address, feature_addresses.at(FeatureTypeEnumType::Measurement), measurement_data, "measurementListData");
+    measurement_notify.request();
 
     update_api();
 }
@@ -539,9 +533,7 @@ void MgcpUsecase::update_frequency(int freq_mhz)
 {
     frequency_mhz = freq_mhz;
 
-    // Inform subscribers of measurement changes
-    auto measurement_data = EVSEEntity::get_measurement_list_data();
-    eebus.usecases->inform_subscribers(entity_address, feature_addresses.at(FeatureTypeEnumType::Measurement), measurement_data, "measurementListData");
+    measurement_notify.request();
 
     update_api();
 }
@@ -580,6 +572,12 @@ void MgcpUsecase::try_activate()
     usecase_updated();
 }
 
+void MgcpUsecase::notify_measurements()
+{
+    auto measurement_data = EVSEEntity::get_measurement_list_data();
+    eebus.usecases->inform_subscribers(entity_address, feature_addresses.at(FeatureTypeEnumType::Measurement), measurement_data, "measurementListData");
+}
+
 void MgcpUsecase::update_api() const
 {
     auto api_entry = eebus.eebus_usecase_state.get("mgcp");
@@ -597,4 +595,4 @@ void MgcpUsecase::update_api() const
     api_entry->get("frequency_mhz")->updateInt(frequency_mhz);
 }
 
-#endif // EEBUS_ENABLE_MGCP_USECASE
+#endif // EEBUS_ENABLE_MGCP_USECASE()

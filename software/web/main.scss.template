@@ -1008,15 +1008,9 @@ $link-hover-color-dark: $link-hover-color;
     .card {
         background-color: #252525;
 
-        > div {
+        &.uplot-card > div {
             overflow: hidden;
             border-radius: inherit;
-        }
-
-        > .card-header,
-        > .card-body,
-        > .card-footer {
-            border-radius: 0;
         }
 
         .uplot {

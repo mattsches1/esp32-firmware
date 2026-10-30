@@ -230,30 +230,33 @@ def generate_backend_module_dependencies_header(info_path, header_path_prefix, b
         available_h_content  = f'// WARNING: This file is generated from "{info_path}" by pio_hooks.py\n\n'
         available_h_content += '#ifdef MODULE_DEPENDENCIES_H_INCLUDED\n'
         available_h_content += '#error "Any module available header (transitively?) included after module_dependencies.h include! Swap order!"\n'
-        available_h_content += '#endif\n'
+        available_h_content += '#endif\n\n'
         available_h_content += '#ifdef MODULE_AVAILABLE_H\n'
         available_h_content += '#error "Overlapping module available header includes! include module_available_end.h at the end of headers including module_available.h!"\n'
-        available_h_content += '#endif\n'
+        available_h_content += '#endif\n\n'
         available_h_content += '#define MODULE_AVAILABLE_H\n'
 
-        available_end_h_content = f'// WARNING: This file is generated from "{info_path}" by pio_hooks.py\n\n'
+        if defines:
+            available_h_content += '\n' + defines
+
+        available_end_h_content  = f'// WARNING: This file is generated from "{info_path}" by pio_hooks.py\n\n'
         available_end_h_content += '#undef MODULE_AVAILABLE_H\n'
+
+        if undefs:
+            available_end_h_content += '\n' + undefs
 
         dependencies_h_content  = f'// WARNING: This file is generated from "{info_path}" by pio_hooks.py\n\n'
         dependencies_h_content += '#if __INCLUDE_LEVEL__ > 1\n'
         dependencies_h_content += f'#error "Don\'t include {os.path.split(header_path_prefix)[-1]}dependencies.h in headers, only in sources! Use {os.path.split(header_path_prefix)[-1]}available.h in headers if you want to check whether a module is compiled in"\n'
-        dependencies_h_content += '#endif\n\n'
+        dependencies_h_content += '#endif\n'
 
-        if defines:
-            available_h_content += '\n' + defines
-        if undefs:
-            available_end_h_content += '\n' + undefs
         if includes:
             dependencies_h_content += '\n' + includes
+
         if decls:
             dependencies_h_content += '\n' + decls
 
-        dependencies_h_content += f'\n\n#include "{os.path.split(header_path_prefix)[-1]}available.h"\n'
+        dependencies_h_content += f'\n#include "{os.path.split(header_path_prefix)[-1]}available.h"\n\n'
         dependencies_h_content += '#define MODULE_DEPENDENCIES_H_INCLUDED\n'
 
         if wants_module_list:
@@ -1149,6 +1152,8 @@ def main():
         print('Error: Could not get changelog version: {0}'.format(e))
         sys.exit(1)
 
+    beta = version[3] != "255"
+
     build_src_filter = ['+<*>', '-<empty.cpp>']
 
     if not os.path.isdir("build"):
@@ -1250,6 +1255,7 @@ def main():
     build_lines.append('const char *build_version_full_str();')
     build_lines.append('constexpr size_t build_version_full_str_len = {};'.format(len(version_full_str)))
     build_lines.append('const char *build_version_full_str_upper();')
+    build_lines.append('const char *build_environment_name();')
     build_lines.append('const char *build_info_str();')
     build_lines.append('const char *build_filename_str();')
     build_lines.append('const char *build_commit_id_str();')
@@ -1284,6 +1290,7 @@ def main():
     build_lines.append('const char *build_timestamp_hex_str() {{ return "{:x}"; }}'.format(build_timestamp))
     build_lines.append('const char *build_version_full_str() {{ return "{}"; }}'.format(version_full_str))
     build_lines.append('const char *build_version_full_str_upper() {{ return "{}"; }}'.format(version_full_str.upper()))
+    build_lines.append('const char *build_environment_name() {{ return "{}"; }}'.format(env['PIOENV']))
 
     main_branch_info = ""
     if branch_name not in ["master", "main"]:
@@ -1315,7 +1322,7 @@ def main():
 
     frontend_modules = [util.FlavoredName(x).get() for x in ['Web Server'] + get_finalized_list('custom_frontend_modules')]
 
-    if nightly:
+    if nightly or beta:
         for frontend_module in frontend_modules:
             if frontend_module.space == "Debug":
                 break
@@ -1358,7 +1365,7 @@ def main():
 
         frontend_components.append(FrontendComponent(module, component, mode))
 
-    if nightly:
+    if nightly or beta:
         for frontend_component in frontend_components:
             if frontend_component.module.space == "Debug" and frontend_component.component.space == "Debug":
                 break
@@ -1401,7 +1408,7 @@ def main():
     # API::setup migrates the config and expects that tasks can be scheduled and the logger is initialized
     backend_modules = [util.FlavoredName(x).get() for x in ['Task Scheduler', 'Event Log', 'API', 'Web Server', 'Rtc'] + get_finalized_list('custom_backend_modules')]
 
-    if nightly:
+    if nightly or beta:
         for backend_module in backend_modules:
             if backend_module.space == "Debug":
                 break
@@ -1650,7 +1657,7 @@ def main():
     options_value['product_name_user_agent'] = json.dumps(product_name_user_agent)
     options_origin['product_name_user_agent'] = 'pio_hooks.py'
 
-    options_value['under_construction'] = '1' if nightly else '0'
+    options_value['under_construction'] = '1' if nightly or beta else '0'
     options_origin['under_construction'] = 'pio_hooks.py'
 
     for key, value in sorted(options_value.items()):
@@ -1658,7 +1665,22 @@ def main():
             print(f"Option {key} in {options_origin[key]} has no value", file=sys.stderr)
             sys.exit(1)
 
-    options_h = []
+    options_h = [
+        '#ifdef OPTIONS_H',
+        '#error "Overlapping options header includes! include options_end.h at the end of headers including options.h!"',
+        '#endif\n',
+        '#define OPTIONS_H\n',
+        '#if defined(__GNUC__)',
+        '#pragma GCC diagnostic push',
+        '#pragma GCC diagnostic error "-Wundef"',
+        '#endif\n',
+    ]
+    options_end_h = [
+        '#if defined(__GNUC__)',
+        '#pragma GCC diagnostic pop',
+        '#endif\n',
+        '#undef OPTIONS_H\n',
+    ]
     options_ts = []
     options_inc = []
     options_key_ljust = max([len(key) for key in options_value.keys()])
@@ -1671,6 +1693,8 @@ def main():
 
         options_h.append(f'// from {options_origin[key]}')
         options_h.append(f'#define OPTIONS_{key.upper()}() {value}\n')
+
+        options_end_h.append(f'#undef OPTIONS_{key.upper()}')
 
         if value in ['0', '1']:
             options_inc.append(f'// from {options_origin[key]}')
@@ -1687,6 +1711,7 @@ def main():
     options_ts.append(f'export const STATUS_PROVIDER_ORDER: string[] = {json.dumps(status_provider_order)};\n')
 
     tfutil.write_file_if_different(os.path.join('src', 'options.h'), '// WARNING: This file is generated by pio_hooks.py\n\n' + '\n'.join(options_h))
+    tfutil.write_file_if_different(os.path.join('src', 'options_end.h'), '// WARNING: This file is generated by pio_hooks.py\n\n' + '\n'.join(options_end_h))
     tfutil.write_file_if_different(os.path.join('web', 'src', 'options.ts'), '// WARNING: This file is generated by pio_hooks.py\n\n' + '\n'.join(options_ts))
     tfutil.write_file_if_different(os.path.join('web', 'src', 'options.inc'), '// WARNING: This file is generated by pio_hooks.py\n\n' + '\n'.join(options_inc))
 

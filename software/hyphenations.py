@@ -1631,6 +1631,11 @@ de_hyph = [
     "ein-ge-scannt",
     "ver-ein-fa-chen",
     "ver-ste-cken",
+    "aus-blen-den",
+    "Ener-gief-luss",
+    "über-nom-men",
+    "Be-kann-tes",
+    "Auf-recht-er-hal-ten",
 ]
 
 en_hyph = [

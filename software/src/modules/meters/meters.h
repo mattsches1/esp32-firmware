@@ -23,21 +23,22 @@
 
 #include "module.h"
 #include "config.h"
-#include "options.h"
 #include "imeter.h"
 #include "imeter_generator.h"
 #include "generated/meter_location.enum.h"
 #include "meter_value_availability.h"
 #include "value_history.h"
 #include "generated/meter_value_id.h"
-#include "generated/module_available.h"
 #include "tools.h"
-
 #include "modules/web_server/web_server.h"
+
+#include "generated/module_available.h"
 
 #if MODULE_AUTOMATION_AVAILABLE()
 #include "modules/automation/automation_backend.h"
 #endif
+
+#include "options.h"
 
 #define METERS_MAX_FILTER_VALUES 7
 
@@ -139,6 +140,7 @@ public:
 
     // Remember to call finish_update when done updating all values for one read-out.
     void update_value(uint32_t slot, uint32_t index, float new_value);
+    void update_batch_values(uint32_t slot, size_t count, const uint32_t *indices, const float *new_values);
     void finish_update(uint32_t slot);
 
     // Calls finish_update automatically.
@@ -189,6 +191,16 @@ private:
         ValueHistory power_history;
     };
 
+    struct generator_t {
+        MeterClassID meter_class_id;
+        IMeterGenerator *generator;
+    };
+
+    struct generators_t {
+        size_t count;
+        generator_t gs[];
+    };
+
     IMeterGenerator *get_generator_for_class(MeterClassID meter_class);
     IMeter *new_meter_of_class(MeterClassID meter_class, uint32_t slot, Config *state, Config *errors);
 
@@ -201,7 +213,7 @@ private:
 
     bool meters_feature_declared = false;
 
-    std::vector<std::tuple<MeterClassID, IMeterGenerator *>> generators;
+    generators_t *generators = nullptr;
 
     size_t history_chars_per_value;
     micros_t last_live_update = 0_us;
@@ -212,9 +224,9 @@ private:
     micros_t begin_this_interval = 0_us;
     micros_t end_this_interval = 0_us;
 
-    int samples_last_interval = 0;
     micros_t begin_last_interval = 0_us;
     micros_t end_last_interval = 0_us;
+    int samples_last_interval = 0;
 
     // For reproducable screenshots, the ScreenshotDataFaker injects values into the power_history of the first meter.
 #ifdef OPTIONS_SCREENSHOT_DATA_FAKER_PRO
@@ -244,4 +256,5 @@ inline uint32_t meters_find_id_index(const MeterValueID value_ids[], uint32_t va
     return meters_find_id_index(value_ids, value_id_count, {id});
 }
 
+#include "options_end.h"
 #include "generated/module_available_end.h"

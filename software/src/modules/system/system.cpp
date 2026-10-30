@@ -28,24 +28,31 @@
 #include "generated/module_dependencies.h"
 #include "language.h"
 #include "generated/recovery_html.embedded.h"
+#include "tools/flash.h"
 #include "tools/fs.h"
 
-extern int8_t green_led_pin;
+#if defined(CONFIG_SECURE_BOOT) && MODULE_ESP32_COMMON_AVAILABLE()
+#include "modules/esp32_common/secure_boot.h"
+#endif
+
+#include "gcc_warnings.h"
+
+extern gpio_num_t green_led_pin;
 
 static TaskHandle_t xTaskBuffer;
 
-void blinky(void *arg)
+[[gnu::noreturn]]
+static void blinky(void *arg)
 {
     for (;;) {
-        digitalWrite(green_led_pin, true);
-        delay(200);
-        digitalWrite(green_led_pin, false);
-        delay(200);
+        gpio_set_level(green_led_pin, 1);
+        vTaskDelay_ms(200);
+        gpio_set_level(green_led_pin, 0);
+        vTaskDelay_ms(200);
     }
 }
 
 #if defined(CONFIG_SECURE_BOOT) && MODULE_ESP32_COMMON_AVAILABLE()
-#include "modules/esp32_common/secure_boot.h"
 
 static void write_cached_secure_boot_v2_key(const std::unique_ptr<uint8_t[]> &key_cache, size_t key_length, const String &key_cache_path)
 {
@@ -75,12 +82,12 @@ void System::factory_reset(bool restart_esp)
 
     logger.printfln("Starting factory reset");
 
-    if (green_led_pin >= 0)
+    if (green_led_pin != GPIO_NUM_NC)
         xTaskCreate(blinky,
             "fctyrst_blink",
             2048,
             nullptr,
-            tskIDLE_PRIORITY,
+            0, // lowest priority
             &xTaskBuffer);
 
 #if MODULE_EVSE_COMMON_AVAILABLE()
@@ -94,12 +101,33 @@ void System::factory_reset(bool restart_esp)
 #endif
 
     LittleFS.end();
+
+    const micros_t t_start = now_us();
+    size_t erased_size = 0;
+
+    esp_err_t err = erase_partition_with_delay("data", PartitionEraseType::All, &erased_size);
+
+    if (err == ESP_ERR_NOT_FOUND) {
+        err = erase_partition_with_delay("spiffs", PartitionEraseType::All, &erased_size);
+    }
+
+    if (err == ESP_OK) {
+        const uint32_t runtime_ms = (now_us() - t_start).as<uint32_t>() / 1000;
+        logger.printfln("Erased data partition in %lu.%03lus", runtime_ms / 1000, runtime_ms % 1000);
+    } else {
+        logger.printfln("Data partition not fully erased: %s (0x%x)", esp_err_to_name(err), static_cast<unsigned>(err));
+    }
+
     LittleFS.format();
 
 #if defined(CONFIG_SECURE_BOOT) && MODULE_ESP32_COMMON_AVAILABLE()
     if (key_length > 0) {
         write_cached_secure_boot_v2_key(key_cache, key_length, key_cache_path);
     }
+#endif
+
+#if MODULE_COREDUMP_AVAILABLE()
+    coredump.erase_coredump();
 #endif
 
     if (restart_esp) {
@@ -194,7 +222,7 @@ void System::register_urls()
 #if MODULE_USERS_AVAILABLE() && MODULE_CHARGE_TRACKER_AVAILABLE()
             Config *config_users = static_cast<Config *>(users.config.get("users"));
             for (size_t i = 0; i < config_users->count(); ++i) {
-                uint8_t id = config_users->get(i)->get("id")->asUint();
+                const uint8_t id = config_users->get(i)->get("id")->asUint8();
                 if (id == 0) // skip anonymous user
                     continue;
                 if (!charge_tracker.is_user_tracked(id)) {

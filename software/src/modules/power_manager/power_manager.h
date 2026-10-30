@@ -119,17 +119,6 @@ public:
     };
 
 private:
-    class PhaseSwitcherBackendDummy final : public PhaseSwitcherBackend
-    {
-        uint32_t get_phase_switcher_priority()             override {return 0;}
-        bool phase_switching_capable()                     override {return false;}
-        bool can_switch_phases_now(uint32_t phases_wanted) override {return false;}
-        uint32_t get_phases()                              override {return 0;}
-        SwitchingState get_phase_switching_state()         override {return SwitchingState::Ready;} // Don't report an error when phase_switching_capable() is false.
-        bool switch_phases(uint32_t phases_wanted)         override {return false;}
-        bool is_external_control_allowed()                 override {return false;}
-    };
-
     enum class TristateBool : uint8_t {
         False = 0,
         True = 1,
@@ -139,7 +128,6 @@ private:
     void zero_limits();
     void update_data();
     void update_energy();
-    void update_phase_switcher();
     void set_max_current_limit(int32_t limit_ma);
     void reset_max_current_limit();
     void set_config_error(uint32_t config_error_mask);
@@ -158,8 +146,7 @@ private:
 
     uint32_t config_error_flags = 0;
 
-    PhaseSwitcherBackendDummy phase_switcher_dummy = PhaseSwitcherBackendDummy();
-    PhaseSwitcherBackend *phase_switcher_backend = &phase_switcher_dummy;
+    PhaseSwitcherBackend *phase_switcher_backend = nullptr;
 
     bool     printed_skipping_energy_update      = false;
     bool     printed_skipping_currents_update    = false;
@@ -207,16 +194,16 @@ private:
 
     // Config cache
     bool     excess_charging_enabled  = false;
-    uint32_t meter_slot_power         = UINT32_MAX;
-    uint32_t meter_slot_battery_power = UINT32_MAX;
+    uint8_t  meter_slot_power         = UINT8_MAX;
+    uint8_t  meter_slot_battery_power = UINT8_MAX;
     BatteryPriority battery_priority  = BatteryPriority::PreferChargers;
     uint8_t  battery_target_soc       = 0;
     bool     battery_inverted         = false;
     uint16_t battery_deadzone_w       = 0;
     int32_t  target_power_from_grid_w = 0;
-    uint32_t phase_switching_mode     = 0;
+    uint8_t  phase_switching_mode     = 0;
     bool     dynamic_load_enabled     = false;
-    uint32_t meter_slot_currents      = UINT32_MAX;
+    uint8_t  meter_slot_currents      = UINT8_MAX;
     int32_t  supply_cable_max_current_ma = 0;
 
     // Pre-calculated limits

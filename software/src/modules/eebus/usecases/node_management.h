@@ -19,6 +19,8 @@
 
 #pragma once
 
+#include <functional>
+
 #include "usecase_base.h"
 
 // Enable subscription mechanism for nodemanagement
@@ -53,6 +55,13 @@ public:
      * @return true if the client is bound to the server, false otherwise
      */
     bool check_is_bound(FeatureAddressType &sending_feature, FeatureAddressType &target_feature) const;
+
+    /**
+     * @brief Get all clients bound to a local server feature.
+     * @param server_feature The local server feature
+     * @return The addresses of the bound client features
+     */
+    [[nodiscard]] std::vector<FeatureAddressType> get_bound_clients(const FeatureAddressType &server_feature) const;
 
     /**
      * @brief Handles a message for the NodeManagement usecase.
@@ -101,9 +110,10 @@ public:
      * @param sending_feature The feature that is subscribing to the target feature
      * @param target_feature The target feature to subscribe to
      * @param feature The feature type of the target feature (optional)
+     * @param on_result Called with true if the peer accepted the subscription, with false if it rejected it or did not answer in time (optional)
      * @return true if subscription request was valid and destination found (not whether target accepted)
      */
-    bool subscribe_to_feature(FeatureAddressType &sending_feature, FeatureAddressType &target_feature, FeatureTypeEnumType feature = FeatureTypeEnumType::EnumUndefined);
+    bool subscribe_to_feature(FeatureAddressType &sending_feature, FeatureAddressType &target_feature, FeatureTypeEnumType feature = FeatureTypeEnumType::EnumUndefined, std::function<void(bool)> on_result = nullptr);
 
     /**
      * @brief Informs that detailed discovery data has changed.

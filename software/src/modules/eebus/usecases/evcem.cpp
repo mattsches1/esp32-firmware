@@ -17,18 +17,22 @@
  * Boston, MA 02111-1307, USA.
  */
 
-// Include eebus.h first to get the EEBUS_MODE_* macros (which define EEBUS_ENABLE_* in eebus_usecases.h)
-#include "../eebus.h"
-#include "../eebus_usecases.h"
-
-#ifdef EEBUS_ENABLE_EVCEM_USECASE
-
-#include "../generated/module_dependencies.h"
-#include "entity_data.h"
 #include "evcem.h"
-#include "usecase_helpers.h"
 
 #include <array>
+
+#include "entity_data.h"
+#include "usecase_helpers.h"
+#include "../eebus_usecases.h"
+
+#include "../generated/module_dependencies.h"
+#include "../eebus_config.h"
+
+#if EEBUS_ENABLE_EVCEM_USECASE()
+
+#include "gcc_warnings.h"
+// SPINE message dispatch switches over large enums and only handles the relevant values.
+#pragma GCC diagnostic ignored "-Wswitch-enum"
 
 // ==============================================================================
 // EVCEM - EV Charging Electricity Measurement Use Case
@@ -125,6 +129,16 @@ std::vector<NodeManagementDetailedDiscoveryFeatureInformationType> EvcemUsecase:
     return features;
 }
 
+void EvcemUsecase::notify_measurements()
+{
+    // The EV might have been disconnected since the notification was requested
+    if (!eebus.usecases->ev_commissioning_and_configuration.is_ev_connected()) {
+        return;
+    }
+    MeasurementListDataType measurement_list_data = EVEntity::get_measurement_list_data();
+    eebus.usecases->inform_subscribers(this->entity_address, feature_addresses.at(FeatureTypeEnumType::Measurement), measurement_list_data, "measurementListData");
+}
+
 void EvcemUsecase::update_measurements(const int amps_phase_1, const int amps_phase_2, const int amps_phase_3, const int power_phase_1, const int power_phase_2, const int power_phase_3, const int charged_wh, const bool charged_measured)
 {
     bool phases_measured_before[3] = {false, false, false};
@@ -189,8 +203,7 @@ void EvcemUsecase::update_measurements(const int amps_phase_1, const int amps_ph
     }
     if (!eebus.usecases->ev_commissioning_and_configuration.is_ev_connected())
         return;
-    MeasurementListDataType measurement_list_data = EVEntity::get_measurement_list_data();
-    eebus.usecases->inform_subscribers(this->entity_address, feature_addresses.at(FeatureTypeEnumType::Measurement), measurement_list_data, "measurementListData");
+    measurement_notify.request();
     if (phase_changed) {
         MeasurementDescriptionListDataType measurement_description = EVEntity::get_measurement_description_list_data();
         MeasurementConstraintsListDataType measurement_constraints_data_elements = EVEntity::get_measurement_constraints_list_data();
@@ -416,14 +429,14 @@ void EvcemUsecase::update_api() const
 {
     auto api_entry = eebus.eebus_usecase_state.get("evcem");
     api_entry->get("active")->updateBool(entity_active);
-    api_entry->get("amps_phase_1")->updateUint(milliamps_draw_phase[0]);
-    api_entry->get("amps_phase_2")->updateUint(milliamps_draw_phase[1]);
-    api_entry->get("amps_phase_3")->updateUint(milliamps_draw_phase[2]);
-    api_entry->get("power_phase_1")->updateUint(power_draw_phase[0]);
-    api_entry->get("power_phase_2")->updateUint(power_draw_phase[1]);
-    api_entry->get("power_phase_3")->updateUint(power_draw_phase[2]);
-    api_entry->get("charged_wh")->updateUint(power_charged_wh);
+    api_entry->get("amps_phase_1")->updateUint(static_cast<uint32_t>(milliamps_draw_phase[0]));
+    api_entry->get("amps_phase_2")->updateUint(static_cast<uint32_t>(milliamps_draw_phase[1]));
+    api_entry->get("amps_phase_3")->updateUint(static_cast<uint32_t>(milliamps_draw_phase[2]));
+    api_entry->get("power_phase_1")->updateUint(static_cast<uint32_t>(power_draw_phase[0]));
+    api_entry->get("power_phase_2")->updateUint(static_cast<uint32_t>(power_draw_phase[1]));
+    api_entry->get("power_phase_3")->updateUint(static_cast<uint32_t>(power_draw_phase[2]));
+    api_entry->get("charged_wh")->updateUint(static_cast<uint32_t>(power_charged_wh));
     api_entry->get("charged_valuesource_measured")->updateBool(power_charged_measured);
 }
 
-#endif // EEBUS_ENABLE_EVCEM_USECASE
+#endif // EEBUS_ENABLE_EVCEM_USECASE()

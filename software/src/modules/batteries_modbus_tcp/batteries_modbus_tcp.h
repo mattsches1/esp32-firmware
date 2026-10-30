@@ -30,6 +30,8 @@
 #include "generated/kostal_plenticore_g3_variant.enum.h"
 #include "modules/batteries/ibattery_generator.h"
 
+#include "options.h"
+
 #if defined(__GNUC__)
 #pragma GCC diagnostic push
 #include "gcc_warnings.h"
@@ -82,9 +84,9 @@ private:
     Config state_prototype;
     //Config errors_prototype;
 
-    ConfigRoot test_config;
-    std::vector<ConfUnionPrototype<BatteryModbusTCPTableID>> test_table_prototypes;
-    ConfigRoot test_continue_config;
+    ConfigRoot test_start_config;
+    std::vector<ConfUnionPrototype<BatteryModbusTCPTableID>> test_start_table_prototypes;
+    ConfigRoot test_keep_alive_config;
     ConfigRoot test_stop_config;
 
     struct Test {
@@ -128,3 +130,5 @@ private:
 #if defined(__GNUC__)
 #pragma GCC diagnostic pop
 #endif
+
+#include "options_end.h"

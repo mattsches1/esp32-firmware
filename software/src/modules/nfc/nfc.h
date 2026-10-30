@@ -21,13 +21,15 @@
 
 #include "module.h"
 #include "config.h"
-#include "options.h"
 #include "bindings/bricklet_nfc.h"
+
 #include "generated/module_available.h"
 
 #if MODULE_AUTOMATION_AVAILABLE()
 #include "modules/automation/automation_backend.h"
 #endif
+
+#include "options.h"
 
 // in bytes
 #define NFC_TAG_ID_LENGTH 10
@@ -83,7 +85,7 @@ public:
     bool get_last_tag_seen(tag_info_t *info, char id_with_separator[NFC_TAG_ID_STRING_LENGTH + 1], char id_without_separator[NFC_TAG_ID_STRING_WITHOUT_SEPARATOR_LENGTH + 1]);
 
     struct automation_trigger_data_t {
-        tag_t tag;
+        const tag_t *tag;
         int8_t charger_index;
     };
 
@@ -127,4 +129,5 @@ public:
     tag_info_t *new_tags = nullptr;
 };
 
+#include "options_end.h"
 #include "generated/module_available_end.h"

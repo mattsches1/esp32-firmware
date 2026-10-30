@@ -10,6 +10,7 @@ import solis
 import sax_power
 import growatt
 import kostal
+import chint_power
 
 tfutil.create_parent_module(__file__, 'software')
 
@@ -26,12 +27,13 @@ modules = [
     sax_power,
     growatt,
     kostal,
+    chint_power,
 ]
 
 display_names = {}
 table_ids = []
 table_prototypes = []
-test_table_prototypes = []
+test_start_table_prototypes = []
 standard_table_members = {}
 table_typedefs = []
 table_typenames = []
@@ -62,13 +64,13 @@ for module in modules:
         if table_prototype[1] == None:
             table_prototypes.append(f'\n    table_prototypes->push_back({{BatteryModbusTCPTableID::{table_id.camel}, *Config::Null()}});')
 
-            test_table_prototypes.append(f'\n    test_table_prototypes->push_back({{BatteryModbusTCPTableID::{table_id.camel}, Config::Object({{')
-            test_table_prototypes.append('        {"mode", Config::Enum(BatteryMode::Block)},')
-            test_table_prototypes.append('    })});')
+            test_start_table_prototypes.append(f'\n    test_start_table_prototypes->push_back({{BatteryModbusTCPTableID::{table_id.camel}, Config::Object({{')
+            test_start_table_prototypes.append('        {"mode", Config::Enum(BatteryMode::Block)},')
+            test_start_table_prototypes.append('    })});')
         else:
             table_prototypes.append(f'\n    table_prototypes->push_back({{BatteryModbusTCPTableID::{table_id.camel}, Config::Object({{')
-            test_table_prototypes.append(f'\n    test_table_prototypes->push_back({{BatteryModbusTCPTableID::{table_id.camel}, Config::Object({{')
-            test_table_prototypes.append('        {"mode", Config::Enum(BatteryMode::Block)},')
+            test_start_table_prototypes.append(f'\n    test_start_table_prototypes->push_back({{BatteryModbusTCPTableID::{table_id.camel}, Config::Object({{')
+            test_start_table_prototypes.append('        {"mode", Config::Enum(BatteryMode::Block)},')
 
             for member in table_prototype[1]:
                 if isinstance(member, dict):
@@ -86,10 +88,10 @@ for module in modules:
                     sys.exit(1)
 
                 table_prototypes.append(f'        {{"{member_name}", {member_prototype}}},')
-                test_table_prototypes.append(f'        {{"{member_name}", {member_prototype}}},')
+                test_start_table_prototypes.append(f'        {{"{member_name}", {member_prototype}}},')
 
             table_prototypes.append('    })});')
-            test_table_prototypes.append('    })});')
+            test_start_table_prototypes.append('    })});')
 
         table_typedefs.append(f'type TableConfig{table_id.camel} = [\n'
                               f'    BatteryModbusTCPTableID.{table_id.camel},\n    {{')
@@ -655,7 +657,7 @@ h += '#include "config.h"\n'
 h += '#include "../battery_modbus_tcp.h"\n'
 h += '\n'.join([f'#include "{group.under}_variant.enum.h"' for group in variants.keys()]) + '\n\n'
 h += 'void get_battery_modbus_tcp_table_prototypes(std::vector<ConfUnionPrototype<BatteryModbusTCPTableID>> *table_prototypes);\n\n'
-h += 'void get_battery_modbus_tcp_test_table_prototypes(std::vector<ConfUnionPrototype<BatteryModbusTCPTableID>> *test_table_prototypes);\n\n'
+h += 'void get_battery_modbus_tcp_test_start_table_prototypes(std::vector<ConfUnionPrototype<BatteryModbusTCPTableID>> *test_start_table_prototypes);\n\n'
 h += '\n\n'.join(specs_h).replace('\r\n', '') + '\n'
 
 util.write_generated_file('generated/battery_modbus_tcp_specs.h', h)
@@ -670,9 +672,9 @@ cpp += 'void get_battery_modbus_tcp_table_prototypes(std::vector<ConfUnionProtot
 cpp += '{'
 cpp += '\n'.join(table_prototypes) + '\n'
 cpp += '}\n\n'
-cpp += 'void get_battery_modbus_tcp_test_table_prototypes(std::vector<ConfUnionPrototype<BatteryModbusTCPTableID>> *test_table_prototypes)\n'
+cpp += 'void get_battery_modbus_tcp_test_start_table_prototypes(std::vector<ConfUnionPrototype<BatteryModbusTCPTableID>> *test_start_table_prototypes)\n'
 cpp += '{'
-cpp += '\n'.join(test_table_prototypes) + '\n'
+cpp += '\n'.join(test_start_table_prototypes) + '\n'
 cpp += '}\n\n'
 cpp += '\n\n'.join(specs_cpp).replace('\r\n', '') + '\n'
 

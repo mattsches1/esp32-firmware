@@ -15,34 +15,69 @@ import atexit
 import fcntl
 import errno
 import fnmatch
+import random
 from tinkerforge_util.colored import red, green, blue, purple, gray
 from junit_xml import TestSuite as JTestSuite, TestCase as JTestCase, to_xml_report_string
 import tinkerforge_util as tfutil
 tfutil.create_parent_module(__file__, 'software')
 from software import util
 
+from urllib.request import urlopen
+from urllib.error import HTTPError
+
 DEFAULT_TEST_TIMEOUT = 5 * 60
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("test_filter", nargs='+')
-    parser.add_argument("--junit-xml", action='store_true')
-    parser.add_argument("--host")
-    parser.add_argument("--tty")
-    parser.add_argument("--brickd")
+    parser.add_argument("test_filter", nargs='*',            help="[module]/[suite]/[test]; supports globbing. All modules of the ESP under test (see --host) are tested if test filter is empty.")
+    parser.add_argument("--junit-xml", action='store_true',  help="Don't print anything except a JUnit compatible XML report when all tests are done.")
+    parser.add_argument("--host",                            help="ESP under test. Also used to determine which tests to run if no test filter is given")
+    parser.add_argument("--tty",                             help="Path to the serial device of the ESP under test.")
+    parser.add_argument("--brickd",                          help="Host of the brick daemon that controls the testbox hardware")
+    parser.add_argument("--list-tests", action='store_true', help="Skip all tests that would be executed, only print their names")
+    parser.add_argument("--no-shuffle", action='store_true', help="Don't shuffle test suites and tests")
 
     args = parser.parse_args()
-    quiet = args.junit_xml
 
     result = []
 
-    def tprint(*args, **kwargs):
-        if not quiet:
-            print(*args, **kwargs, flush=True)
+    def tprint(*a, **kwargs):
+        print(*a, **kwargs, flush=True, file=sys.stdout if not args.junit_xml else sys.stderr)
 
     suite_runs: list[tuple[Path, str]] = []  # (suite_path, test_filter)
 
-    for tf in args.test_filter:
+    if len(args.test_filter) > 0:
+        test_filter = args.test_filter
+    else:
+        if args.host is None:
+            print(red("A test filter or host is required"))
+            parser.print_help()
+            sys.exit(1)
+
+        BOOTUP_TIMEOUT = 30
+
+        for retry in range(BOOTUP_TIMEOUT):
+            try:
+                with urlopen(f'http://{args.host}/info/modules', timeout=1) as req:
+                    modules = json.loads(req.read()).keys()
+                    break
+            except HTTPError as e:
+                if e.code != 404:
+                    raise
+                with urlopen(f'http://{args.host}/debug_report') as req:
+                    dbg = json.loads(req.read())
+                    # minimal does not have the HTTP module -> no API available.
+                    modules = dbg["info/modules"].keys() if not dbg['env'] in 'minimal' else []
+                    break
+            except Exception:
+                if retry < BOOTUP_TIMEOUT - 1:
+                    time.sleep(1)
+                    continue
+                raise
+
+        test_filter = [f'{x}/*/*' for x in modules]
+
+    for tf in test_filter:
         module_filter, suite_filter, test_filter = tf.split('/')
         paths = list(Path(__file__).parent.glob(f"../src/modules/{module_filter}/tests/{suite_filter}.py"))
         if module_filter != '*' and fnmatch.fnmatch("test_runner", module_filter):
@@ -52,6 +87,9 @@ def main():
 
     # Skip underscore-prefixed helper modules and modules without "run_testsuite"
     suite_runs = [(p, f) for p, f in suite_runs if not p.name.startswith('_') and 'run_testsuite' in p.read_text()]
+
+    if not args.no_shuffle:
+        random.shuffle(suite_runs)
 
     for suite_path, test_filter in suite_runs:
         path = suite_path.absolute()
@@ -88,6 +126,11 @@ def main():
                 proc_args += ['--tty', args.tty]
             if args.brickd is not None:
                 proc_args += ['--brickd', args.brickd]
+            if args.list_tests:
+                proc_args += ['--list-tests']
+            if args.no_shuffle:
+                proc_args += ['--no-shuffle']
+
 
             proc = subprocess.Popen(
                 proc_args,
@@ -104,7 +147,17 @@ def main():
                     break
                 except OSError as e:
                     if e.errno == errno.ENXIO:
-                        if time.monotonic() - start > 10:
+                        # Test script either is not ready yet or it crashed.
+                        crashed = time.monotonic() - start > 10
+
+                        if not crashed:
+                            try:
+                                rc = proc.wait(0.1)
+                                crashed = True
+                            except subprocess.TimeoutExpired:
+                                pass
+
+                        if crashed:
                             print(red("test script crashed"))
                             try:
                                 print(os.read(stdout, 10000).decode('utf-8'))
@@ -116,7 +169,6 @@ def main():
                                 pass
                             atexit.unregister(os.killpg)
                             sys.exit(1)
-                        time.sleep(0.1)
                     else:
                         raise
 
@@ -192,7 +244,7 @@ def main():
                                 start = time.monotonic()
                                 if not meta_test:
                                     tprint(f"{now} Started {payload["testname"]}", end=" ")
-                                    jcase = JTestCase(payload["testname"], timestamp=now)
+                                    jcase = JTestCase(payload["testname"], timestamp=now, classname=module_name)
                                     jsuite.test_cases.append(jcase)
                                 else:
                                     tprint(gray(f"{now} Started {payload["testname"]}", bold=False), end=" ")
@@ -292,7 +344,7 @@ def main():
         #     print("\n\n\n")
 
     if args.junit_xml:
-        print(to_xml_report_string(result))
+        print(to_xml_report_string(result), file=sys.stdout)
 
 if __name__ == '__main__':
     main()

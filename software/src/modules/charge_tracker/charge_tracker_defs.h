@@ -18,7 +18,6 @@
  */
 #pragma once
 #include <cstdint>
-#include <Arduino.h>
 
 #include "language.h"
 #include "modules/users/users.h"
@@ -34,6 +33,9 @@
 #define DEVICE_FILTER_DELETED_CHARGERS -1
 
 #define CHARGE_RECORD_FOLDER "/charge-records"
+
+// Charges with at most ~1 Wh are considered "empty".
+#define CHARGE_TRACKER_EMPTY_CHARGE_THRESHOLD_KWH 0.0015f
 
 struct [[gnu::packed]] ChargeStart {
     uint32_t timestamp_minutes = 0;
@@ -125,11 +127,15 @@ struct GenerationParams {
     uint32_t end_min = 0;
     uint32_t current_min = 0;
     Language language = Language::German;
+    bool filter_empty_charges = false;
 
     // Initialized in init()
     uint32_t electricity_price = 0;
     String display_name = "";
     String unique_device_name = "";
+    String display_type = ""; // Product name, e.g. "WARP4 Charger Pro 22kW"
+    uint32_t local_uid = 0;
+    uint8_t charger_meter_type = 0;
     uint8_t configured_users[MAX_ACTIVE_USERS] = {};
     int32_t configured_chargers[MAX_CONTROLLED_CHARGERS] = {};
     display_name_entry *display_name_cache = nullptr;
@@ -144,7 +150,7 @@ struct GenerationParams {
 
     bool init();
 
-    virtual bool parse_request(std::unique_ptr<char[]> &buf, StaticJsonDocument<192> &doc, WebServerRequest &request);
+    virtual bool parse_request(std::unique_ptr<char[]> &buf, StaticJsonDocument<256> &doc, WebServerRequest &request);
     bool include_charge(const Charge *charge) const;
     bool include_device(const char *directory) const;
     bool include_device(uint32_t uid) const;
@@ -157,5 +163,5 @@ struct PDFGenerationParams final : public GenerationParams {
 
     PDFGenerationParams(Config *pdf_letterhead_config) : pdf_letterhead_config(pdf_letterhead_config) {}
 
-    bool parse_request(std::unique_ptr<char[]> &buf, StaticJsonDocument<192> &doc, WebServerRequest &request) override;
+    bool parse_request(std::unique_ptr<char[]> &buf, StaticJsonDocument<256> &doc, WebServerRequest &request) override;
 };

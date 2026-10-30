@@ -22,9 +22,9 @@
 #include "event_log_prefix.h"
 #include "generated/module_dependencies.h"
 #include "build.h"
-#include "options.h"
 #include "modules/meters/generated/meter_location.enum.h"
 
+#include "options.h"
 #include "gcc_warnings.h"
 
 void MetersEVSEV2::pre_setup()
@@ -92,12 +92,12 @@ void MetersEVSEV2::update_from_evse_v2_all_data(const EVSEV2MeterData *meter_dat
     meter_instance->update_from_evse_v2_all_data(meter_data);
 }
 
-void MetersEVSEV2::energy_meter_values_callback(float power, float current[3])
+void MetersEVSEV2::energy_meter_values_callback(const float values[4])
 {
     if (!meter_instance)
         return;
 
-    meter_instance->energy_meter_values_callback(power, current);
+    meter_instance->energy_meter_values_callback(values);
 }
 
 void MetersEVSEV2::energy_meter_all_values_callback(const float *all_values)

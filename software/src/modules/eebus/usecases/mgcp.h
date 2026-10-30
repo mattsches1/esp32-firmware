@@ -21,13 +21,13 @@
 
 #include "entity_data.h"
 #include "usecase_base.h"
+#include "loadcontrol.h" // Forward declarations for ID linking
 
-// Forward declarations for ID linking
-#ifdef EEBUS_ENABLE_LPC_USECASE
-#include "loadcontrol.h"
-#endif
+#include "../generated/module_available.h"
+#include "../eebus_config.h"
+#include "../generated/module_available_end.h"
 
-#ifdef EEBUS_ENABLE_MGCP_USECASE
+#if EEBUS_ENABLE_MGCP_USECASE()
 
 /**
  * @brief Monitoring of Grid Connection Point (MGCP) use case.
@@ -255,9 +255,9 @@ public:
     static constexpr uint8_t id_m_6 = EVSEEntity::mgcpMeasurementIdOffset + 10;  ///< Frequency
 
     /// ElectricalConnection IDs (linked to LPC/LPP if available)
-#ifdef EEBUS_ENABLE_LPC_USECASE
+#if EEBUS_ENABLE_LPC_USECASE()
     static constexpr uint8_t id_ec_1 = LpcUsecase::id_ec_1;
-#elifdef EEBUS_ENABLE_LPP_USECASE
+#elif EEBUS_ENABLE_LPP_USECASE()
     static constexpr uint8_t id_ec_1 = LppUsecase::id_ec_1;
 #else
     static constexpr uint8_t id_ec_1 = EVSEEntity::mgcpElectricalConnectionIdOffset + 1;
@@ -279,6 +279,12 @@ public:
     static constexpr uint8_t id_k_1 = EVSEEntity::mgcpDeviceConfigurationKeyIdOffset + 1; ///< PV curtailment limit factor
 
 private:
+    /** @brief Sends the measurement data right away. Use measurement_notify.request() instead. */
+    void notify_measurements();
+    ThrottledNotify measurement_notify{EEBUS_MEASUREMENT_NOTIFY_INTERVAL, [this]() {
+                                           notify_measurements();
+                                       }};
+
     // ========================================================================
     // Scenario 1: PV curtailment limit factor
     // ========================================================================
@@ -335,4 +341,6 @@ private:
 
 };
 
-#endif // EEBUS_ENABLE_MGCP_USECASE
+#endif // EEBUS_ENABLE_MGCP_USECASE()
+
+#include "../eebus_config_end.h"

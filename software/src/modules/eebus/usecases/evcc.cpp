@@ -17,17 +17,21 @@
  * Boston, MA 02111-1307, USA.
  */
 
-// Include eebus.h first to get the EEBUS_MODE_* macros (which define EEBUS_ENABLE_* in eebus_usecases.h)
-#include "../eebus.h"
+#include "evcc.h"
+
+#include "event_log_prefix.h"
+#include "entity_data.h"
+#include "usecase_helpers.h"
 #include "../eebus_usecases.h"
 
-#ifdef EEBUS_ENABLE_EVCC_USECASE
-
 #include "../generated/module_dependencies.h"
-#include "entity_data.h"
-#include "evcc.h"
-#include "event_log_prefix.h"
-#include "usecase_helpers.h"
+#include "../eebus_config.h"
+
+#if EEBUS_ENABLE_EVCC_USECASE()
+
+#include "gcc_warnings.h"
+// SPINE message dispatch switches over large enums and only handles the relevant values.
+#pragma GCC diagnostic ignored "-Wswitch-enum"
 
 // ==============================================================================
 // EVCC - EV Commissioning and Configuration Use Case
@@ -289,9 +293,9 @@ void EvccUsecase::update_api() const
     api_entry->get("communication_standard")->updateString(communication_standard);
     api_entry->get("asymmetric_charging_supported")->updateBool(asymmetric_supported);
     api_entry->get("mac_address")->updateString(mac_address);
-    api_entry->get("minimum_power")->updateUint(min_power_draw);
-    api_entry->get("maximum_power")->updateUint(max_power_draw);
-    api_entry->get("standby_power")->updateUint(standby_power);
+    api_entry->get("minimum_power")->updateUint(static_cast<uint32_t>(min_power_draw));
+    api_entry->get("maximum_power")->updateUint(static_cast<uint32_t>(max_power_draw));
+    api_entry->get("standby_power")->updateUint(static_cast<uint32_t>(standby_power));
     api_entry->get("standby_mode")->updateBool(standby_mode);
 }
 
@@ -405,4 +409,4 @@ DeviceDiagnosisStateDataType EvccUsecase::get_device_diagnosis_state() const
     return state;
 }
 
-#endif // EEBUS_ENABLE_EVCC_USECASE
+#endif // EEBUS_ENABLE_EVCC_USECASE()

@@ -26,7 +26,9 @@
 #include "generated/module_dependencies.h"
 #include "tools.h"
 #include "tools/string_builder.h"
+
 #include "options.h"
+#include "gcc_warnings.h"
 
 static constexpr auto CHECK_INTERVAL = 6_h;    // Update every 6 hours
 static constexpr auto RETRY_INTERVAL = 10_min; // Retry after 10 minutes on error
@@ -69,9 +71,15 @@ void Temperatures::pre_setup()
             tomorrow_avg = INT16_MAX;
 
             if (source != ConfigSource::File) {
-                task_scheduler.scheduleOnce([this]() {
-                    this->update();
-                });
+                if (https_client.is_busy()) {
+                    // We are currently downloading temperatures. Discard the download for the old config.
+                    update_after_abort = true;
+                    https_client.abort_async();
+                } else {
+                    task_scheduler.scheduleOnce([this]() {
+                        this->update();
+                    });
+                }
             }
         }
 
@@ -239,7 +247,7 @@ void Temperatures::update()
     }
 
     if(json_buffer == nullptr) {
-        json_buffer = (char *)calloc_psram_or_dram(TEMPERATURES_MAX_JSON_LENGTH, sizeof(char));
+        json_buffer = static_cast<char *>(calloc_psram_or_dram(TEMPERATURES_MAX_JSON_LENGTH, sizeof(char)));
     } else {
         logger.printfln("JSON Buffer was potentially not freed correctly");
     }
@@ -287,8 +295,12 @@ void Temperatures::update()
                 logger.printfln("HTTP error while downloading temperatures: %d", event->error_http_status);
                 break;
 
+            // use default to prevent warnings since we dont use a body, cookies or headers here
+            case AsyncHTTPSClientError::HTTPClientSetCookieFailed:
+            case AsyncHTTPSClientError::HTTPClientSetHeaderFailed:
+            case AsyncHTTPSClientError::HTTPClientSetBodyFailed:
             default:
-                logger.printfln("Uncovered error, this should never happen!");
+                logger.printfln("Uncovered error: %i", static_cast<int>(event->error));
                 break;
             }
 
@@ -321,10 +333,20 @@ void Temperatures::update()
 
         case AsyncHTTPSClientEventType::Aborted:
             if (download_state == TEMPERATURES_DOWNLOAD_STATE_PENDING) {
-                logger.printfln("Update check aborted");
+                if (!update_after_abort) {
+                    logger.printfln("Update check aborted");
+                }
                 download_state = TEMPERATURES_DOWNLOAD_STATE_ABORTED;
             }
             handle_cleanup();
+
+            if (update_after_abort) {
+                update_after_abort = false;
+
+                task_scheduler.scheduleOnce([this]() {
+                    this->update();
+                });
+            }
 
             break;
 
@@ -348,6 +370,9 @@ void Temperatures::update()
 
         case AsyncHTTPSClientEventType::Redirect:
             break;
+
+        default:
+            esp_system_abort("Invalid event");
         }
     });
 }
@@ -503,7 +528,7 @@ void Temperatures::compute_day_stats()
         int32_t sum = 0;
 
         for (int32_t i = start_idx; i < end_idx; i++) {
-            const int16_t val = temps_arr->get(static_cast<size_t>(i))->asInt();
+            const int16_t val = temps_arr->get(static_cast<size_t>(i))->asInt16();
             if (val < min_val) min_val = val;
             if (val > max_val) max_val = val;
             sum += val;
@@ -607,7 +632,7 @@ int16_t Temperatures::get_current()
 
     if (now_utc < first_date_seconds) {
         // Before data starts return first value
-        return temps_arr->get(0)->asInt();
+        return temps_arr->get(0)->asInt16();
     }
 
     const uint32_t seconds_since_start = now_utc - first_date_seconds;
@@ -615,7 +640,7 @@ int16_t Temperatures::get_current()
 
     if (hour_index >= count - 1) {
         // At or past the last slot return last value
-        return temps_arr->get(count - 1)->asInt();
+        return temps_arr->get(count - 1)->asInt16();
     }
 
     // Interpolate between hour_index and hour_index + 1
@@ -673,8 +698,8 @@ bool Temperatures::has_triggered(const Config *conf, void *data)
     }
 
     const Config *cfg        = static_cast<const Config *>(conf->get());
-    const uint8_t type       = cfg->get("type")->asUint();
-    const uint8_t comparison = cfg->get("comparison")->asUint();
+    const uint8_t type       = cfg->get("type")->asUint8();
+    const uint8_t comparison = cfg->get("comparison")->asUint8();
     const int16_t value      = static_cast<int16_t>(cfg->get("value")->asInt());
 
     int16_t measured;

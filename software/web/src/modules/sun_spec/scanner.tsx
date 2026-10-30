@@ -22,19 +22,17 @@ import * as util from "../../ts/util";
 import { h, Fragment, Component, ComponentChildren, VNode } from "preact";
 import { __, translate_unchecked, removeUnicodeHacks } from "../../ts/translation";
 import { InputText } from "../../ts/components/input_text";
-import { InputHost } from "../../ts/components/input_host";
 import { InputNumber } from "../../ts/components/input_number";
 import { InputSelect } from "../../ts/components/input_select";
 import { FormRow } from "../../ts/components/form_row";
-import { Switch } from "../../ts/components/switch";
 import { Progress } from "../../ts/components/progress";
 import { OutputTextarea } from "../../ts/components/output_textarea";
 import { Button, ListGroup, ListGroupItem, Alert } from "react-bootstrap";
 import { Download, Plus } from 'react-feather';
 import { DiscoveryResultGroup, DiscoveryResultItem, DiscoveryResultItemProps } from "../../ts/components/discovery_result";
 
-const SCAN_CONTINUE_INTERVAL = 3000; // milliseconds
-const SCAN_LOG_INTERVAL = 250; // milliseconds
+const KEEP_ALIVE_INTERVAL = 3000; // milliseconds
+const LOG_INTERVAL = 250; // milliseconds
 
 export interface SunSpecScanResult {
     unique_id: string;
@@ -70,7 +68,7 @@ interface SunSpecScannerState {
 }
 
 export class SunSpecScanner extends Component<SunSpecScannerProps, SunSpecScannerState> {
-    continue_timer: number = undefined;
+    keep_alive_timer: number = undefined;
     log_timer: number = undefined;
     pending_log: string = '';
 
@@ -172,9 +170,9 @@ export class SunSpecScanner extends Component<SunSpecScannerProps, SunSpecScanne
                 return;
             }
 
-            if (this.continue_timer !== undefined) {
-                clearInterval(this.continue_timer);
-                this.continue_timer = undefined;
+            if (this.keep_alive_timer !== undefined) {
+                clearInterval(this.keep_alive_timer);
+                this.keep_alive_timer = undefined;
             }
 
             if (this.log_timer !== undefined) {
@@ -206,7 +204,7 @@ export class SunSpecScanner extends Component<SunSpecScannerProps, SunSpecScanne
         this.setState({log: log});
     }
 
-    async abort_scan() {
+    async abort() {
         if (!this.state.running || this.state.aborted) {
             return;
         }
@@ -229,10 +227,10 @@ export class SunSpecScanner extends Component<SunSpecScannerProps, SunSpecScanne
     }
 
     override async componentWillUnmount() {
-        await this.abort_scan();
+        await this.abort();
     }
 
-    get_scan_result_item(result: SunSpecScanResult): VNode<DiscoveryResultItemProps> {
+    get_result_item(result: SunSpecScanResult): VNode<DiscoveryResultItemProps> {
         let preferred_model_id: number = null;
 
         if ([101, 102, 103, 201, 202, 203, 204].indexOf(result.model_id) >= 0 &&
@@ -242,7 +240,8 @@ export class SunSpecScanner extends Component<SunSpecScannerProps, SunSpecScanne
 
         let selectable = this.props.on_is_model_supported(result.model_id) && preferred_model_id === null;
 
-        return <DiscoveryResultItem
+        return (
+            <DiscoveryResultItem
                 key={result.model_id}
                 title={<h5>{result.display_name}</h5>}
                 labelAdd={<Plus />}
@@ -251,10 +250,10 @@ export class SunSpecScanner extends Component<SunSpecScannerProps, SunSpecScanne
                 <div>{__("sun_spec.content.scan_result_device_address")}: {result.device_address}</div>
                 <div>{__("sun_spec.content.scan_result_serial_number")}: {result.serial_number}</div>
                 <div>{__("sun_spec.content.scan_result_model_id")}: {translate_unchecked(`sun_spec.content.model_${result.model_id}`)} [{result.model_id}] / {result.model_instance}</div>
-        </DiscoveryResultItem>;
+            </DiscoveryResultItem>);
     }
 
-    async scan_continue() {
+    async keep_alive() {
         if (!this.state.running) {
             return;
         }
@@ -262,21 +261,21 @@ export class SunSpecScanner extends Component<SunSpecScannerProps, SunSpecScanne
         let result;
 
         try {
-            result = await (await util.put('/sun_spec/scan_continue', {cookie: this.state.cookie}, true)).text();
+            result = await (await util.put('/sun_spec/scan_keep_alive', {cookie: this.state.cookie}, true)).text();
         }
         catch (e) {
             result = e.message.replace('400(Bad Request) ', '');
         }
 
         if (result.length > 0) {
-            this.update_log(__("sun_spec.content.scan_continue_error") + ": " + result + "\n");
+            this.update_log(__("sun_spec.content.scan_keep_alive_error") + ": " + result + "\n");
         }
     }
 
     render() {
         return <>
             <FormRow label={__("sun_spec.content.scan_title")} label_muted={__("sun_spec.content.scan_title_muted")}>
-                <div class="row mb-3">
+                <div class="row mb-3 gx-2">
                     <div class="col-sm-6">
                         <InputNumber
                             required
@@ -299,7 +298,7 @@ export class SunSpecScanner extends Component<SunSpecScannerProps, SunSpecScanne
                     </div>
                 </div>
             {!this.state.running ?
-                <Button key="scan"
+                <Button key="scan_start"
                         variant="primary"
                         className="form-control"
                         onClick={async () => {
@@ -320,7 +319,7 @@ export class SunSpecScanner extends Component<SunSpecScannerProps, SunSpecScanne
                                 let result;
 
                                 try {
-                                    result = await (await util.put('/sun_spec/scan', {
+                                    result = await (await util.put('/sun_spec/scan_start', {
                                         host: this.props.host,
                                         port: this.props.port,
                                         device_address_first: this.state.device_address_first,
@@ -339,17 +338,17 @@ export class SunSpecScanner extends Component<SunSpecScannerProps, SunSpecScanne
                                     return;
                                 }
 
-                                this.continue_timer = window.setInterval(async () => {await this.scan_continue()}, SCAN_CONTINUE_INTERVAL);
-                                this.log_timer = window.setInterval(() => this.update_log(), SCAN_LOG_INTERVAL);
+                                this.keep_alive_timer = window.setInterval(async () => {await this.keep_alive()}, KEEP_ALIVE_INTERVAL);
+                                this.log_timer = window.setInterval(() => this.update_log(), LOG_INTERVAL);
                             });
                         }}
                         disabled={this.props.host.trim().length == 0 || !util.hasValue(this.props.port)}>
-                    {__("sun_spec.content.scan")}
+                    {__("sun_spec.content.scan_start")}
                 </Button> :
                 <Button key="scan_abort"
                         variant="primary"
                         className="form-control"
-                        onClick={async () => await this.abort_scan()}
+                        onClick={async () => await this.abort()}
                         disabled={this.state.aborted}>
                     {__("sun_spec.content.scan_abort")}
                 </Button>}
@@ -392,7 +391,7 @@ export class SunSpecScanner extends Component<SunSpecScannerProps, SunSpecScanne
             {this.state.results.length > 0 ?
                 <FormRow label={__("sun_spec.content.scan_results")}>
                     <DiscoveryResultGroup>
-                        {this.state.results.map((result) => this.get_scan_result_item(result))}
+                        {this.state.results.map((result) => this.get_result_item(result))}
                     </DiscoveryResultGroup>
                 </FormRow>
                 : undefined}

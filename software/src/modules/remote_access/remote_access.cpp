@@ -36,16 +36,16 @@
 #include <sodium.h>
 #include <ctype.h>
 
+#include "event_log_prefix.h"
 #include "build.h"
-#include "options.h"
 #include "esp_tls.h"
 #include "esp_tls_errors.h"
-#include "event_log_prefix.h"
 #include "language.h"
 #include "tools.h"
 #include "tools/dns.h"
 #include "tools/net.h"
 
+#include "options.h"
 #include "gcc_warnings.h"
 
 extern "C" esp_err_t esp_crt_bundle_attach(void *conf);
@@ -1046,10 +1046,56 @@ void RemoteAccess::register_urls()
     }
 }
 
+static constexpr uint8_t UPLINK_INTERFACES = Network::INTERFACE_ETHERNET | Network::INTERFACE_WIFI_STA;
+
+static const char *interface_name(uint8_t interface)
+{
+    switch (interface) {
+        case 0:                           return "none";
+        case Network::INTERFACE_ETHERNET: return "Ethernet";
+        case Network::INTERFACE_WIFI_STA: return "WiFi";
+        case Network::INTERFACE_WIFI_AP:  return "WiFi AP";
+        default:                          return "other";
+    }
+}
+
 void RemoteAccess::register_events()
 {
-    network.on_network_connected([this](const Config */*connected*/) {
-        this->apply_config();
+    // my.warp-charger.com identifies a device's tunnel by its source address and doesn't support WireGuard roaming.
+    // Reconnect only if the interface used to reach it changed or reconnected.
+    // Other interfaces (e.g. a client joining the WiFi AP) must not tear down the connection.
+    network.on_connected_interfaces_changed([this](const Config *interfaces_cfg) {
+        const uint8_t interfaces = interfaces_cfg->asUint8();
+        const uint8_t added = interfaces & ~this->connected_interfaces;
+        this->connected_interfaces = interfaces;
+
+        if (!config.get("enable")->asBool()) {
+            return EventResult::OK;
+        }
+
+        const bool running = this->task_id != 0;
+        const bool uplink  = (interfaces & UPLINK_INTERFACES) != 0;
+
+        // Start if an uplink became available, stop if none is left.
+        if (running != uplink) {
+            this->apply_config();
+            return EventResult::OK;
+        }
+
+        if (!running) {
+            return EventResult::OK;
+        }
+
+        const uint8_t new_route_interface = network.get_default_interface();
+
+        if (new_route_interface != this->route_interface) {
+            logger.printfln("Default interface changed from %s to %s, reconnecting", interface_name(this->route_interface), interface_name(new_route_interface));
+            this->apply_config();
+        } else if ((added & new_route_interface) != 0) {
+            logger.printfln("%s reconnected, reconnecting", interface_name(new_route_interface));
+            this->apply_config();
+        }
+
         return EventResult::OK;
     });
 }
@@ -1072,6 +1118,8 @@ void RemoteAccess::start_timeout_task()
 
 void RemoteAccess::apply_config()
 {
+    this->route_interface = network.get_default_interface();
+
     // Cancel periodic resolve task if running.
     if (this->task_id) {
         task_scheduler.cancel(this->task_id);
@@ -1100,7 +1148,7 @@ void RemoteAccess::apply_config()
     this->management_request_failed = false;
     this->management_request_done = false;
 
-    if (config.get("enable")->asBool() && network.is_connected()) {
+    if (config.get("enable")->asBool() && (network.get_connected_interfaces() & UPLINK_INTERFACES) != 0) {
         // Start periodic resolve_management task.
         const millis_t random_delay = millis_t{esp_random() % 4096};
         this->task_id = task_scheduler.scheduleWithFixedDelay([this]() {
@@ -1161,7 +1209,12 @@ void RemoteAccess::update_connection_state(uint8_t conn_idx, uint8_t user, uint8
 
 void RemoteAccess::management_auth_fail()
 {
+    if (this->management_auth_failed) {
+        return;
+    }
+
     this->management_auth_failed = true;
+    this->management_request_failed = true;
     logger.printfln("Management authentication failed (401) - not reconnecting");
     config.get("enable")->updateBool(false);
     api.writeConfig("remote_access/config", &config);
@@ -1181,14 +1234,11 @@ void RemoteAccess::run_request_with_next_stage(const String &url,
                 switch (event->error) {
                     case AsyncHTTPSClientError::HTTPStatusError: {
                         if (strstr(url.c_str(), "/management") != nullptr) {
-                            if (!this->management_request_failed) {
+                            if (event->error_http_status == 401) {
+                                this->management_auth_fail();
+                            } else if (!this->management_request_failed) {
                                 this->management_request_failed = true;
-
-                                if (event->error_http_status == 401) {
-                                    this->management_auth_fail();
-                                } else {
-                                    logger.printfln("Management request failed with HTTP-Error-Code %i", event->error_http_status);
-                                }
+                                logger.printfln("Management request failed with HTTP-Error-Code %i", event->error_http_status);
                             }
                         } else {
                             char err_buf[64];
@@ -1226,16 +1276,14 @@ void RemoteAccess::run_request_with_next_stage(const String &url,
                     case AsyncHTTPSClientError::HTTPClientError:
                     default:
                         if (strstr(url.c_str(), "/management") != nullptr) {
-                            if (!this->management_request_failed) {
+                            if (event->error == AsyncHTTPSClientError::HTTPClientError && event->error_http_client == ESP_ERR_NOT_SUPPORTED) {
+                                // A 401 without a supported authentication header can emit HTTPError
+                                // before returning ESP_ERR_NOT_SUPPORTED. Handle it even if that
+                                // earlier event or a previous request already set management_request_failed.
+                                this->management_auth_fail();
+                            } else if (!this->management_request_failed) {
                                 this->management_request_failed = true;
-
-                                if (event->error == AsyncHTTPSClientError::HTTPClientError && event->error_http_client == ESP_ERR_NOT_SUPPORTED) {
-                                    // This specific error is returned by the ESP HTTP client if a 401 error has a chunked body and no authentication header.
-                                    // It's a 401 either way, so treat it as such.
-                                    this->management_auth_fail();
-                                } else {
-                                    logger.printfln("Management request failed with internal error: %s (%u)", translate_error(event), static_cast<uint8_t>(event->error));
-                                }
+                                logger.printfln("Management request failed with internal error: %s (%u)", translate_error(event), static_cast<uint8_t>(event->error));
                             }
                         } else {
                             char err_buf[128];

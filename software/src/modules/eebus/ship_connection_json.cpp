@@ -23,6 +23,8 @@
 #include "event_log_prefix.h"
 #include "generated/module_dependencies.h"
 
+#include "gcc_warnings.h"
+
 void ShipConnection::json_to_type_connection_hello(ConnectionHelloType *connection_hello)
 {
     incoming_json_doc.clear();
@@ -39,7 +41,7 @@ void ShipConnection::json_to_type_connection_hello(ConnectionHelloType *connecti
         // Parse all fields, overwriting the optional ones if present
         for (JsonObject obj : incoming_json_doc["connectionHello"].as<JsonArray>()) {
             if (obj.containsKey("phase")) {
-                connection_hello->phase = static_cast<ConnectionHelloPhase::Type>(ConnectionHelloPhase::from_str(obj["phase"].as<String>().c_str()));
+                connection_hello->phase = ConnectionHelloPhase::from_str(obj["phase"].as<String>().c_str());
             } else if (obj.containsKey("waiting")) {
                 connection_hello->waiting = obj["waiting"].as<uint32_t>();
                 connection_hello->waiting_valid = true;
@@ -49,8 +51,8 @@ void ShipConnection::json_to_type_connection_hello(ConnectionHelloType *connecti
             }
         }
 
-#ifdef EEBUS_TRACE_SUPER_VERBOSE
-        eebus.trace_fmtln("J2T ConnectionHello Type: phase %d, waiting %ld(%d), prolongation_request %d(%d)'", static_cast<std::underlying_type<ConnectionHelloPhase::Type>::type>(connection_hello->phase), connection_hello->waiting, connection_hello->waiting_valid, connection_hello->prolongation_request, connection_hello->prolongation_request_valid);
+#if EEBUS_TRACE_SUPER_VERBOSE()
+        eebus.trace_fmtln("J2T ConnectionHello Type: phase %d, waiting %lu(%d), prolongation_request %d(%d)'", static_cast<std::underlying_type<ConnectionHelloPhase::Type>::type>(connection_hello->phase), connection_hello->waiting, connection_hello->waiting_valid, connection_hello->prolongation_request, connection_hello->prolongation_request_valid);
 #endif
     }
 }
@@ -77,14 +79,14 @@ void ShipConnection::type_to_json_connection_hello(ConnectionHelloType *connecti
     size_t length = serializeJson(outgoing_json_doc, &message_outgoing->data[1], SHIP_CONNECTION_MAX_JSON_SIZE - 1);
     message_outgoing->length = length + 1;
 
-#ifdef EEBUS_TRACE_SUPER_VERBOSE
+#if EEBUS_TRACE_SUPER_VERBOSE()
     eebus.trace_fmtln("T2J ConnectionHello json: %s", &message_outgoing->data[1]);
 #endif
 }
 
 bool ShipConnection::json_to_type_handshake_type(ProtocolHandshakeType *handshake_type)
 {
-#ifdef EEBUS_TRACE_SUPER_VERBOSE
+#if EEBUS_TRACE_SUPER_VERBOSE()
     eebus.trace_fmtln("J2T ProtocolHandshakeType json: %s", &message_incoming->data[1]);
 #endif
     incoming_json_doc.clear();
@@ -102,7 +104,7 @@ bool ShipConnection::json_to_type_handshake_type(ProtocolHandshakeType *handshak
 
     for (JsonObject obj : handshake_array) {
         if (obj.containsKey("handshakeType")) {
-            handshake_type->handshakeType = static_cast<ProtocolHandshake::Type>(ProtocolHandshake::from_str(obj["handshakeType"].as<String>().c_str()));
+            handshake_type->handshakeType = ProtocolHandshake::from_str(obj["handshakeType"].as<String>().c_str());
         } else if (obj.containsKey("version")) {
             for (JsonObject version : obj["version"].as<JsonArray>()) {
                 if (version.containsKey("major")) {
@@ -113,7 +115,7 @@ bool ShipConnection::json_to_type_handshake_type(ProtocolHandshakeType *handshak
             }
         }
     }
-    eebus.trace_fmtln("J2T ProtocolHandshakeType Type: handshakeType %d, version %ld.%ld", static_cast<std::underlying_type<ProtocolHandshake::Type>::type>(handshake_type->handshakeType), handshake_type->version_major, handshake_type->version_minor);
+    eebus.trace_fmtln("J2T ProtocolHandshakeType Type: handshakeType %d, version %lu.%lu", static_cast<std::underlying_type<ProtocolHandshake::Type>::type>(handshake_type->handshakeType), handshake_type->version_major, handshake_type->version_minor);
     return true;
 }
 
@@ -142,7 +144,7 @@ void ShipConnection::type_to_json_handshake_type(ProtocolHandshakeType *handshak
     size_t length = serializeJson(outgoing_json_doc, &message_outgoing->data[1], SHIP_CONNECTION_MAX_JSON_SIZE - 1);
     message_outgoing->length = length + 1;
 
-#ifdef EEBUS_TRACE_SUPER_VERBOSE
+#if EEBUS_TRACE_SUPER_VERBOSE()
     eebus.trace_fmtln("T2J ProtocolHandshakeType json: %s", &message_outgoing->data[1]);
 #endif
 }
@@ -164,7 +166,7 @@ void ShipConnection::to_json_access_methods_type()
     size_t length = serializeJson(outgoing_json_doc, &message_outgoing->data[1], SHIP_CONNECTION_MAX_JSON_SIZE - 1);
     message_outgoing->length = length + 1;
 
-#ifdef EEBUS_TRACE_SUPER_VERBOSE
+#if EEBUS_TRACE_SUPER_VERBOSE()
     eebus.trace_fmtln("T2J ShipMessageAccessMethods json: %s", &message_outgoing->data[1]);
 #endif
 }
