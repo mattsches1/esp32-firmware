@@ -335,10 +335,6 @@ void WebSockets::keepAliveAdd(int fd)
 // Called by any thread.
 void WebSockets::keepAliveRemove(int fd)
 {
-    if (fd < 0) {
-        return;
-    }
-
     {
         std::lock_guard<std::recursive_mutex> lock{keep_alive_mutex};
         for (size_t i = 0; i < MAX_WEB_SOCKET_CLIENTS; ++i) {
@@ -366,10 +362,6 @@ void WebSockets::keepAliveRemove(int fd)
 // Called by any thread.
 void WebSockets::keepAliveCloseDead_async(int fd)
 {
-    if (fd < 0) {
-        return;
-    }
-
     this->keepAliveRemove(fd);
 
     logger.tracefln(server.get_trace_buffer_index(), "closeDead async %i", fd);
@@ -425,9 +417,20 @@ void WebSockets::keepAliveCloseDead_HTTPThread(int fd)
     // Unfortunately there is no API to throw away a web socket connection, so
     // we have to poke around in the internal structures here.
     struct httpd_data *hd = static_cast<struct httpd_data *>(httpd);
-    struct sock_db *session = httpd_sess_get(hd, fd);
 
-    httpd_sess_delete(hd, session);
+    struct sock_db *current = hd->hd_sd;
+    struct sock_db *end = hd->hd_sd + hd->config.max_open_sockets - 1;
+
+    while (current <= end) {
+        if (current->fd == fd) {
+            httpd_sess_delete(hd, current);
+            break;
+        }
+        current++;
+    }
+
+    // Sometimes the deletion is not complete, but leaves an invalid socket. Also remove those.
+    httpd_sess_delete_invalid(hd);
 }
 
 // Called by main thread.
@@ -886,7 +889,7 @@ void WebSockets::stop() {
     // Disconnect clients
     std::lock_guard<std::recursive_mutex> lock{keep_alive_mutex};
     for (int i = 0; i < MAX_WEB_SOCKET_CLIENTS; ++i) {
-        if (keep_alive_fds[i] == -1)
+        if (keep_alive_fds[i] != -1)
             continue;
 
         this->keepAliveCloseDead_async(keep_alive_fds[i]);
