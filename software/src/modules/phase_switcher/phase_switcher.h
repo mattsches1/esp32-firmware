@@ -26,6 +26,7 @@
 #include "modules/event_log/event_log.h"
 #include "modules/cm_networking/cm_networking_defs.h"
 #include "modules/power_manager/phase_switcher_back-end.h"
+#include "modules/charge_manager/charge_manager.h"
 #include "modules/evse_common/evse_common.h"
 
 #include "bricklet.h"
@@ -189,7 +190,7 @@ private:
     ConfigRoot api_config_in_use;
     ConfigRoot api_low_level_state;
 
-    bool enabled, quick_charging_active;
+    bool enabled;
     PhaseSwitcherMode operating_mode;
     uint8_t requested_phases_pending, requested_phases_pending_delayed, requested_phases = 1;
     uint16_t available_charging_power;
@@ -210,6 +211,9 @@ private:
     uint8_t faked_charger_state = 255;
 
     bool cp_disconnect_requested = false;
+
+    bool quick_charging_active;
+    uint8_t charge_mode_before_quick_charging;
 
     micros_t last_state_change = 0_us;
     micros_t next_state_change_after;

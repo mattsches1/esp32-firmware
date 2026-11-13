@@ -296,10 +296,7 @@ void PhaseSwitcher::filter_command_packet(cm_command_packet *command_packet)
 
     SwitchingState old_state = switching_state;
 
-
-    // FIXME: Don't overwrite allocated current when charging starts from scratch, i. e. from charger state 1 
-    //        to avoid charger state going back and forth; add state for charging active to better reflect what's going on;
-    //        refactor to only keep packet modifications here and in filter_state_packet() and move the state machine to a 
+    // FIXME: refactor to only keep packet modifications here and in filter_state_packet() and move the state machine to a 
     //        separate function that is called from main task
     switch(switching_state) {
         case SwitchingState::Inactive: {
@@ -311,6 +308,15 @@ void PhaseSwitcher::filter_command_packet(cm_command_packet *command_packet)
         }
         case SwitchingState::Standby: {
             if (faked_charger_state == CHARGER_STATE_NOT_PLUGGED_IN) {
+                if (quick_charging_active) {
+                    String error = api.callCommand("power_manager/charge_mode_update", Config::ConfUpdateObject{{
+                        {"mode", charge_mode_before_quick_charging}
+                    }});
+                    if (!error.isEmpty()) {
+                        logger.printfln("Restoring charge mode after quick charging failed; error=%s", error.c_str());
+                    }
+                    quick_charging_active = false;
+                }
                 switching_state = SwitchingState::Inactive;
             } else if (requested_phases_pending != 0) {
                 if (allocated_current_after_last_disconnect && cp_disconnect_enabled) {
@@ -627,7 +633,7 @@ void PhaseSwitcher::handle_button()
     if (!api.hasFeature("evse"))
         return;
 
-    if (!enabled || operating_mode == emulate_energy_manager)
+    if (!enabled)
         return;
 
     static uint32_t button_pressed_time, button_released_time;
@@ -647,7 +653,7 @@ void PhaseSwitcher::handle_button()
         quick_charging_requested = false;
     }
 
-    if (millis_t{millis() - button_pressed_time} >= QUICK_CHARGE_BUTTON_PRESSED_TIME){
+    if ((millis_t{millis() - button_pressed_time} >= QUICK_CHARGE_BUTTON_PRESSED_TIME) && !quick_charging_requested && !quick_charging_active){
         if (debug) logger.printfln("    Quick charging command received and stored");
         quick_charging_requested = true;
     }
@@ -655,24 +661,52 @@ void PhaseSwitcher::handle_button()
 
 void PhaseSwitcher::start_quick_charging()
 {
-    if (!enabled || operating_mode == emulate_energy_manager)
+    if (!enabled)
         return;
 
-    if (standalone_sequencer_state == standby || standalone_sequencer_state == stopped_by_evse){
-        logger.printfln("Quick charging requested");
-        quick_charging_active = true;
-        requested_phases_pending_delayed = 3;
-        requested_phases = 3;
-        String error = api.callCommand("evse/external_current_update", Config::ConfUpdateObject{{
-            {"current", 32000}
-        }});
-        if (!error.isEmpty()) {
-            logger.printfln("Quick-charge current update failed; error=%s", error.c_str());
-        }
-    } else {
-        logger.printfln("Quick charging request ignored because sequencer is not in standby state");
+    if (!api.hasFeature("evse")) {
+        logger.printfln("API says EVSE module is not supported");
+        return;
     }
 
+    if (operating_mode == emulate_energy_manager) {
+        if (charger_state == CHARGER_STATE_NOT_PLUGGED_IN) {
+            logger.printfln("Quick charging request ignored because car is not plugged in");
+        } else if (charger_state == CHARGER_STATE_ERROR) {
+            logger.printfln("Quick charging request ignored because charger is in error state");
+        } else {
+            logger.printfln("Quick charging requested, setting charge mode to Fast");
+            charge_mode_before_quick_charging = api.getState("power_manager/charge_mode", false)->get("mode")->asUint();
+            if (debug) logger.printfln("  Charge mode before quick charging: %d", charge_mode_before_quick_charging);
+            String error = api.callCommand("power_manager/charge_mode_update", Config::ConfUpdateObject{{
+                {"mode", static_cast<uint8_t>(ConfigChargeMode::Fast)}
+            }});
+            if (error.isEmpty()) {
+                quick_charging_active = true;
+            } else {
+                logger.printfln("Setting charge mode to Fast failed; error=%s", error.c_str());
+            }
+            error = api.callCommand("evse/start_charging", nullptr);
+            if (!error.isEmpty()) {
+                logger.printfln("Sending start command to EVSE failed; error=%s", error.c_str());
+            }
+        }
+    } else {
+        if (standalone_sequencer_state == standby || standalone_sequencer_state == stopped_by_evse){
+            logger.printfln("Quick charging requested");
+            quick_charging_active = true;
+            requested_phases_pending_delayed = 3;
+            requested_phases = 3;
+            String error = api.callCommand("evse/external_current_update", Config::ConfUpdateObject{{
+                {"current", 32000}
+            }});
+            if (!error.isEmpty()) {
+                logger.printfln("Quick-charge current update failed; error=%s", error.c_str());
+            }
+        } else {
+            logger.printfln("Quick charging request ignored because sequencer is not in standby state");
+        }
+    }
 }
 
 void PhaseSwitcher::handle_evse()
@@ -980,10 +1014,8 @@ bool PhaseSwitcher::prepare_io()
 
     contactor_check();
     if (enabled) {
-        if (operating_mode != emulate_energy_manager) {
-            handle_button();
-        }
         handle_evse();
+        handle_button();
         if (enabled && operating_mode != emulate_energy_manager) {
             monitor_requested_phases();
         }
@@ -1072,33 +1104,23 @@ void PhaseSwitcher::update_outputs(bool evse_relay_output)
 
 void PhaseSwitcher::write_outputs()
 {
-    const micros_t start = now_us();
-    uint8_t io_written = 0;
-
     for (size_t channel = 0; channel < ARRAY_SIZE(io_output_targets); ++channel) {
         if (!io_output_update_needed[channel]) {
             continue;
         }
-
+        
         io_output_attempted[channel] = true;
         if (channel == 0) {
             io_output_rc[channel] = tf_industrial_quad_relay_v2_set_selected_value(&quad_relay_bricklet.device, channel, io_output_targets[channel]);
-            io_written += 1;
         } else if (io_output_targets[channel]) {
             io_output_rc[channel] = tf_industrial_quad_relay_v2_set_monoflop(&quad_relay_bricklet.device, channel, true, 10000);
-            io_written += 1;
         } else {
             io_output_rc[channel] = tf_industrial_quad_relay_v2_set_selected_value(&quad_relay_bricklet.device, channel, false);
-            io_written += 1;
         }
 
         if (io_output_rc[channel] != TF_E_OK) {
             break;
         }
-    }
-
-    if (debug and io_written > 0) {
-        logger.printfln("  write_outputs took %lu us; I/Os written: %u", static_cast<unsigned long>((now_us() - start).as<uint32_t>()), io_written);
     }
 }
 
@@ -1209,4 +1231,3 @@ void PhaseSwitcher::update_all_data()
         api_low_level_state.get("current_off_delay_time")->get(i)->updateUint(delay_timer[i].current_value_off_delay);
     }
 }
-
