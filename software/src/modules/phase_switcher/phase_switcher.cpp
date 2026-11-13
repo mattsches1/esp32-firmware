@@ -303,6 +303,7 @@ void PhaseSwitcher::filter_command_packet(cm_command_packet *command_packet)
             if (faked_charger_state != CHARGER_STATE_NOT_PLUGGED_IN) {
                 skip_cp_disconnect = true;
                 switching_state = SwitchingState::Standby;
+                logger.printfln("Car plugged in, going to standby state");
             }
             break;
         }
@@ -318,6 +319,7 @@ void PhaseSwitcher::filter_command_packet(cm_command_packet *command_packet)
                     quick_charging_active = false;
                 }
                 switching_state = SwitchingState::Inactive;
+                logger.printfln("Car unplugged, going to inactive state");
             } else if (requested_phases_pending != 0) {
                 if (allocated_current_after_last_disconnect && cp_disconnect_enabled) {
                     skip_cp_disconnect = false;
@@ -354,18 +356,21 @@ void PhaseSwitcher::filter_command_packet(cm_command_packet *command_packet)
             command_packet->v1.allocated_current = 0;
             if (!skip_cp_disconnect) {
                 command_packet->v1.command_flags |= CM_COMMAND_FLAGS_CPDISC_MASK;
-                requested_phases = requested_phases_pending;            
+                requested_phases = requested_phases_pending;
                 switching_state = SwitchingState::ReconnectingCP;
+                logger.printfln("Reconnecting CP after switching to %u phase(s)", requested_phases_pending);
             } else if (deadline_elapsed(last_state_change + seconds_t{api_config_in_use.get("pause_time")->asUint()})) {
                 requested_phases = requested_phases_pending;            
                 switching_state = SwitchingState::Charging;
+                logger.printfln("Starting charging with %u phase(s)", requested_phases_pending);
             }
             break;
         }
         case SwitchingState::ReconnectingCP: {
             if (deadline_elapsed(next_state_change_after)) {
-                switching_state = SwitchingState::PostSwitchStateFaking;
                 next_state_change_after += 25_s; // Only 25 seconds because the charge manager will complain about unresponsive EVSEs after 32 seconds.
+                switching_state = SwitchingState::PostSwitchStateFaking;
+                logger.printfln("CP reconnect phase 1 completed, starting phase 2");
             } else {
                 command_packet->v1.allocated_current = 0;
                 command_packet->v1.command_flags |= CM_COMMAND_FLAGS_CPDISC_MASK;
@@ -375,6 +380,7 @@ void PhaseSwitcher::filter_command_packet(cm_command_packet *command_packet)
         case SwitchingState::PostSwitchStateFaking: {
             if (deadline_elapsed(next_state_change_after)) {
                 switching_state = SwitchingState::Charging;
+                logger.printfln("CP reconnect phase 2 completed, starting charging");
             }
             break;
         }        
@@ -394,7 +400,7 @@ void PhaseSwitcher::filter_command_packet(cm_command_packet *command_packet)
     }
 
     if (switching_state != old_state) {
-        logger.printfln("Now in state %hhu (command)", static_cast<uint8_t>(switching_state));
+        if (debug) logger.printfln("  Now in state %hhu (command)", static_cast<uint8_t>(switching_state));
         last_state_change = now_us();
     }
     if (debug) {
@@ -435,7 +441,7 @@ void PhaseSwitcher::filter_state_packet(cm_state_packet *state_packet)
             if (allowed_charging_current == 0 && !evse_relay_output) {
                 if (requested_phases_pending == 0) {
                     switching_state = SwitchingState::Standby;
-                    logger.printfln("Zero phases requested. Going to standby.");
+                    logger.printfln("Zero phases requested, going to standby");
                 } else {
                     if (!skip_cp_disconnect) {
                         switching_state = SwitchingState::DisconnectingCP;
@@ -454,9 +460,10 @@ void PhaseSwitcher::filter_state_packet(cm_state_packet *state_packet)
             const bool cp_is_disconnected = !output_channels[0];
             if (cp_is_disconnected) {
                 next_state_change_after = now_us() + 5_s;
-                switching_state = SwitchingState::SwitchingPhases;
                 // CP was just disconnected but no current was allocated yet.
                 allocated_current_after_last_disconnect = false;
+                switching_state = SwitchingState::SwitchingPhases;
+                logger.printfln("CP disconnected, switching to %u phase(s)", requested_phases_pending);
             }
             state_packet->v1.iec61851_state = faked_iec61851_state;
             state_packet->v1.charger_state  = faked_charger_state;
@@ -474,8 +481,8 @@ void PhaseSwitcher::filter_state_packet(cm_state_packet *state_packet)
                 state_packet->v1.iec61851_state = faked_iec61851_state;
                 state_packet->v1.charger_state  = faked_charger_state;
             } else {
-                if (debug) logger.printfln("PostSwitchStateFaking: Done early");
                 switching_state = SwitchingState::Charging;
+                logger.printfln("CP reconnect phase 2 completed early, vehicle started charging");
             }
             break;
         }
@@ -485,8 +492,10 @@ void PhaseSwitcher::filter_state_packet(cm_state_packet *state_packet)
     }
 
     if (switching_state != old_state) {
-        logger.printfln("Now in state %hhu (state)", static_cast<uint8_t>(switching_state));
-        if (debug) logger.printfln("  skip_cp_disconnect: %u, cp disconnect enabled: %u", skip_cp_disconnect, cp_disconnect_enabled);
+        if (debug) {
+            logger.printfln("  Now in state %hhu (state)", static_cast<uint8_t>(switching_state));
+            logger.printfln("  skip_cp_disconnect: %u, cp disconnect enabled: %u", skip_cp_disconnect, cp_disconnect_enabled);
+        }
         last_state_change = now_us();
     }
 }
