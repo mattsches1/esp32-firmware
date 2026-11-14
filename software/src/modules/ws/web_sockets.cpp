@@ -73,7 +73,7 @@ static bool should_log_websocket_anomaly()
     return true;
 }
 
-static int timed_httpd_send(httpd_handle_t hd, int fd, const char *buf, size_t len, int flags)
+int WebSockets::timed_httpd_send(httpd_handle_t hd, int fd, const char *buf, size_t len, int flags)
 {
     const micros_t send_started = now_us();
     errno = 0;
@@ -86,6 +86,19 @@ static int timed_httpd_send(httpd_handle_t hd, int fd, const char *buf, size_t l
         result = send_errno == EAGAIN || send_errno == EINTR
             ? HTTPD_SOCK_ERR_TIMEOUT
             : HTTPD_SOCK_ERR_FAIL;
+    }
+
+    if (send_result < 0) {
+        // Defer session deletion until the HTTPD send path has unwound.
+        struct httpd_data *httpd_data = static_cast<struct httpd_data *>(hd);
+
+        for (int i = 0; httpd_data->hd_sd != nullptr && i < httpd_data->config.max_open_sockets; ++i) {
+            struct sock_db *session = &httpd_data->hd_sd[i];
+            if (session->fd == fd && session->ws_user_ctx != nullptr) {
+                static_cast<WebSockets *>(session->ws_user_ctx)->keepAliveCloseDead_async(fd, session->ctx);
+                break;
+            }
+        }
     }
 
     if ((result < 0 || send_duration_ms >= 100) && should_log_websocket_anomaly()) {
@@ -303,7 +316,8 @@ void WebSockets::processPendingCloses_HTTPThread()
         logger.tracefln(server.get_trace_buffer_index(), "close pending fd %i", closes_to_process[i].fd);
         this->keepAliveCloseDead_HTTPThread(closes_to_process[i].fd,
                                             closes_to_process[i].last_pong_known,
-                                            closes_to_process[i].last_pong_age_ms);
+                                            closes_to_process[i].last_pong_age_ms,
+                                            closes_to_process[i].expected_session_ctx);
     }
 }
 
@@ -502,7 +516,7 @@ void WebSockets::keepAliveRemove(int fd)
 }
 
 // Called by any thread.
-void WebSockets::keepAliveCloseDead_async(int fd)
+void WebSockets::keepAliveCloseDead_async(int fd, void *expected_session_ctx)
 {
     uint64_t last_pong_age_ms = 0;
     const bool last_pong_known = this->getLastPongAgeMs(fd, &last_pong_age_ms);
@@ -518,16 +532,33 @@ void WebSockets::keepAliveCloseDead_async(int fd)
     {
         std::lock_guard<std::recursive_mutex> lock{work_queue_mutex};
         if (pending_close_count < MAX_WEB_SOCKET_CLIENTS) {
-            pending_closes[pending_close_count++] = {fd, last_pong_age_ms, last_pong_known};
+            pending_closes[pending_close_count++] = {fd, last_pong_age_ms, last_pong_known, expected_session_ctx};
         }
     }
 }
 
 // Called by HTTP thread.
-void WebSockets::keepAliveCloseDead_HTTPThread(int fd, bool last_pong_known, uint64_t last_pong_age_ms)
+void WebSockets::keepAliveCloseDead_HTTPThread(int fd, bool last_pong_known, uint64_t last_pong_age_ms, void *expected_session_ctx)
 {
     if (fd < 0) {
         return;
+    }
+
+    if (expected_session_ctx != nullptr) {
+        struct httpd_data *hd = static_cast<struct httpd_data *>(httpd);
+        bool session_matches = false;
+
+        for (int i = 0; hd->hd_sd != nullptr && i < hd->config.max_open_sockets; ++i) {
+            if (hd->hd_sd[i].fd == fd) {
+                session_matches = hd->hd_sd[i].ctx == expected_session_ctx;
+                break;
+            }
+        }
+
+        if (!session_matches) {
+            logger.tracefln(server.get_trace_buffer_index(), "keepAliveCloseDead_HTTPThread fd %i was reused before close", fd);
+            return;
+        }
     }
 
     if (!last_pong_known) {
@@ -628,6 +659,7 @@ void WebSockets::checkActiveClients()
                     keep_alive_fds[i],
                     (now - keep_alive_last_pong[i]).to<millis_t>().as<uint64_t>(),
                     true,
+                    nullptr,
                 };
                 keep_alive_fds[i] = -1;
                 keep_alive_last_pong[i] = 0_us;
@@ -996,7 +1028,7 @@ void WebSockets::start(const char *uri, const char *state_path, const char *supp
             const int sock = httpd_req_to_sockfd(req);
             // The probe delegates to the plain HTTPD sender, so leave custom TLS transports unchanged.
             if (aux->sd->transport_ctx == nullptr) {
-                const esp_err_t send_override_result = httpd_sess_set_send_override(this->httpd, sock, timed_httpd_send);
+                const esp_err_t send_override_result = httpd_sess_set_send_override(this->httpd, sock, WebSockets::timed_httpd_send);
                 if (send_override_result != ESP_OK) {
                     logger.printfln("Failed to enable HTTPD transport send timing for fd %i: 0x%x",
                                     sock,

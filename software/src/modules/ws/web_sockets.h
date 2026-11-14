@@ -42,6 +42,7 @@ struct ws_pending_close {
     int fd;
     uint64_t last_pong_age_ms;
     bool last_pong_known;
+    void *expected_session_ctx;
 };
 
 #define WEBSOCKET_WORKER_ENQUEUED 0
@@ -98,6 +99,7 @@ private:
     [[nodiscard]] bool send_ws_item_direct(int fd, httpd_ws_frame *ws_pkt);
     bool send_ws_work_item(const ws_work_item *wi);
 
+    static int timed_httpd_send(httpd_handle_t hd, int fd, const char *buf, size_t len, int flags);
     static void work(void *arg);
     static esp_err_t ws_handler(httpd_req_t *req);
 
@@ -106,8 +108,8 @@ private:
 
     void keepAliveAdd(int fd);
     void keepAliveRemove(int fd);
-    void keepAliveCloseDead_async(int fd);
-    void keepAliveCloseDead_HTTPThread(int fd, bool last_pong_known = false, uint64_t last_pong_age_ms = 0);
+    void keepAliveCloseDead_async(int fd, void *expected_session_ctx = nullptr);
+    void keepAliveCloseDead_HTTPThread(int fd, bool last_pong_known = false, uint64_t last_pong_age_ms = 0, void *expected_session_ctx = nullptr);
     void processPendingCloses_HTTPThread();
 
     void updateDebugState();
