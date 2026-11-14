@@ -359,6 +359,7 @@ void WebServer::register_events()
     httpd_config.linger_timeout = 1; // Try to get WS close, TLS close and error messages out. This is mostly necessary for connections over WireGuard/remote access. Only blocks as long as necessary but capped to 1 second.
     httpd_config.uri_match_fn = custom_uri_match;
     httpd_config.close_fn = custom_close_fn;
+    httpd_config.send_wait_timeout = 1; // 1 second send timeout for all HTTPD sends, including WebSocket sends.
 
 #if WEBSERVER_DIAGNOSTIC_DISABLE_PLAIN_HTTP_LINGER
     logger.printfln("Diagnostic mode: disabling SO_LINGER for non-TLS, non-WebSocket session closes");
