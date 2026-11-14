@@ -73,6 +73,39 @@ static bool should_log_websocket_anomaly()
     return true;
 }
 
+static int timed_httpd_send(httpd_handle_t hd, int fd, const char *buf, size_t len, int flags)
+{
+    const micros_t send_started = now_us();
+    errno = 0;
+    const int send_result = httpd_default_send(hd, fd, buf, len, flags);
+    const int send_errno = errno;
+    const uint64_t send_duration_ms = (now_us() - send_started).to<millis_t>().as<uint64_t>();
+    int result = send_result;
+
+    if (send_result < 0) {
+        result = send_errno == EAGAIN || send_errno == EINTR
+            ? HTTPD_SOCK_ERR_TIMEOUT
+            : HTTPD_SOCK_ERR_FAIL;
+    }
+
+    if ((result < 0 || send_duration_ms >= 100) && should_log_websocket_anomaly()) {
+        char peer[INET6_ADDRSTRLEN + 16];
+        int peer_errno = 0;
+        format_socket_peer(fd, peer, sizeof(peer), &peer_errno);
+        logger.printfln("Unusual HTTPD transport send: fd %i peer %s (peer errno %i), duration %llums, bytes %zu, result %i, errno %i",
+                        fd,
+                        peer,
+                        peer_errno,
+                        send_duration_ms,
+                        len,
+                        result,
+                        send_errno);
+    }
+
+    errno = send_errno;
+    return result;
+}
+
 static void clear_ws_work_item(ws_work_item *wi)
 {
     free(wi->payload);
@@ -961,6 +994,16 @@ void WebSockets::start(const char *uri, const char *state_path, const char *supp
             aux->sd->ws_user_ctx = this;
 
             const int sock = httpd_req_to_sockfd(req);
+            // The probe delegates to the plain HTTPD sender, so leave custom TLS transports unchanged.
+            if (aux->sd->transport_ctx == nullptr) {
+                const esp_err_t send_override_result = httpd_sess_set_send_override(this->httpd, sock, timed_httpd_send);
+                if (send_override_result != ESP_OK) {
+                    logger.printfln("Failed to enable HTTPD transport send timing for fd %i: 0x%x",
+                                    sock,
+                                    static_cast<unsigned>(send_override_result));
+                }
+            }
+
             bool success = true;
 
             if (this->on_client_connect_fn) {
