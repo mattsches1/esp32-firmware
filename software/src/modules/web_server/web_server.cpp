@@ -61,7 +61,48 @@
 
 #define HTTPD_STACK_SIZE 8192
 
+#ifndef WEBSERVER_DIAGNOSTIC_DISABLE_PLAIN_HTTP_LINGER
+#define WEBSERVER_DIAGNOSTIC_DISABLE_PLAIN_HTTP_LINGER 1
+#endif
+
 static void dummy_free_fn(void *) {}
+
+static bool should_log_session_close_anomaly()
+{
+    static micros_t last_log = 0_us;
+    const micros_t now = now_us();
+
+    if (last_log != 0_us && now - last_log < 10_s) {
+        return false;
+    }
+
+    last_log = now;
+    return true;
+}
+
+static void format_session_peer(int fd, char *peer, size_t peer_size)
+{
+    struct sockaddr_storage addr = {};
+    socklen_t addr_len = sizeof(addr);
+
+    if (getpeername(fd, reinterpret_cast<struct sockaddr *>(&addr), &addr_len) != 0) {
+        snprintf(peer, peer_size, "unknown");
+        return;
+    }
+
+    char ip[INET6_ADDRSTRLEN] = {};
+    tf_ipaddr_ntoa(&addr, ip, sizeof(ip));
+
+    if (addr.ss_family == AF_INET) {
+        const auto *addr4 = reinterpret_cast<const struct sockaddr_in *>(&addr);
+        snprintf(peer, peer_size, "%s:%u", ip, static_cast<unsigned>(ntohs(addr4->sin_port)));
+    } else if (addr.ss_family == AF_INET6) {
+        const auto *addr6 = reinterpret_cast<const struct sockaddr_in6 *>(&addr);
+        snprintf(peer, peer_size, "[%s]:%u", ip, static_cast<unsigned>(ntohs(addr6->sin6_port)));
+    } else {
+        snprintf(peer, peer_size, "unknown-family-%u", static_cast<unsigned>(addr.ss_family));
+    }
+}
 
 // Only one handler will be registered with the httpd and it will match everything.
 // Called by HTTP thread.
@@ -75,7 +116,61 @@ static bool custom_uri_match(const char *ref_uri, const char *in_uri, size_t len
 static void custom_close_fn(httpd_handle_t hd, struct sock_db *session)
 {
     // If a close_fn is registered, httpd won't close the fd by itself.
-    close(session->fd);
+    bool websocket = false;
+    bool unclean_websocket = false;
+    bool tls_session = session->transport_ctx != nullptr;
+    bool zero_linger = false;
+
+#if MODULE_WS_AVAILABLE()
+    websocket = session->ws_handshake_done;
+    unclean_websocket = websocket && session->ws_control_frames;
+#endif
+
+    zero_linger = unclean_websocket;
+#if WEBSERVER_DIAGNOSTIC_DISABLE_PLAIN_HTTP_LINGER
+    // Diagnostic A/B test for the observed slow close on non-WebSocket HTTP.
+    // Leave WebSocket and TLS close behavior unchanged.
+    zero_linger = zero_linger || (!websocket && !tls_session);
+#endif
+
+    if (zero_linger) {
+        // httpd_sess_delete enables the configured linger before calling close_fn.
+        // Avoid waiting for peer acknowledgements when closing a failed session.
+        const struct linger so_linger = {
+            .l_onoff = true,
+            .l_linger = 0,
+        };
+        if (setsockopt(session->fd, SOL_SOCKET, SO_LINGER, &so_linger, sizeof(so_linger)) < 0) {
+            const int linger_errno = errno;
+            if (should_log_session_close_anomaly()) {
+                logger.printfln("Failed to disable linger for fd %i (websocket %u, TLS %u): errno %i",
+                                session->fd,
+                                static_cast<unsigned>(websocket),
+                                static_cast<unsigned>(tls_session),
+                                linger_errno);
+            }
+        }
+    }
+
+    char peer[INET6_ADDRSTRLEN + 16];
+    format_session_peer(session->fd, peer, sizeof(peer));
+    const micros_t close_started = now_us();
+    const int close_result = close(session->fd);
+    const int close_errno = close_result == 0 ? 0 : errno;
+    const uint64_t close_duration_ms = (now_us() - close_started).to<millis_t>().as<uint64_t>();
+
+    if ((close_result != 0 || close_duration_ms >= 100) && should_log_session_close_anomaly()) {
+        logger.printfln("Unusual session close: fd %i peer %s, websocket %u, unclean %u, TLS %u, linger_zero %u, duration %llums, result %i, errno %i",
+                        session->fd,
+                        peer,
+                        static_cast<unsigned>(websocket),
+                        static_cast<unsigned>(unclean_websocket),
+                        static_cast<unsigned>(tls_session),
+                        static_cast<unsigned>(zero_linger),
+                        close_duration_ms,
+                        close_result,
+                        close_errno);
+    }
 
 #if MODULE_WS_AVAILABLE()
     if (session->ws_handshake_done && !session->ws_control_frames) {
@@ -264,6 +359,10 @@ void WebServer::register_events()
     httpd_config.linger_timeout = 1; // Try to get WS close, TLS close and error messages out. This is mostly necessary for connections over WireGuard/remote access. Only blocks as long as necessary but capped to 1 second.
     httpd_config.uri_match_fn = custom_uri_match;
     httpd_config.close_fn = custom_close_fn;
+
+#if WEBSERVER_DIAGNOSTIC_DISABLE_PLAIN_HTTP_LINGER
+    logger.printfln("Diagnostic mode: disabling SO_LINGER for non-TLS, non-WebSocket session closes");
+#endif
 
 #if MODULE_NETWORK_AVAILABLE()
     httpd_config.server_port = network.get_web_server_port(); // Only used in single-port-mode

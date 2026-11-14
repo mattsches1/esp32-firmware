@@ -38,6 +38,12 @@ struct ws_work_item {
     httpd_ws_type_t ws_type;
 };
 
+struct ws_pending_close {
+    int fd;
+    uint64_t last_pong_age_ms;
+    bool last_pong_known;
+};
+
 #define WEBSOCKET_WORKER_ENQUEUED 0
 #define WEBSOCKET_WORKER_RUNNING 1
 #define WEBSOCKET_WORKER_DONE 2
@@ -80,6 +86,7 @@ private:
     bool sendToAllOwnedInternal(char *payload, size_t payload_len, httpd_ws_type_t ws_type = HTTPD_WS_TYPE_TEXT);
 
     bool haveFreeSlot();
+    bool getLastPongAgeMs(int fd, uint64_t *age_ms);
     void pingActiveClients();
     void checkActiveClients();
     void closeLRUClient_HTTPThread();
@@ -100,7 +107,7 @@ private:
     void keepAliveAdd(int fd);
     void keepAliveRemove(int fd);
     void keepAliveCloseDead_async(int fd);
-    void keepAliveCloseDead_HTTPThread(int fd);
+    void keepAliveCloseDead_HTTPThread(int fd, bool last_pong_known = false, uint64_t last_pong_age_ms = 0);
     void processPendingCloses_HTTPThread();
 
     void updateDebugState();
@@ -114,10 +121,11 @@ private:
 
     std::recursive_mutex work_queue_mutex;
     std::deque<ws_work_item> work_queue;
-    int pending_close_fds[MAX_WEB_SOCKET_CLIENTS]; // Guarded by work_queue_mutex. Drained on the HTTP thread.
+    ws_pending_close pending_closes[MAX_WEB_SOCKET_CLIENTS]; // Guarded by work_queue_mutex. Drained on the HTTP thread.
     size_t pending_close_count = 0;
 
     std::atomic<uint8_t> worker_active;
+    std::atomic<uint64_t> worker_enqueued_at_us{0};
     micros_t last_worker_run = 0_us;
     uint32_t worker_poll_count = 0;
 

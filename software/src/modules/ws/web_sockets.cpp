@@ -32,6 +32,47 @@
 static constexpr micros_t KEEP_ALIVE_TIMEOUT = 10_s;
 static constexpr int BROADCAST_FD = -2;
 
+static bool format_socket_peer(int fd, char *peer, size_t peer_size, int *peer_errno)
+{
+    struct sockaddr_storage addr = {};
+    socklen_t addr_len = sizeof(addr);
+
+    if (getpeername(fd, reinterpret_cast<struct sockaddr *>(&addr), &addr_len) != 0) {
+        *peer_errno = errno;
+        snprintf(peer, peer_size, "unknown");
+        return false;
+    }
+
+    char ip[INET6_ADDRSTRLEN] = {};
+    tf_ipaddr_ntoa(&addr, ip, sizeof(ip));
+
+    if (addr.ss_family == AF_INET) {
+        const auto *addr4 = reinterpret_cast<const struct sockaddr_in *>(&addr);
+        snprintf(peer, peer_size, "%s:%u", ip, static_cast<unsigned>(ntohs(addr4->sin_port)));
+    } else if (addr.ss_family == AF_INET6) {
+        const auto *addr6 = reinterpret_cast<const struct sockaddr_in6 *>(&addr);
+        snprintf(peer, peer_size, "[%s]:%u", ip, static_cast<unsigned>(ntohs(addr6->sin6_port)));
+    } else {
+        snprintf(peer, peer_size, "unknown-family-%u", static_cast<unsigned>(addr.ss_family));
+    }
+
+    *peer_errno = 0;
+    return true;
+}
+
+static bool should_log_websocket_anomaly()
+{
+    static micros_t last_log = 0_us;
+    const micros_t now = now_us();
+
+    if (last_log != 0_us && now - last_log < 10_s) {
+        return false;
+    }
+
+    last_log = now;
+    return true;
+}
+
 static void clear_ws_work_item(ws_work_item *wi)
 {
     free(wi->payload);
@@ -99,7 +140,35 @@ bool WebSockets::send_ws_item_direct(int fd, httpd_ws_frame *ws_pkt)
         return false;
     }
 
-    return httpd_ws_send_frame_async(this->httpd, fd, ws_pkt) == ESP_OK;
+    uint64_t pong_age_before_ms = 0;
+    const bool pong_before_known = this->getLastPongAgeMs(fd, &pong_age_before_ms);
+    char peer[INET6_ADDRSTRLEN + 16];
+    int peer_errno = 0;
+    format_socket_peer(fd, peer, sizeof(peer), &peer_errno);
+    const micros_t send_started = now_us();
+    errno = 0;
+    const esp_err_t err = httpd_ws_send_frame_async(this->httpd, fd, ws_pkt);
+    const int send_errno = errno;
+    const uint64_t send_duration_ms = (now_us() - send_started).to<millis_t>().as<uint64_t>();
+
+    if ((err != ESP_OK || send_duration_ms >= 100) && should_log_websocket_anomaly()) {
+        uint64_t pong_age_after_ms = 0;
+        const bool pong_after_known = this->getLastPongAgeMs(fd, &pong_age_after_ms);
+        logger.printfln("Unusual WebSocket send: fd %i peer %s (peer errno %i), duration %llums, pong before %s%llums, after %s%llums, payload %zu bytes, result 0x%x, errno %i",
+                        fd,
+                        peer,
+                        peer_errno,
+                        send_duration_ms,
+                        pong_before_known ? "" : "unknown/",
+                        pong_age_before_ms,
+                        pong_after_known ? "" : "unknown/",
+                        pong_age_after_ms,
+                        ws_pkt->len,
+                        static_cast<unsigned>(err),
+                        err == ESP_OK ? 0 : send_errno);
+    }
+
+    return err == ESP_OK;
 }
 
 // Send a work item to multiple destinations. If a write fails, close the WS session.
@@ -142,7 +211,33 @@ bool WebSockets::send_ws_work_item(const ws_work_item *wi)
             continue;
         }
 
+        uint64_t pong_age_before_ms = 0;
+        const bool pong_before_known = this->getLastPongAgeMs(fds[i], &pong_age_before_ms);
+        char peer[INET6_ADDRSTRLEN + 16];
+        int peer_errno = 0;
+        format_socket_peer(fds[i], peer, sizeof(peer), &peer_errno);
+        const micros_t send_started = now_us();
+        errno = 0;
         const esp_err_t err = httpd_ws_send_frame_async(this->httpd, fds[i], &ws_pkt);
+        const int send_errno = errno;
+        const uint64_t send_duration_ms = (now_us() - send_started).to<millis_t>().as<uint64_t>();
+
+        if ((err != ESP_OK || send_duration_ms >= 100) && should_log_websocket_anomaly()) {
+            uint64_t pong_age_after_ms = 0;
+            const bool pong_after_known = this->getLastPongAgeMs(fds[i], &pong_age_after_ms);
+            logger.printfln("Unusual WebSocket send: fd %i peer %s (peer errno %i), duration %llums, pong before %s%llums, after %s%llums, payload %zu bytes, result 0x%x, errno %i",
+                            fds[i],
+                            peer,
+                            peer_errno,
+                            send_duration_ms,
+                            pong_before_known ? "" : "unknown/",
+                            pong_age_before_ms,
+                            pong_after_known ? "" : "unknown/",
+                            pong_age_after_ms,
+                            ws_pkt.len,
+                            static_cast<unsigned>(err),
+                            err == ESP_OK ? 0 : send_errno);
+        }
 
         if (err != ESP_OK) {
             logger.tracefln(server.get_trace_buffer_index(), "send_ws_work_item close fd %i, err 0x%x", fds[i], static_cast<unsigned>(err));
@@ -159,7 +254,7 @@ void WebSockets::processPendingCloses_HTTPThread()
 {
     // Drain the pending close queue. This runs on the HTTP thread,
     // so it is safe to call httpd_ws_get_fd_info and httpd_sess_delete here.
-    int fds_to_close[MAX_WEB_SOCKET_CLIENTS];
+    ws_pending_close closes_to_process[MAX_WEB_SOCKET_CLIENTS];
     size_t count;
     {
         std::lock_guard<std::recursive_mutex> lock{work_queue_mutex};
@@ -167,13 +262,15 @@ void WebSockets::processPendingCloses_HTTPThread()
             return;
         }
         count = pending_close_count;
-        memcpy(fds_to_close, pending_close_fds, count * sizeof(int));
+        memcpy(closes_to_process, pending_closes, count * sizeof(ws_pending_close));
         pending_close_count = 0;
     }
 
     for (size_t i = 0; i < count; ++i) {
-        logger.tracefln(server.get_trace_buffer_index(), "close pending fd %i", fds_to_close[i]);
-        this->keepAliveCloseDead_HTTPThread(fds_to_close[i]);
+        logger.tracefln(server.get_trace_buffer_index(), "close pending fd %i", closes_to_process[i].fd);
+        this->keepAliveCloseDead_HTTPThread(closes_to_process[i].fd,
+                                            closes_to_process[i].last_pong_known,
+                                            closes_to_process[i].last_pong_age_ms);
     }
 }
 
@@ -182,18 +279,30 @@ void WebSockets::work(void *arg)
 {
     WebSockets *ws = static_cast<WebSockets *>(arg);
     ws->worker_active = WEBSOCKET_WORKER_RUNNING;
+    const uint64_t worker_started_us = now_us().as<uint64_t>();
+    const uint64_t enqueued_at_us = ws->worker_enqueued_at_us.exchange(0, std::memory_order_relaxed);
+    const uint64_t queue_delay_ms = enqueued_at_us == 0 ? 0 : (worker_started_us - enqueued_at_us) / 1000;
 
     // Check and close connections before sending any data.
     ws->processPendingCloses_HTTPThread();
     ws->checkActiveClients();
 
     ws_work_item wi;
+    size_t work_item_count = 0;
     while (ws->haveWork(&wi)) {
         ws->send_ws_work_item(&wi);
         clear_ws_work_item(&wi);
+        ++work_item_count;
     }
 
     ws->worker_active = WEBSOCKET_WORKER_DONE;
+    const uint64_t worker_duration_ms = (now_us().as<uint64_t>() - worker_started_us) / 1000;
+    if ((queue_delay_ms >= 100 || worker_duration_ms >= 1000) && should_log_websocket_anomaly()) {
+        logger.printfln("Unusual WebSocket worker timing: queue delay %llums, execution %llums, work items %zu",
+                        queue_delay_ms,
+                        worker_duration_ms,
+                        work_item_count);
+    }
 #if MODULE_WATCHDOG_AVAILABLE()
     watchdog.reset(ws->watchdog_handle);
 #endif
@@ -362,6 +471,8 @@ void WebSockets::keepAliveRemove(int fd)
 // Called by any thread.
 void WebSockets::keepAliveCloseDead_async(int fd)
 {
+    uint64_t last_pong_age_ms = 0;
+    const bool last_pong_known = this->getLastPongAgeMs(fd, &last_pong_age_ms);
     this->keepAliveRemove(fd);
 
     logger.tracefln(server.get_trace_buffer_index(), "closeDead async %i", fd);
@@ -374,18 +485,21 @@ void WebSockets::keepAliveCloseDead_async(int fd)
     {
         std::lock_guard<std::recursive_mutex> lock{work_queue_mutex};
         if (pending_close_count < MAX_WEB_SOCKET_CLIENTS) {
-            pending_close_fds[pending_close_count++] = fd;
+            pending_closes[pending_close_count++] = {fd, last_pong_age_ms, last_pong_known};
         }
     }
 }
 
 // Called by HTTP thread.
-void WebSockets::keepAliveCloseDead_HTTPThread(int fd)
+void WebSockets::keepAliveCloseDead_HTTPThread(int fd, bool last_pong_known, uint64_t last_pong_age_ms)
 {
     if (fd < 0) {
         return;
     }
 
+    if (!last_pong_known) {
+        last_pong_known = this->getLastPongAgeMs(fd, &last_pong_age_ms);
+    }
     this->keepAliveRemove(fd);
 
     // Don't kill this socket if it is a HTTP socket:
@@ -423,7 +537,22 @@ void WebSockets::keepAliveCloseDead_HTTPThread(int fd)
 
     while (current <= end) {
         if (current->fd == fd) {
+            const micros_t close_started = now_us();
             httpd_sess_delete(hd, current);
+            const uint64_t close_duration_ms = (now_us() - close_started).to<millis_t>().as<uint64_t>();
+
+            if (close_duration_ms >= 100 && should_log_websocket_anomaly()) {
+                if (last_pong_known) {
+                    logger.printfln("Slow WebSocket session deletion: fd %i, duration %llums, last pong %llums ago",
+                                    fd,
+                                    close_duration_ms,
+                                    last_pong_age_ms);
+                } else {
+                    logger.printfln("Slow WebSocket session deletion: fd %i, duration %llums, last pong unknown",
+                                    fd,
+                                    close_duration_ms);
+                }
+            }
             break;
         }
         current++;
@@ -450,28 +579,34 @@ void WebSockets::pingActiveClients()
 // Called by HTTP thread.
 void WebSockets::checkActiveClients()
 {
-    int dead_fds[MAX_WEB_SOCKET_CLIENTS];
+    ws_pending_close dead_clients[MAX_WEB_SOCKET_CLIENTS];
     size_t dead_count = 0;
 
     {
         std::lock_guard<std::recursive_mutex> lock{keep_alive_mutex};
+        const micros_t now = now_us();
         for (int i = 0; i < MAX_WEB_SOCKET_CLIENTS; ++i) {
             if (keep_alive_fds[i] == -1) {
                 continue;
             }
 
             if (deadline_elapsed(keep_alive_last_pong[i] + KEEP_ALIVE_TIMEOUT)) {
-                dead_fds[dead_count++] = keep_alive_fds[i];
+                dead_clients[dead_count++] = {
+                    keep_alive_fds[i],
+                    (now - keep_alive_last_pong[i]).to<millis_t>().as<uint64_t>(),
+                    true,
+                };
                 keep_alive_fds[i] = -1;
                 keep_alive_last_pong[i] = 0_us;
             }
         }
     }
 
-    // Call close outside of lock to prevent up to 1s blocking because of SO_LINGER.
-    // Outside of the HTTP-Thread the fds are only read, which is OK while the dead fd closes.
+    // Close outside the lock to avoid blocking other keep-alive operations.
     for (size_t i = 0; i < dead_count; ++i) {
-        this->keepAliveCloseDead_HTTPThread(dead_fds[i]);
+        this->keepAliveCloseDead_HTTPThread(dead_clients[i].fd,
+                                            dead_clients[i].last_pong_known,
+                                            dead_clients[i].last_pong_age_ms);
     }
 }
 
@@ -479,6 +614,7 @@ void WebSockets::checkActiveClients()
 void WebSockets::closeLRUClient_HTTPThread()
 {
     int fd_to_close = -1;
+    uint64_t last_pong_age_ms = 0;
 
     {
         std::lock_guard<std::recursive_mutex> lock{keep_alive_mutex};
@@ -513,13 +649,13 @@ void WebSockets::closeLRUClient_HTTPThread()
         }
 
         fd_to_close = keep_alive_fds[idx_to_close];
+        last_pong_age_ms = (now_us() - keep_alive_last_pong[idx_to_close]).to<millis_t>().as<uint64_t>();
         keep_alive_fds[idx_to_close] = -1;
         keep_alive_last_pong[idx_to_close] = 0_us;
     }
 
-    // Call close outside of lock to prevent up to 1s blocking because of SO_LINGER.
-    // Outside of the HTTP-Thread the fds are only read, which is OK while the dead fd closes.
-    this->keepAliveCloseDead_HTTPThread(fd_to_close);
+    // Close outside the lock to avoid blocking other keep-alive operations.
+    this->keepAliveCloseDead_HTTPThread(fd_to_close, true, last_pong_age_ms);
 }
 
 // Called by HTTP thread.
@@ -599,6 +735,19 @@ bool WebSockets::haveFreeSlot()
         if (keep_alive_fds[i] == -1)
             return true;
     }
+    return false;
+}
+
+bool WebSockets::getLastPongAgeMs(int fd, uint64_t *age_ms)
+{
+    std::lock_guard<std::recursive_mutex> lock{keep_alive_mutex};
+    for (int i = 0; i < MAX_WEB_SOCKET_CLIENTS; ++i) {
+        if (keep_alive_fds[i] == fd) {
+            *age_ms = (now_us() - keep_alive_last_pong[i]).to<millis_t>().as<uint64_t>();
+            return true;
+        }
+    }
+
     return false;
 }
 
@@ -686,14 +835,25 @@ void WebSockets::triggerHttpThread()
     // the worker can then run to completion, we then set worker_active to "enqueued" and are
     // NEVER able to start the worker again.
     worker_active = WEBSOCKET_WORKER_ENQUEUED;
+    worker_enqueued_at_us.store(now_us().as<uint64_t>(), std::memory_order_relaxed);
     errno = 0;
+    const micros_t queue_started = now_us();
     esp_err_t err = httpd_queue_work(httpd, work, this);
+    const int queue_errno = errno;
+    const uint64_t queue_duration_ms = (now_us() - queue_started).to<millis_t>().as<uint64_t>();
     if (err == ESP_OK) {
         last_worker_run = now_us();
         worker_poll_count = 0;
     } else {
-        logger.printfln("Failed to start WebSocket worker: %i | %s (%i)", err, strerror(errno), errno);
+        logger.printfln("Failed to start WebSocket worker: %i | %s (%i)", err, strerror(queue_errno), queue_errno);
         worker_active = WEBSOCKET_WORKER_DONE;
+        worker_enqueued_at_us.store(0, std::memory_order_relaxed);
+    }
+    if ((err != ESP_OK || queue_duration_ms >= 100) && should_log_websocket_anomaly()) {
+        logger.printfln("Unusual WebSocket worker enqueue: duration %llums, result %i, errno %i",
+                        queue_duration_ms,
+                        err,
+                        queue_errno);
     }
 }
 
@@ -880,6 +1040,7 @@ void WebSockets::stop() {
     this->sendToAll(reboot_close_payload, std::size(reboot_close_payload), HTTPD_WS_TYPE_CLOSE);
 
     worker_active = WEBSOCKET_WORKER_ENQUEUED;
+    worker_enqueued_at_us.store(now_us().as<uint64_t>(), std::memory_order_relaxed);
     httpd_queue_work(httpd, WebSockets::work, this);
 
     // Give http thread 200ms to send the close frames.
